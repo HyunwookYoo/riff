@@ -1,6 +1,7 @@
 <script lang="ts">
   import InputBar from "$lib/ui/InputBar.svelte";
   import FileList from "$lib/ui/FileList.svelte";
+  import DiffView from "$lib/ui/DiffView.svelte";
   import { appState } from "$lib/store.svelte";
 </script>
 
@@ -19,9 +20,7 @@
             <span class="from">(from {appState.selectedFile.old_path})</span>
           {/if}
         </header>
-        <div class="placeholder">
-          Diff rendering arrives in Sprint 2.
-        </div>
+        <DiffView />
       {:else if appState.loading}
         <div class="placeholder">Loading…</div>
       {:else}

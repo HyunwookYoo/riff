@@ -1,4 +1,4 @@
-import type { Branch, ChangedFile, DiffMode } from "./types";
+import type { Branch, ChangedFile, DiffMode, ViewMode } from "./types";
 
 class AppState {
   repoPath = $state("");
@@ -10,6 +10,7 @@ class AppState {
   selectedFile = $state<ChangedFile | null>(null);
   loading = $state(false);
   error = $state<string | null>(null);
+  viewMode = $state<ViewMode>("side-by-side");
 }
 
 export const appState = new AppState();

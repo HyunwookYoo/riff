@@ -46,6 +46,26 @@ pub enum DiffMode {
     TwoDot,
 }
 
+/// Result of `file_diff`. `kind` is the serde tag so the frontend can switch on it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum FileDiff {
+    Text {
+        old_content: String,
+        new_content: String,
+        old_size: u64,
+        new_size: u64,
+    },
+    Binary {
+        old_size: u64,
+        new_size: u64,
+    },
+    TooLarge {
+        old_size: u64,
+        new_size: u64,
+    },
+}
+
 pub trait GitLayer {
     fn validate_repo(&self, path: &Path) -> Result<(), GitError>;
     fn list_refs(&self, path: &Path) -> Result<Vec<Branch>, GitError>;
@@ -56,4 +76,14 @@ pub trait GitLayer {
         target: &str,
         mode: DiffMode,
     ) -> Result<Vec<ChangedFile>, GitError>;
+    fn file_diff(
+        &self,
+        path: &Path,
+        start: &str,
+        target: &str,
+        mode: DiffMode,
+        file_path: &str,
+        old_path: Option<&str>,
+        force: bool,
+    ) -> Result<FileDiff, GitError>;
 }

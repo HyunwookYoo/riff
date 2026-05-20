@@ -4,7 +4,7 @@ pub mod store;
 
 use std::path::Path;
 
-use git::{Branch, ChangedFile, DiffMode, GitCli, GitError, GitLayer};
+use git::{Branch, ChangedFile, DiffMode, FileDiff, GitCli, GitError, GitLayer};
 
 #[tauri::command]
 fn validate_repo(path: String) -> Result<(), GitError> {
@@ -26,6 +26,27 @@ fn diff_files(
     GitCli::new().diff_files(Path::new(&path), &start, &target, mode)
 }
 
+#[tauri::command]
+fn file_diff(
+    path: String,
+    start: String,
+    target: String,
+    mode: DiffMode,
+    file_path: String,
+    old_path: Option<String>,
+    force: bool,
+) -> Result<FileDiff, GitError> {
+    GitCli::new().file_diff(
+        Path::new(&path),
+        &start,
+        &target,
+        mode,
+        &file_path,
+        old_path.as_deref(),
+        force,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -35,6 +56,7 @@ pub fn run() {
             validate_repo,
             list_refs,
             diff_files,
+            file_diff,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

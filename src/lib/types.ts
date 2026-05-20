@@ -20,3 +20,24 @@ export interface ChangedFile {
 }
 
 export type DiffMode = "three-dot" | "two-dot";
+
+export type FileDiff =
+  | {
+      kind: "text";
+      old_content: string;
+      new_content: string;
+      old_size: number;
+      new_size: number;
+    }
+  | {
+      kind: "binary";
+      old_size: number;
+      new_size: number;
+    }
+  | {
+      kind: "too-large";
+      old_size: number;
+      new_size: number;
+    };
+
+export type ViewMode = "side-by-side" | "unified";
