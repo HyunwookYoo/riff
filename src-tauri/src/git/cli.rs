@@ -158,6 +158,20 @@ impl Drop for BatchProcess {
     }
 }
 
+impl Drop for Session {
+    fn drop(&mut self) {
+        // Batch processes clean themselves up via their own Drop, but an
+        // in-flight diff_files child is owned by an Arc shared with the
+        // streaming task — dropping our Arc reference alone won't kill it.
+        if let Some(arc) = self.diff_files_child.take() {
+            if let Some(mut child) = arc.lock().unwrap().take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
 impl Session {
     fn new(repo: &Path) -> Result<Self, GitError> {
         let batch_check = BatchProcess::spawn(repo, "--batch-check")?;

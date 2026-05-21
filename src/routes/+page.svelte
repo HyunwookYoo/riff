@@ -131,8 +131,10 @@
           {/if}
         </header>
         <DiffView />
-      {:else if appState.loading}
-        <div class="placeholder">Loading…</div>
+      {:else if appState.loadingRepo}
+        <div class="placeholder">Opening repository…</div>
+      {:else if appState.loadingFiles}
+        <div class="placeholder">Scanning changed files…</div>
       {:else}
         <div class="placeholder">
           Select a repository and two refs to compare.

@@ -17,18 +17,27 @@
   let pathInput = $state(appState.repoPath);
 
   async function loadRepo(path: string) {
-    appState.loading = true;
+    appState.loadingRepo = true;
     appState.error = null;
+    // Clear previous repo's compare state — branches/files no longer apply.
+    appState.files = [];
+    appState.selectedFile = null;
+    appState.startBranch = "";
+    appState.targetBranch = "";
     try {
       await validateRepo(path);
       appState.repoPath = path;
-      appState.branches = await listRefs(path);
-      appState.recentRepos = await addRecentRepo(path);
+      const [branches, recentRepos] = await Promise.all([
+        listRefs(path),
+        addRecentRepo(path),
+      ]);
+      appState.branches = branches;
+      appState.recentRepos = recentRepos;
     } catch (e) {
       appState.error = String(e);
       appState.branches = [];
     } finally {
-      appState.loading = false;
+      appState.loadingRepo = false;
     }
   }
 
@@ -61,7 +70,7 @@
       return;
     }
     const session = ++compareSession;
-    appState.loading = true;
+    appState.loadingFiles = true;
     appState.error = null;
     appState.files = [];
     appState.selectedFile = null;
@@ -90,7 +99,7 @@
       }
     } finally {
       if (session === compareSession) {
-        appState.loading = false;
+        appState.loadingFiles = false;
       }
     }
   }
@@ -167,8 +176,8 @@
     <option value="dark">Dark</option>
   </select>
 
-  <button class="primary" onclick={compare} disabled={appState.loading}>
-    {appState.loading ? "…" : "Compare"}
+  <button class="primary" onclick={compare} disabled={appState.loadingFiles || appState.loadingRepo}>
+    {appState.loadingFiles ? "…" : "Compare"}
   </button>
 </div>
 

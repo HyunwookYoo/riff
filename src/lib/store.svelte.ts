@@ -14,7 +14,8 @@ class AppState {
   mode = $state<DiffMode>("three-dot");
   files = $state<ChangedFile[]>([]);
   selectedFile = $state<ChangedFile | null>(null);
-  loading = $state(false);
+  loadingRepo = $state(false);
+  loadingFiles = $state(false);
   error = $state<string | null>(null);
   viewMode = $state<ViewMode>("side-by-side");
   recentRepos = $state<string[]>([]);

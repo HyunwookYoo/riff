@@ -44,7 +44,7 @@
   <header>
     <span>Files</span>
     <span class="count">{appState.files.length}</span>
-    {#if appState.loading && appState.files.length > 0}
+    {#if appState.loadingFiles && appState.files.length > 0}
       <span class="scanning">Scanning…</span>
     {/if}
     <button
@@ -59,7 +59,7 @@
 
   {#if appState.fileViewMode === "tree"}
     <div class="scroll">
-      {#if appState.files.length === 0 && !appState.loading}
+      {#if appState.files.length === 0 && !appState.loadingFiles}
         <div class="empty">No changed files.</div>
       {/if}
       {#each tree as node (node.kind === "dir" ? "d:" + node.path : "f:" + node.file.path)}
@@ -68,7 +68,7 @@
     </div>
   {:else}
     <ul>
-      {#if appState.files.length === 0 && !appState.loading}
+      {#if appState.files.length === 0 && !appState.loadingFiles}
         <li class="empty">No changed files.</li>
       {/if}
       {#each appState.files as f (f.path)}
