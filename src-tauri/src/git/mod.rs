@@ -69,6 +69,10 @@ pub enum FileDiff {
 pub trait GitLayer {
     fn validate_repo(&self, path: &Path) -> Result<(), GitError>;
     fn list_refs(&self, path: &Path) -> Result<Vec<Branch>, GitError>;
+    /// Stream the changed files between `start` and `target`.
+    /// `on_file` is invoked once per parsed entry as it arrives.
+    /// Cancelling a previously-in-flight invocation against the same session
+    /// is the implementation's responsibility.
     fn diff_files(
         &self,
         path: &Path,
@@ -76,7 +80,8 @@ pub trait GitLayer {
         target: &str,
         mode: DiffMode,
         ignore_whitespace: bool,
-    ) -> Result<Vec<ChangedFile>, GitError>;
+        on_file: &mut dyn FnMut(ChangedFile) -> Result<(), GitError>,
+    ) -> Result<(), GitError>;
     fn file_diff(
         &self,
         path: &Path,

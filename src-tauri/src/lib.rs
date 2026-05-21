@@ -25,8 +25,20 @@ fn diff_files(
     target: String,
     mode: DiffMode,
     ignore_whitespace: bool,
-) -> Result<Vec<ChangedFile>, GitError> {
-    state.diff_files(Path::new(&path), &start, &target, mode, ignore_whitespace)
+    on_file: tauri::ipc::Channel<ChangedFile>,
+) -> Result<(), GitError> {
+    state.diff_files(
+        Path::new(&path),
+        &start,
+        &target,
+        mode,
+        ignore_whitespace,
+        &mut |f| {
+            on_file
+                .send(f)
+                .map_err(|e| GitError::CommandFailed(e.to_string()))
+        },
+    )
 }
 
 #[tauri::command]

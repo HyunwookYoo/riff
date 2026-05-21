@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use super::{Branch, BranchKind, ChangedFile, DiffMode, FileDiff, FileStatus, GitError, GitLayer};
 
@@ -24,6 +24,9 @@ struct Session {
     batch_check: BatchProcess,
     batch: BatchProcess,
     merge_base_cache: HashMap<(String, String), String>,
+    /// The currently in-flight `git diff` child for streaming diff_files.
+    /// Replacing this slot is how we cancel an outstanding stream.
+    diff_files_child: Option<Arc<Mutex<Option<Child>>>>,
 }
 
 /// A long-running `git cat-file` process kept around for a single repo.
@@ -148,6 +151,7 @@ impl Session {
             batch_check,
             batch,
             merge_base_cache: HashMap::new(),
+            diff_files_child: None,
         })
     }
 
@@ -305,7 +309,8 @@ impl GitLayer for GitCli {
         target: &str,
         mode: DiffMode,
         ignore_whitespace: bool,
-    ) -> Result<Vec<ChangedFile>, GitError> {
+        on_file: &mut dyn FnMut(ChangedFile) -> Result<(), GitError>,
+    ) -> Result<(), GitError> {
         let start = validate_ref(start)?;
         let target = validate_ref(target)?;
 
@@ -320,9 +325,61 @@ impl GitLayer for GitCli {
         }
         args.push(&spec);
 
-        let stdout = self.run(path, &args)?;
+        let mut child = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
 
-        parse_name_status_z(&stdout)
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| GitError::CommandFailed("diff stdout not piped".into()))?;
+
+        // Install our killable handle in the session, cancelling any prior in-flight stream.
+        let kill_slot = Arc::new(Mutex::new(Some(child)));
+        {
+            let mut guard = self.session.lock().unwrap();
+            ensure_session(&mut guard, path)?;
+            let session = guard.as_mut().expect("ensure_session populated guard");
+            let prev = session.diff_files_child.replace(kill_slot.clone());
+            drop(guard);
+            if let Some(prev) = prev {
+                if let Some(mut c) = prev.lock().unwrap().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+            }
+        }
+
+        // Drain stdout via the streaming parser. Errors from the closure short-circuit
+        // (frontend channel closed / parse failure).
+        let mut reader = BufReader::new(stdout);
+        let parse_result = stream_parse_name_status(&mut reader, on_file);
+
+        // Reap our own child (may already be dead if a newer call killed it).
+        if let Some(mut c) = kill_slot.lock().unwrap().take() {
+            let _ = c.wait();
+        }
+
+        // Clear our slot in the session if it still points at us.
+        {
+            let mut guard = self.session.lock().unwrap();
+            if let Some(session) = guard.as_mut() {
+                let still_ours = session
+                    .diff_files_child
+                    .as_ref()
+                    .map(|cur| Arc::ptr_eq(cur, &kill_slot))
+                    .unwrap_or(false);
+                if still_ours {
+                    session.diff_files_child = None;
+                }
+            }
+        }
+
+        parse_result
     }
 
     fn file_diff(
@@ -406,20 +463,34 @@ impl GitLayer for GitCli {
     }
 }
 
-/// Parse `git diff --name-status -z` output.
-///
-/// The stream is NUL-separated. Each entry is either two fields (status, path)
-/// for A/M/D/T, or three fields (status, old_path, new_path) for R/C.
-fn parse_name_status_z(bytes: &[u8]) -> Result<Vec<ChangedFile>, GitError> {
-    let mut files = Vec::new();
-    let mut it = bytes.split(|&b| b == 0).peekable();
+/// Read one NUL-terminated field, returning the bytes without the trailing NUL.
+/// Returns `Ok(None)` on clean EOF.
+fn read_nul_field<R: BufRead>(reader: &mut R) -> Result<Option<Vec<u8>>, GitError> {
+    let mut buf = Vec::new();
+    let n = reader.read_until(0, &mut buf)?;
+    if n == 0 {
+        return Ok(None);
+    }
+    if buf.last() == Some(&0) {
+        buf.pop();
+    }
+    Ok(Some(buf))
+}
 
-    while let Some(status_raw) = it.next() {
+/// Streaming parser for `git diff --name-status -z`. Each parsed entry is
+/// passed to `emit`; an `Err` from `emit` aborts parsing and propagates up.
+fn stream_parse_name_status<R: BufRead>(
+    reader: &mut R,
+    emit: &mut dyn FnMut(ChangedFile) -> Result<(), GitError>,
+) -> Result<(), GitError> {
+    loop {
+        let Some(status_raw) = read_nul_field(reader)? else {
+            return Ok(());
+        };
         if status_raw.is_empty() {
             continue;
         }
-
-        let status_str = std::str::from_utf8(status_raw)
+        let status_str = std::str::from_utf8(&status_raw)
             .map_err(|_| GitError::Parse("status not utf-8".into()))?;
         let first = status_str
             .chars()
@@ -436,31 +507,28 @@ fn parse_name_status_z(bytes: &[u8]) -> Result<Vec<ChangedFile>, GitError> {
             _ => continue,
         };
 
-        if has_old_path {
-            let old = it
-                .next()
+        let entry = if has_old_path {
+            let old = read_nul_field(reader)?
                 .ok_or_else(|| GitError::Parse("missing old path".into()))?;
-            let new = it
-                .next()
+            let new = read_nul_field(reader)?
                 .ok_or_else(|| GitError::Parse("missing new path".into()))?;
-            files.push(ChangedFile {
-                path: bytes_to_string(new)?,
-                old_path: Some(bytes_to_string(old)?),
+            ChangedFile {
+                path: bytes_to_string(&new)?,
+                old_path: Some(bytes_to_string(&old)?),
                 status,
-            });
+            }
         } else {
-            let p = it
-                .next()
+            let p = read_nul_field(reader)?
                 .ok_or_else(|| GitError::Parse("missing path".into()))?;
-            files.push(ChangedFile {
-                path: bytes_to_string(p)?,
+            ChangedFile {
+                path: bytes_to_string(&p)?,
                 old_path: None,
                 status,
-            });
-        }
-    }
+            }
+        };
 
-    Ok(files)
+        emit(entry)?;
+    }
 }
 
 fn bytes_to_string(b: &[u8]) -> Result<String, GitError> {
@@ -472,11 +540,22 @@ fn bytes_to_string(b: &[u8]) -> Result<String, GitError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    fn collect(input: &[u8]) -> Vec<ChangedFile> {
+        let mut out = Vec::new();
+        let mut reader = Cursor::new(input);
+        stream_parse_name_status(&mut reader, &mut |f| {
+            out.push(f);
+            Ok(())
+        })
+        .unwrap();
+        out
+    }
 
     #[test]
     fn parse_simple_modified() {
-        let input = b"M\0src/main.rs\0";
-        let out = parse_name_status_z(input).unwrap();
+        let out = collect(b"M\0src/main.rs\0");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].path, "src/main.rs");
         assert_eq!(out[0].status, FileStatus::Modified);
@@ -485,8 +564,7 @@ mod tests {
 
     #[test]
     fn parse_rename() {
-        let input = b"R100\0old.txt\0new.txt\0M\0other.rs\0";
-        let out = parse_name_status_z(input).unwrap();
+        let out = collect(b"R100\0old.txt\0new.txt\0M\0other.rs\0");
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].path, "new.txt");
         assert_eq!(out[0].old_path.as_deref(), Some("old.txt"));
@@ -497,8 +575,25 @@ mod tests {
 
     #[test]
     fn parse_empty() {
-        let out = parse_name_status_z(b"").unwrap();
+        let out = collect(b"");
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn callback_error_short_circuits() {
+        let input = b"M\0a\0M\0b\0M\0c\0";
+        let mut reader = Cursor::new(input);
+        let mut count = 0;
+        let res = stream_parse_name_status(&mut reader, &mut |_| {
+            count += 1;
+            if count == 2 {
+                Err(GitError::CommandFailed("stop".into()))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(res.is_err());
+        assert_eq!(count, 2);
     }
 
     #[test]

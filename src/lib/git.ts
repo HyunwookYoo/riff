@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   Branch,
   ChangedFile,
@@ -32,19 +32,28 @@ export function listRefs(path: string): Promise<Branch[]> {
   return invoke("list_refs", { path });
 }
 
+/**
+ * Stream the changed files between two refs. `onFile` is invoked once per
+ * entry as it arrives from the backend. The returned promise resolves when
+ * the stream ends, or rejects on error.
+ */
 export function diffFiles(
   path: string,
   start: string,
   target: string,
   mode: DiffMode,
   ignoreWhitespace: boolean,
-): Promise<ChangedFile[]> {
+  onFile: (file: ChangedFile) => void,
+): Promise<void> {
+  const channel = new Channel<ChangedFile>();
+  channel.onmessage = onFile;
   return invoke("diff_files", {
     path,
     start,
     target,
     mode,
     ignoreWhitespace,
+    onFile: channel,
   });
 }
 

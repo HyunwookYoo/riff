@@ -50,31 +50,48 @@
     }
   }
 
+  // Monotonic id so a stale stream from a cancelled compare can't poison the
+  // newer one's state. The Rust side also kills its previous child, but events
+  // already in flight on the JS bus would otherwise still land.
+  let compareSession = 0;
+
   async function compare() {
     if (!appState.repoPath || !appState.startBranch || !appState.targetBranch) {
       appState.error = "repo, start, and target are required";
       return;
     }
+    const session = ++compareSession;
     appState.loading = true;
     appState.error = null;
+    appState.files = [];
+    appState.selectedFile = null;
+
     try {
-      appState.files = await diffFiles(
+      await diffFiles(
         appState.repoPath,
         appState.startBranch,
         appState.targetBranch,
         appState.mode,
         appState.ignoreWhitespace,
-      );
-      appState.selectedFile = appState.files[0] ?? null;
-      void preloadLanguages(
-        appState.files.map((f) => detectLanguage(f.path)),
+        (file) => {
+          if (session !== compareSession) return;
+          appState.files.push(file);
+          if (!appState.selectedFile) {
+            appState.selectedFile = file;
+          }
+          void preloadLanguages([detectLanguage(file.path)]);
+        },
       );
     } catch (e) {
-      appState.error = String(e);
-      appState.files = [];
-      appState.selectedFile = null;
+      if (session === compareSession) {
+        appState.error = String(e);
+        appState.files = [];
+        appState.selectedFile = null;
+      }
     } finally {
-      appState.loading = false;
+      if (session === compareSession) {
+        appState.loading = false;
+      }
     }
   }
 

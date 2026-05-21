@@ -44,6 +44,9 @@
   <header>
     <span>Files</span>
     <span class="count">{appState.files.length}</span>
+    {#if appState.loading && appState.files.length > 0}
+      <span class="scanning">Scanning…</span>
+    {/if}
     <button
       type="button"
       class="view-toggle"
@@ -110,8 +113,17 @@
   .count {
     font-weight: 400;
     opacity: 0.6;
-    margin-right: auto;
     margin-left: 6px;
+  }
+  .scanning {
+    font-weight: 400;
+    opacity: 0.6;
+    text-transform: none;
+    letter-spacing: 0;
+    font-style: italic;
+  }
+  .view-toggle {
+    margin-left: auto;
   }
   .view-toggle {
     font-size: 0.85em;
