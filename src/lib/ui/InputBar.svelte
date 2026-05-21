@@ -10,6 +10,8 @@
     validateRepo,
   } from "$lib/git";
   import { chooseTheme } from "$lib/theme";
+  import { detectLanguage } from "$lib/diff/lang";
+  import { preloadLanguages } from "$lib/diff/shiki";
   import type { ThemeChoice } from "$lib/types";
 
   let pathInput = $state(appState.repoPath);
@@ -64,6 +66,9 @@
         appState.ignoreWhitespace,
       );
       appState.selectedFile = appState.files[0] ?? null;
+      void preloadLanguages(
+        appState.files.map((f) => detectLanguage(f.path)),
+      );
     } catch (e) {
       appState.error = String(e);
       appState.files = [];

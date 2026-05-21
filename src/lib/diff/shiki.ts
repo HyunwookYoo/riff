@@ -100,3 +100,26 @@ import { appState } from "../store.svelte";
 export function isDarkMode(): boolean {
   return appState.effectiveTheme === "dark";
 }
+
+/**
+ * Warm the Shiki highlighter in the background so the first file click
+ * doesn't pay for `createHighlighter`. Safe to call multiple times.
+ */
+export function preheatHighlighter(): void {
+  void getHighlighter();
+}
+
+/**
+ * Background-load the given Shiki language IDs (deduped). Nulls are skipped.
+ * Errors per language are swallowed — preload is best-effort.
+ */
+export async function preloadLanguages(
+  langs: Iterable<string | null>,
+): Promise<void> {
+  const unique = new Set<string>();
+  for (const l of langs) {
+    if (l) unique.add(l);
+  }
+  if (unique.size === 0) return;
+  await Promise.allSettled(Array.from(unique).map((l) => ensureLang(l)));
+}

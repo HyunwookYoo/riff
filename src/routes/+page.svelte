@@ -9,6 +9,7 @@
   import { loadState } from "$lib/git";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
   import { getActiveDiffView } from "$lib/diff/activeView";
+  import { preheatHighlighter } from "$lib/diff/shiki";
   import { checkForUpdate } from "$lib/updater";
 
   let pendingUpdate: Awaited<ReturnType<typeof checkForUpdate>> = null;
@@ -23,6 +24,7 @@
     }
     applyTheme();
     subscribeSystemTheme();
+    preheatHighlighter();
 
     pendingUpdate = await checkForUpdate();
     if (pendingUpdate) {
