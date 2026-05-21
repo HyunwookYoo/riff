@@ -22,6 +22,10 @@ class AppState {
   effectiveTheme = $state<"light" | "dark">("light");
   fileViewMode = $state<"flat" | "tree">("flat");
   ignoreWhitespace = $state(false);
+  availableUpdate = $state<{ version: string; notes: string | null } | null>(
+    null,
+  );
+  updateInstalling = $state(false);
 }
 
 export const appState = new AppState();

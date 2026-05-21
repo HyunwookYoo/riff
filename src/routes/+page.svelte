@@ -9,6 +9,9 @@
   import { loadState } from "$lib/git";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
   import { getActiveDiffView } from "$lib/diff/activeView";
+  import { checkForUpdate } from "$lib/updater";
+
+  let pendingUpdate: Awaited<ReturnType<typeof checkForUpdate>> = null;
 
   onMount(async () => {
     try {
@@ -20,7 +23,27 @@
     }
     applyTheme();
     subscribeSystemTheme();
+
+    pendingUpdate = await checkForUpdate();
+    if (pendingUpdate) {
+      appState.availableUpdate = {
+        version: pendingUpdate.version,
+        notes: pendingUpdate.notes,
+      };
+    }
   });
+
+  async function installUpdate() {
+    if (!pendingUpdate || appState.updateInstalling) return;
+    appState.updateInstalling = true;
+    try {
+      await pendingUpdate.update.downloadAndInstall();
+      // App will exit / restart on success.
+    } catch (e) {
+      console.warn("update install failed:", e);
+      appState.updateInstalling = false;
+    }
+  }
 
   function moveSelection(delta: 1 | -1) {
     if (appState.files.length === 0) return;
@@ -75,6 +98,23 @@
 
 <div class="app">
   <InputBar />
+  {#if appState.availableUpdate}
+    <div class="update-banner">
+      <span>
+        Update available: v{appState.availableUpdate.version}
+      </span>
+      <button
+        class="primary"
+        onclick={installUpdate}
+        disabled={appState.updateInstalling}
+      >
+        {appState.updateInstalling ? "Installing…" : "Install and restart"}
+      </button>
+      <button onclick={() => (appState.availableUpdate = null)}>
+        Later
+      </button>
+    </div>
+  {/if}
   <div class="body">
     <FileList />
     <main class="diff">
@@ -148,5 +188,35 @@
     justify-content: center;
     color: var(--muted);
     font-size: 0.9em;
+  }
+  .update-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--selected);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9em;
+  }
+  .update-banner span {
+    flex: 1;
+  }
+  .update-banner button {
+    font-size: 0.85em;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: inherit;
+    cursor: pointer;
+  }
+  .update-banner button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+  .update-banner button:disabled {
+    cursor: default;
+    opacity: 0.6;
   }
 </style>
