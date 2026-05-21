@@ -12,6 +12,22 @@ const LARGE_FILE_BYTES: u64 = 1_000_000;
 /// Bytes scanned for NUL when sniffing for binary content.
 const BINARY_SNIFF_BYTES: usize = 8192;
 
+/// `Command::new("git")` with `CREATE_NO_WINDOW` on Windows so spawning git
+/// from a GUI app doesn't flash a console window. No-op on other platforms.
+fn git_command() -> Command {
+    let cmd = Command::new("git");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut cmd = cmd;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        return cmd;
+    }
+    #[cfg(not(windows))]
+    cmd
+}
+
 /// Long-lived git CLI client. Holds a per-repo session with persistent
 /// `git cat-file --batch-check` and `--batch` processes so that file_diff
 /// doesn't pay process-spawn cost (and Defender scan) per call.
@@ -49,7 +65,7 @@ enum BatchContent {
 
 impl BatchProcess {
     fn spawn(repo: &Path, mode_arg: &str) -> Result<Self, GitError> {
-        let mut child = Command::new("git")
+        let mut child = git_command()
             .arg("-C")
             .arg(repo)
             .args(["cat-file", mode_arg])
@@ -161,7 +177,7 @@ impl Session {
         if let Some(v) = self.merge_base_cache.get(&key) {
             return Ok(v.clone());
         }
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(&self.repo_path)
             .args(["merge-base", a, b])
@@ -190,7 +206,7 @@ impl GitCli {
     }
 
     fn run(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
-        let output = Command::new("git").arg("-C").arg(path).args(args).output()?;
+        let output = git_command().arg("-C").arg(path).args(args).output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(GitError::CommandFailed(stderr));
@@ -325,7 +341,7 @@ impl GitLayer for GitCli {
         }
         args.push(&spec);
 
-        let mut child = Command::new("git")
+        let mut child = git_command()
             .arg("-C")
             .arg(path)
             .args(&args)
