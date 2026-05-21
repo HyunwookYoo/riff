@@ -8,28 +8,30 @@ use git::{Branch, ChangedFile, DiffMode, FileDiff, GitCli, GitError, GitLayer};
 use store::{PersistedState, StoreError};
 
 #[tauri::command]
-fn validate_repo(path: String) -> Result<(), GitError> {
-    GitCli::new().validate_repo(Path::new(&path))
+fn validate_repo(state: tauri::State<GitCli>, path: String) -> Result<(), GitError> {
+    state.validate_repo(Path::new(&path))
 }
 
 #[tauri::command]
-fn list_refs(path: String) -> Result<Vec<Branch>, GitError> {
-    GitCli::new().list_refs(Path::new(&path))
+fn list_refs(state: tauri::State<GitCli>, path: String) -> Result<Vec<Branch>, GitError> {
+    state.list_refs(Path::new(&path))
 }
 
 #[tauri::command]
 fn diff_files(
+    state: tauri::State<GitCli>,
     path: String,
     start: String,
     target: String,
     mode: DiffMode,
     ignore_whitespace: bool,
 ) -> Result<Vec<ChangedFile>, GitError> {
-    GitCli::new().diff_files(Path::new(&path), &start, &target, mode, ignore_whitespace)
+    state.diff_files(Path::new(&path), &start, &target, mode, ignore_whitespace)
 }
 
 #[tauri::command]
 fn file_diff(
+    state: tauri::State<GitCli>,
     path: String,
     start: String,
     target: String,
@@ -38,7 +40,7 @@ fn file_diff(
     old_path: Option<String>,
     force: bool,
 ) -> Result<FileDiff, GitError> {
-    GitCli::new().file_diff(
+    state.file_diff(
         Path::new(&path),
         &start,
         &target,
@@ -75,6 +77,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(GitCli::new())
         .invoke_handler(tauri::generate_handler![
             validate_repo,
             list_refs,

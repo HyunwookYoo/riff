@@ -1,5 +1,8 @@
-use std::path::Path;
-use std::process::Command;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::Mutex;
 
 use super::{Branch, BranchKind, ChangedFile, DiffMode, FileDiff, FileStatus, GitError, GitLayer};
 
@@ -9,33 +12,186 @@ const LARGE_FILE_BYTES: u64 = 1_000_000;
 /// Bytes scanned for NUL when sniffing for binary content.
 const BINARY_SNIFF_BYTES: usize = 8192;
 
-pub struct GitCli;
+/// Long-lived git CLI client. Holds a per-repo session with persistent
+/// `git cat-file --batch-check` and `--batch` processes so that file_diff
+/// doesn't pay process-spawn cost (and Defender scan) per call.
+pub struct GitCli {
+    session: Mutex<Option<Session>>,
+}
+
+struct Session {
+    repo_path: PathBuf,
+    batch_check: BatchProcess,
+    batch: BatchProcess,
+    merge_base_cache: HashMap<(String, String), String>,
+}
+
+/// A long-running `git cat-file` process kept around for a single repo.
+/// Caller writes a spec on stdin and reads the response from stdout.
+struct BatchProcess {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+enum BatchResponse {
+    Found { size: u64 },
+    Missing,
+}
+
+enum BatchContent {
+    Found { bytes: Vec<u8> },
+    Missing,
+}
+
+impl BatchProcess {
+    fn spawn(repo: &Path, mode_arg: &str) -> Result<Self, GitError> {
+        let mut child = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["cat-file", mode_arg])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| GitError::CommandFailed("batch stdin not piped".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .map(BufReader::new)
+            .ok_or_else(|| GitError::CommandFailed("batch stdout not piped".into()))?;
+        Ok(Self {
+            child,
+            stdin,
+            stdout,
+        })
+    }
+
+    fn write_spec(&mut self, spec: &str) -> Result<(), GitError> {
+        self.stdin.write_all(spec.as_bytes())?;
+        self.stdin.write_all(b"\n")?;
+        self.stdin.flush()?;
+        Ok(())
+    }
+
+    fn read_header(&mut self) -> Result<BatchHeader, GitError> {
+        let mut line = String::new();
+        let n = self.stdout.read_line(&mut line)?;
+        if n == 0 {
+            return Err(GitError::CommandFailed("batch process EOF".into()));
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.ends_with(" missing") {
+            return Ok(BatchHeader::Missing);
+        }
+        let mut parts = trimmed.splitn(3, ' ');
+        let _oid = parts.next();
+        let _ty = parts.next();
+        let size: u64 = parts
+            .next()
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| GitError::Parse(format!("bad batch header: {trimmed}")))?;
+        Ok(BatchHeader::Found { size })
+    }
+
+    /// `--batch-check` mode: write a spec, read one response line.
+    fn query_size(&mut self, spec: &str) -> Result<BatchResponse, GitError> {
+        self.write_spec(spec)?;
+        Ok(match self.read_header()? {
+            BatchHeader::Found { size } => BatchResponse::Found { size },
+            BatchHeader::Missing => BatchResponse::Missing,
+        })
+    }
+
+    /// `--batch` mode: write a spec, read header + content + trailing newline.
+    fn query_content(&mut self, spec: &str) -> Result<BatchContent, GitError> {
+        self.write_spec(spec)?;
+        match self.read_header()? {
+            BatchHeader::Missing => Ok(BatchContent::Missing),
+            BatchHeader::Found { size } => {
+                let mut buf = vec![0u8; size as usize];
+                self.stdout.read_exact(&mut buf)?;
+                let mut nl = [0u8; 1];
+                self.stdout.read_exact(&mut nl)?;
+                if nl[0] != b'\n' {
+                    return Err(GitError::Parse(
+                        "batch content missing trailing newline".into(),
+                    ));
+                }
+                Ok(BatchContent::Found { bytes: buf })
+            }
+        }
+    }
+}
+
+enum BatchHeader {
+    Found { size: u64 },
+    Missing,
+}
+
+impl Drop for BatchProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Session {
+    fn new(repo: &Path) -> Result<Self, GitError> {
+        let batch_check = BatchProcess::spawn(repo, "--batch-check")?;
+        let batch = BatchProcess::spawn(repo, "--batch")?;
+        Ok(Self {
+            repo_path: repo.to_path_buf(),
+            batch_check,
+            batch,
+            merge_base_cache: HashMap::new(),
+        })
+    }
+
+    /// Resolve the merge-base of two refs, caching the result for the session.
+    fn merge_base(&mut self, a: &str, b: &str) -> Result<String, GitError> {
+        let key = (a.to_string(), b.to_string());
+        if let Some(v) = self.merge_base_cache.get(&key) {
+            return Ok(v.clone());
+        }
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&self.repo_path)
+            .args(["merge-base", a, b])
+            .output()?;
+        if !out.status.success() {
+            return Err(GitError::CommandFailed(format!(
+                "no merge-base between {a} and {b}"
+            )));
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() {
+            return Err(GitError::CommandFailed(format!(
+                "no merge-base between {a} and {b}"
+            )));
+        }
+        self.merge_base_cache.insert(key, s.clone());
+        Ok(s)
+    }
+}
 
 impl GitCli {
     pub fn new() -> Self {
-        Self
+        Self {
+            session: Mutex::new(None),
+        }
     }
 
     fn run(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
         let output = Command::new("git").arg("-C").arg(path).args(args).output()?;
-
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(GitError::CommandFailed(stderr));
         }
         Ok(output.stdout)
-    }
-
-    /// Like `run`, but returns `Ok(None)` when git exits nonzero (e.g. object missing
-    /// because the file didn't exist at that ref). Use only for queries where absence
-    /// is a valid answer.
-    fn run_optional(&self, path: &Path, args: &[&str]) -> Result<Option<Vec<u8>>, GitError> {
-        let output = Command::new("git").arg("-C").arg(path).args(args).output()?;
-        if output.status.success() {
-            Ok(Some(output.stdout))
-        } else {
-            Ok(None)
-        }
     }
 }
 
@@ -65,6 +221,25 @@ fn is_binary(bytes: &[u8]) -> bool {
     head.contains(&0)
 }
 
+/// Ensure the cached session targets `path`. Drops the previous session
+/// (which terminates its child processes) before spawning a new one.
+fn ensure_session(
+    guard: &mut std::sync::MutexGuard<'_, Option<Session>>,
+    path: &Path,
+) -> Result<(), GitError> {
+    let needs_new = match guard.as_ref() {
+        Some(s) => s.repo_path != path,
+        None => true,
+    };
+    if needs_new {
+        // Drop the old session first so its batch processes shut down before
+        // we spawn new ones — keeps the process count bounded.
+        guard.take();
+        **guard = Some(Session::new(path)?);
+    }
+    Ok(())
+}
+
 impl GitLayer for GitCli {
     fn validate_repo(&self, path: &Path) -> Result<(), GitError> {
         if !path.exists() {
@@ -72,6 +247,8 @@ impl GitLayer for GitCli {
         }
         self.run(path, &["rev-parse", "--git-dir"])
             .map_err(|_| GitError::NotARepo(path.display().to_string()))?;
+        let mut guard = self.session.lock().unwrap();
+        ensure_session(&mut guard, path)?;
         Ok(())
     }
 
@@ -165,9 +342,12 @@ impl GitLayer for GitCli {
             validate_path(p)?;
         }
 
-        // Resolve the "old" ref. For three-dot, that's merge-base(start, target).
+        let mut guard = self.session.lock().unwrap();
+        ensure_session(&mut guard, path)?;
+        let session = guard.as_mut().expect("ensure_session populated guard");
+
         let old_ref = match mode {
-            DiffMode::ThreeDot => self.merge_base(path, start, target)?,
+            DiffMode::ThreeDot => session.merge_base(start, target)?,
             DiffMode::TwoDot => start.to_string(),
         };
         let new_ref = target.to_string();
@@ -176,9 +356,14 @@ impl GitLayer for GitCli {
         let old_spec = format!("{old_ref}:{old_target}");
         let new_spec = format!("{new_ref}:{file_path}");
 
-        // Sizes (None = file absent on that side, e.g. add or delete)
-        let old_size = self.cat_file_size(path, &old_spec)?;
-        let new_size = self.cat_file_size(path, &new_spec)?;
+        let old_size = match session.batch_check.query_size(&old_spec)? {
+            BatchResponse::Found { size } => Some(size),
+            BatchResponse::Missing => None,
+        };
+        let new_size = match session.batch_check.query_size(&new_spec)? {
+            BatchResponse::Found { size } => Some(size),
+            BatchResponse::Missing => None,
+        };
 
         let max_side = old_size.unwrap_or(0).max(new_size.unwrap_or(0));
         if !force && max_side > LARGE_FILE_BYTES {
@@ -189,14 +374,18 @@ impl GitLayer for GitCli {
         }
 
         let old_bytes = if old_size.is_some() {
-            self.run_optional(path, &["show", &old_spec])?
-                .unwrap_or_default()
+            match session.batch.query_content(&old_spec)? {
+                BatchContent::Found { bytes } => bytes,
+                BatchContent::Missing => Vec::new(),
+            }
         } else {
             Vec::new()
         };
         let new_bytes = if new_size.is_some() {
-            self.run_optional(path, &["show", &new_spec])?
-                .unwrap_or_default()
+            match session.batch.query_content(&new_spec)? {
+                BatchContent::Found { bytes } => bytes,
+                BatchContent::Missing => Vec::new(),
+            }
         } else {
             Vec::new()
         };
@@ -214,30 +403,6 @@ impl GitLayer for GitCli {
             old_size: old_size.unwrap_or(0),
             new_size: new_size.unwrap_or(0),
         })
-    }
-}
-
-impl GitCli {
-    fn merge_base(&self, path: &Path, a: &str, b: &str) -> Result<String, GitError> {
-        let out = self.run(path, &["merge-base", a, b])?;
-        let s = String::from_utf8_lossy(&out).trim().to_string();
-        if s.is_empty() {
-            return Err(GitError::CommandFailed(format!(
-                "no merge-base between {a} and {b}"
-            )));
-        }
-        Ok(s)
-    }
-
-    fn cat_file_size(&self, path: &Path, spec: &str) -> Result<Option<u64>, GitError> {
-        let Some(out) = self.run_optional(path, &["cat-file", "-s", spec])? else {
-            return Ok(None);
-        };
-        let s = String::from_utf8_lossy(&out);
-        s.trim()
-            .parse::<u64>()
-            .map(Some)
-            .map_err(|_| GitError::Parse(format!("cat-file -s output not a number: {s}")))
     }
 }
 
