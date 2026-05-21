@@ -1,6 +1,11 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import type { ChangedFile, FileStatus } from "$lib/types";
+  import { buildTree } from "./tree";
+  import TreeNode from "./TreeNode.svelte";
+
+  const tree = $derived(buildTree(appState.files));
+  let collapsed = $state(new Set<string>());
 
   function badge(s: FileStatus): string {
     switch (s) {
@@ -22,31 +27,62 @@
   function select(f: ChangedFile) {
     appState.selectedFile = f;
   }
+
+  function toggleDir(path: string) {
+    const next = new Set(collapsed);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    collapsed = next;
+  }
+
+  function toggleViewMode() {
+    appState.fileViewMode = appState.fileViewMode === "flat" ? "tree" : "flat";
+  }
 </script>
 
 <aside class="file-list">
   <header>
     <span>Files</span>
     <span class="count">{appState.files.length}</span>
+    <button
+      type="button"
+      class="view-toggle"
+      title="Toggle flat/tree view"
+      onclick={toggleViewMode}
+    >
+      {appState.fileViewMode === "flat" ? "Tree" : "Flat"}
+    </button>
   </header>
-  <ul>
-    {#if appState.files.length === 0 && !appState.loading}
-      <li class="empty">No changed files.</li>
-    {/if}
-    {#each appState.files as f (f.path)}
-      <li>
-        <button
-          type="button"
-          class:active={appState.selectedFile?.path === f.path}
-          onclick={() => select(f)}
-          title={f.old_path ? `${f.old_path} → ${f.path}` : f.path}
-        >
-          <span class="badge" data-status={f.status}>{badge(f.status)}</span>
-          <span class="path">{f.path}</span>
-        </button>
-      </li>
-    {/each}
-  </ul>
+
+  {#if appState.fileViewMode === "tree"}
+    <div class="scroll">
+      {#if appState.files.length === 0 && !appState.loading}
+        <div class="empty">No changed files.</div>
+      {/if}
+      {#each tree as node (node.kind === "dir" ? "d:" + node.path : "f:" + node.file.path)}
+        <TreeNode {node} {collapsed} onToggle={toggleDir} />
+      {/each}
+    </div>
+  {:else}
+    <ul>
+      {#if appState.files.length === 0 && !appState.loading}
+        <li class="empty">No changed files.</li>
+      {/if}
+      {#each appState.files as f (f.path)}
+        <li>
+          <button
+            type="button"
+            class:active={appState.selectedFile?.path === f.path}
+            onclick={() => select(f)}
+            title={f.old_path ? `${f.old_path} → ${f.path}` : f.path}
+          >
+            <span class="badge" data-status={f.status}>{badge(f.status)}</span>
+            <span class="path">{f.path}</span>
+          </button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 </aside>
 
 <style>
@@ -69,10 +105,26 @@
     letter-spacing: 0.05em;
     opacity: 0.7;
     border-bottom: 1px solid var(--border);
+    gap: 8px;
   }
   .count {
     font-weight: 400;
     opacity: 0.6;
+    margin-right: auto;
+    margin-left: 6px;
+  }
+  .view-toggle {
+    font-size: 0.85em;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--input-bg);
+    color: inherit;
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+    opacity: 1;
   }
   ul {
     list-style: none;
@@ -81,12 +133,16 @@
     overflow-y: auto;
     flex: 1;
   }
+  .scroll {
+    overflow-y: auto;
+    flex: 1;
+  }
   .empty {
     padding: 12px 10px;
     color: var(--muted);
     font-size: 0.85em;
   }
-  button {
+  ul button {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -100,10 +156,10 @@
     font-size: 0.85em;
     font-family: var(--mono);
   }
-  button:hover {
+  ul button:hover {
     background: var(--hover);
   }
-  button.active {
+  ul button.active {
     background: var(--selected);
   }
   .badge {

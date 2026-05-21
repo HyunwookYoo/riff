@@ -1,13 +1,15 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { EditorView } from "@codemirror/view";
+  import { EditorView, keymap } from "@codemirror/view";
   import { EditorState, type Extension } from "@codemirror/state";
   import { MergeView, unifiedMergeView } from "@codemirror/merge";
+  import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
   import { fileDiff } from "$lib/git";
   import type { ChangedFile, FileDiff } from "$lib/types";
-  import { detectLanguage } from "$lib/diff/lang";
+  import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
+  import { setActiveDiffView } from "$lib/diff/activeView";
 
   let host: HTMLDivElement;
   let mergeView: MergeView | null = null;
@@ -16,13 +18,24 @@
   let pending = $state(false);
   let loadError = $state<string | null>(null);
   let detectedLang = $state<string | null>(null);
+  let langOverride = $state<string | null>(null);
 
-  // Re-render whenever the selected file, view mode, or repo session changes.
+  // Reset override whenever the selected file changes.
+  $effect(() => {
+    void appState.selectedFile;
+    langOverride = null;
+  });
+
+  // Re-render whenever the selected file, view mode, theme, or override changes.
   $effect(() => {
     const file = appState.selectedFile;
     const mode = appState.viewMode;
+    const theme = appState.effectiveTheme;
+    const ov = langOverride;
     void file;
     void mode;
+    void theme;
+    void ov;
     load(false);
   });
 
@@ -58,15 +71,18 @@
   async function mount(file: ChangedFile, oldText: string, newText: string) {
     if (!host) return;
     detectedLang = detectLanguage(file.path);
+    const effectiveLang = langOverride ?? detectedLang;
     const dark = isDarkMode();
     const [oldExt, newExt] = await Promise.all([
-      shikiExtension(oldText, detectedLang, dark),
-      shikiExtension(newText, detectedLang, dark),
+      shikiExtension(oldText, effectiveLang, dark),
+      shikiExtension(newText, effectiveLang, dark),
     ]);
 
     const baseExts: Extension[] = [
       EditorView.editable.of(false),
       EditorView.lineWrapping,
+      search({ top: true }),
+      keymap.of(searchKeymap),
     ];
 
     if (appState.viewMode === "side-by-side") {
@@ -82,6 +98,7 @@
         parent: host,
         collapseUnchanged: { margin: 3, minSize: 4 },
       });
+      setActiveDiffView(mergeView.b);
     } else {
       unifiedView = new EditorView({
         state: EditorState.create({
@@ -98,10 +115,12 @@
         }),
         parent: host,
       });
+      setActiveDiffView(unifiedView);
     }
   }
 
   function teardown() {
+    setActiveDiffView(null);
     mergeView?.destroy();
     mergeView = null;
     unifiedView?.destroy();
@@ -125,8 +144,23 @@
 <div class="diffview">
   <div class="toolbar">
     <div class="meta">
-      {#if detectedLang && diff?.kind === "text"}
-        <span class="lang">{detectedLang}</span>
+      {#if diff?.kind === "text"}
+        <select
+          class="lang"
+          title="Override language"
+          value={langOverride ?? ""}
+          onchange={(e) => {
+            const v = (e.currentTarget as HTMLSelectElement).value;
+            langOverride = v === "" ? null : v;
+          }}
+        >
+          <option value="">
+            Auto{detectedLang ? ` (${detectedLang})` : " (plain)"}
+          </option>
+          {#each supportedLanguages as l (l)}
+            <option value={l}>{l}</option>
+          {/each}
+        </select>
       {/if}
       {#if diff && diff.kind !== "text"}
         <span class="sizes">
@@ -196,6 +230,12 @@
     font-family: var(--mono);
   }
   .lang {
+    font-size: 0.85em;
+    padding: 1px 4px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: inherit;
     text-transform: lowercase;
   }
   .modes {

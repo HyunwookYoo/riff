@@ -75,6 +75,7 @@ pub trait GitLayer {
         start: &str,
         target: &str,
         mode: DiffMode,
+        ignore_whitespace: bool,
     ) -> Result<Vec<ChangedFile>, GitError>;
     fn file_diff(
         &self,

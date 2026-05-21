@@ -127,6 +127,7 @@ impl GitLayer for GitCli {
         start: &str,
         target: &str,
         mode: DiffMode,
+        ignore_whitespace: bool,
     ) -> Result<Vec<ChangedFile>, GitError> {
         let start = validate_ref(start)?;
         let target = validate_ref(target)?;
@@ -136,16 +137,13 @@ impl GitLayer for GitCli {
             DiffMode::TwoDot => format!("{start}..{target}"),
         };
 
-        let stdout = self.run(
-            path,
-            &[
-                "diff",
-                "--name-status",
-                "-z",
-                "--find-renames",
-                &spec,
-            ],
-        )?;
+        let mut args = vec!["diff", "--name-status", "-z", "--find-renames"];
+        if ignore_whitespace {
+            args.push("-w");
+        }
+        args.push(&spec);
+
+        let stdout = self.run(path, &args)?;
 
         parse_name_status_z(&stdout)
     }

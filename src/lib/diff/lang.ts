@@ -71,3 +71,8 @@ export function detectLanguage(filePath: string): string | null {
   const ext = base.slice(dot + 1).toLowerCase();
   return BY_EXT[ext] ?? null;
 }
+
+/** Distinct, alphabetically sorted list of Shiki language IDs supported here. */
+export const supportedLanguages: string[] = Array.from(
+  new Set([...Object.values(BY_EXT), ...Object.values(BY_BASENAME)]),
+).sort();

@@ -95,9 +95,8 @@ export async function shikiExtension(
   });
 }
 
+import { appState } from "../store.svelte";
+
 export function isDarkMode(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia?.("(prefers-color-scheme: dark)").matches === true
-  );
+  return appState.effectiveTheme === "dark";
 }

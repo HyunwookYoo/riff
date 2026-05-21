@@ -3,7 +3,14 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { appState } from "$lib/store.svelte";
-  import { diffFiles, listRefs, validateRepo } from "$lib/git";
+  import {
+    addRecentRepo,
+    diffFiles,
+    listRefs,
+    validateRepo,
+  } from "$lib/git";
+  import { chooseTheme } from "$lib/theme";
+  import type { ThemeChoice } from "$lib/types";
 
   let pathInput = $state(appState.repoPath);
 
@@ -14,6 +21,7 @@
       await validateRepo(path);
       appState.repoPath = path;
       appState.branches = await listRefs(path);
+      appState.recentRepos = await addRecentRepo(path);
     } catch (e) {
       appState.error = String(e);
       appState.branches = [];
@@ -53,6 +61,7 @@
         appState.startBranch,
         appState.targetBranch,
         appState.mode,
+        appState.ignoreWhitespace,
       );
       appState.selectedFile = appState.files[0] ?? null;
     } catch (e) {
@@ -83,10 +92,16 @@
   <input
     type="text"
     class="path"
+    list="recent-repos"
     placeholder="Repository path (drag a folder, or click Browse)"
     bind:value={pathInput}
     onchange={onPathSubmit}
   />
+  <datalist id="recent-repos">
+    {#each appState.recentRepos as r (r)}
+      <option value={r}></option>
+    {/each}
+  </datalist>
   <button onclick={browse}>Browse…</button>
 
   <input
@@ -113,6 +128,21 @@
   <select bind:value={appState.mode} title="Diff mode">
     <option value="three-dot">3-dot (...)</option>
     <option value="two-dot">2-dot (..)</option>
+  </select>
+
+  <label class="check" title="Ignore whitespace changes (-w)">
+    <input type="checkbox" bind:checked={appState.ignoreWhitespace} />
+    <span>ws</span>
+  </label>
+
+  <select
+    title="Theme"
+    value={appState.theme}
+    onchange={(e) => chooseTheme((e.currentTarget as HTMLSelectElement).value as ThemeChoice)}
+  >
+    <option value="system">System</option>
+    <option value="light">Light</option>
+    <option value="dark">Dark</option>
   </select>
 
   <button class="primary" onclick={compare} disabled={appState.loading}>
@@ -171,5 +201,17 @@
   button:disabled {
     cursor: default;
     opacity: 0.5;
+  }
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85em;
+    cursor: pointer;
+    user-select: none;
+  }
+  .check input {
+    margin: 0;
+    cursor: pointer;
   }
 </style>

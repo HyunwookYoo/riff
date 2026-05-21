@@ -41,3 +41,10 @@ export type FileDiff =
     };
 
 export type ViewMode = "side-by-side" | "unified";
+
+export type ThemeChoice = "system" | "light" | "dark";
+
+export interface PersistedState {
+  recent_repos: string[];
+  theme: ThemeChoice;
+}

@@ -1,4 +1,10 @@
-import type { Branch, ChangedFile, DiffMode, ViewMode } from "./types";
+import type {
+  Branch,
+  ChangedFile,
+  DiffMode,
+  ThemeChoice,
+  ViewMode,
+} from "./types";
 
 class AppState {
   repoPath = $state("");
@@ -11,6 +17,11 @@ class AppState {
   loading = $state(false);
   error = $state<string | null>(null);
   viewMode = $state<ViewMode>("side-by-side");
+  recentRepos = $state<string[]>([]);
+  theme = $state<ThemeChoice>("system");
+  effectiveTheme = $state<"light" | "dark">("light");
+  fileViewMode = $state<"flat" | "tree">("flat");
+  ignoreWhitespace = $state(false);
 }
 
 export const appState = new AppState();
