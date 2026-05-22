@@ -9,6 +9,7 @@
   import type { ChangedFile, FileDiff } from "$lib/types";
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
+  import { fullLineChangePlugin } from "$lib/diff/fullLine";
   import { setActiveDiffView } from "$lib/diff/activeView";
   import { adjustFontSize, resetFontSize } from "$lib/font";
 
@@ -84,6 +85,7 @@
       EditorView.lineWrapping,
       search({ top: true }),
       keymap.of(searchKeymap),
+      fullLineChangePlugin,
     ];
 
     if (appState.viewMode === "side-by-side") {
@@ -364,7 +366,11 @@
     background: var(--diff-del-line) !important;
     box-shadow: inset 3px 0 var(--diff-del-border);
   }
+  /* Pure inserts/deletes don't need token bg on top of line bg — line bg
+     alone is the signal. Token bg stays only on modified-line pairs where
+     it points at the actual word-level change. */
+  :global(.cm-fullLineChange .cm-changedText),
   :global(.cm-deletedChunk .cm-deletedText) {
-    background: var(--diff-del-token) !important;
+    background: transparent !important;
   }
 </style>
