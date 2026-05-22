@@ -9,6 +9,8 @@ use thiserror::Error;
 
 const STATE_FILE: &str = "state.json";
 const MAX_RECENT: usize = 10;
+const MIN_FONT_SIZE: u8 = 8;
+const MAX_FONT_SIZE: u8 = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedState {
@@ -16,10 +18,16 @@ pub struct PersistedState {
     pub recent_repos: Vec<String>,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: u8,
 }
 
 fn default_theme() -> String {
     "system".into()
+}
+
+fn default_font_size() -> u8 {
+    13
 }
 
 impl Default for PersistedState {
@@ -27,6 +35,7 @@ impl Default for PersistedState {
         Self {
             recent_repos: Vec::new(),
             theme: default_theme(),
+            font_size: default_font_size(),
         }
     }
 }
@@ -96,5 +105,11 @@ pub fn remove_recent_repo(app: &AppHandle, repo: String) -> Result<Vec<String>, 
 pub fn set_theme(app: &AppHandle, theme: String) -> Result<(), StoreError> {
     let mut state = load(app)?;
     state.theme = theme;
+    save(app, &state)
+}
+
+pub fn set_font_size(app: &AppHandle, size: u8) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    state.font_size = size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
     save(app, &state)
 }

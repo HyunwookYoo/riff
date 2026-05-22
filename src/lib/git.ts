@@ -28,6 +28,10 @@ export function setTheme(theme: ThemeChoice): Promise<void> {
   return invoke("set_theme", { theme });
 }
 
+export function setFontSize(size: number): Promise<void> {
+  return invoke("set_font_size", { size });
+}
+
 export function listRefs(path: string): Promise<Branch[]> {
   return invoke("list_refs", { path });
 }

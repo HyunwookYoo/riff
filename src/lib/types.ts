@@ -47,4 +47,5 @@ export type ThemeChoice = "system" | "light" | "dark";
 export interface PersistedState {
   recent_repos: string[];
   theme: ThemeChoice;
+  font_size: number;
 }

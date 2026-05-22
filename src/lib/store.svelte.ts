@@ -21,6 +21,7 @@ class AppState {
   recentRepos = $state<string[]>([]);
   theme = $state<ThemeChoice>("system");
   effectiveTheme = $state<"light" | "dark">("light");
+  fontSize = $state<number>(13);
   fileViewMode = $state<"flat" | "tree">("flat");
   ignoreWhitespace = $state(false);
   availableUpdate = $state<{ version: string; notes: string | null } | null>(

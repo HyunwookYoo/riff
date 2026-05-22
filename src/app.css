@@ -21,7 +21,8 @@
   --diff-del-line: rgba(248, 81, 73, 0.08);
   --diff-del-token: rgba(248, 81, 73, 0.32);
   --diff-del-border: #cf222e;
-  --mono: "JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace;
+  --mono: "JetBrains Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
+  --diff-font-size: 13px;
 }
 
 :root[data-theme="dark"] {

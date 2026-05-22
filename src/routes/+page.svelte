@@ -8,6 +8,7 @@
   import { appState } from "$lib/store.svelte";
   import { loadState } from "$lib/git";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
+  import { adjustFontSize, applyFontSize, resetFontSize } from "$lib/font";
   import { getActiveDiffView } from "$lib/diff/activeView";
   import { preheatHighlighter } from "$lib/diff/shiki";
   import { checkForUpdate } from "$lib/updater";
@@ -19,11 +20,13 @@
       const s = await loadState();
       appState.recentRepos = s.recent_repos;
       appState.theme = s.theme;
+      appState.fontSize = s.font_size;
     } catch {
       // First-run / corrupt state: keep defaults silently.
     }
     applyTheme();
     subscribeSystemTheme();
+    applyFontSize();
     preheatHighlighter();
 
     pendingUpdate = await checkForUpdate();
@@ -72,7 +75,27 @@
       return;
     }
 
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd + = / + / - / 0 → diff font size
+      if (e.key === "=" || e.key === "+") {
+        void adjustFontSize(1);
+        e.preventDefault();
+        return;
+      }
+      if (e.key === "-") {
+        void adjustFontSize(-1);
+        e.preventDefault();
+        return;
+      }
+      if (e.key === "0") {
+        void resetFontSize();
+        e.preventDefault();
+        return;
+      }
+      return;
+    }
+
+    if (e.altKey) return;
 
     switch (e.key) {
       case "j":

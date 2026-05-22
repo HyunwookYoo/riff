@@ -83,6 +83,11 @@ fn set_theme(app: tauri::AppHandle, theme: String) -> Result<(), StoreError> {
     store::set_theme(&app, theme)
 }
 
+#[tauri::command]
+fn set_font_size(app: tauri::AppHandle, size: u8) -> Result<(), StoreError> {
+    store::set_font_size(&app, size)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -99,6 +104,7 @@ pub fn run() {
             add_recent_repo,
             remove_recent_repo,
             set_theme,
+            set_font_size,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

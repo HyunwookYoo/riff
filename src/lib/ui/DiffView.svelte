@@ -10,6 +10,7 @@
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
   import { setActiveDiffView } from "$lib/diff/activeView";
+  import { adjustFontSize, resetFontSize } from "$lib/font";
 
   let host: HTMLDivElement;
   let mergeView: MergeView | null = null;
@@ -169,6 +170,18 @@
       {/if}
     </div>
     <div class="modes">
+      <div class="font-size" title="Diff font size (Ctrl +/- / 0)">
+        <button type="button" onclick={() => adjustFontSize(-1)} aria-label="Decrease font size">A−</button>
+        <button
+          type="button"
+          class="size-reset"
+          onclick={() => resetFontSize()}
+          title="Reset to default"
+        >
+          {appState.fontSize}
+        </button>
+        <button type="button" onclick={() => adjustFontSize(1)} aria-label="Increase font size">A+</button>
+      </div>
       <button
         type="button"
         class:active={appState.viewMode === "side-by-side"}
@@ -241,6 +254,7 @@
   .modes {
     display: flex;
     gap: 4px;
+    align-items: center;
   }
   .modes button {
     padding: 2px 8px;
@@ -255,12 +269,42 @@
     background: var(--selected);
     border-color: var(--accent);
   }
+  .font-size {
+    display: inline-flex;
+    gap: 0;
+    margin-right: 8px;
+  }
+  .font-size button {
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.85em;
+    border-radius: 0;
+  }
+  .font-size button:first-child {
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+  }
+  .font-size button:last-child {
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+  }
+  .font-size button + button {
+    border-left: none;
+  }
+  .font-size .size-reset {
+    min-width: 28px;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.75;
+  }
   .host {
     flex: 1;
     overflow: auto;
     min-height: 0;
     font-family: var(--mono);
-    font-size: 0.85em;
+    font-size: var(--diff-font-size);
   }
   .host.hidden {
     display: none;
