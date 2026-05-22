@@ -1,5 +1,6 @@
 :root,
 :root[data-theme="light"] {
+  color-scheme: light;
   --bg: #ffffff;
   --fg: #1a1a1a;
   --muted: #6b7280;
@@ -12,10 +13,19 @@
   --accent: #2563eb;
   --error-bg: #fee2e2;
   --error-fg: #991b1b;
+  --info-bg: #fef3c7;
+  --info-fg: #78350f;
+  --diff-add-line: rgba(46, 160, 67, 0.1);
+  --diff-add-token: rgba(46, 160, 67, 0.35);
+  --diff-add-border: #1f883d;
+  --diff-del-line: rgba(248, 81, 73, 0.1);
+  --diff-del-token: rgba(248, 81, 73, 0.35);
+  --diff-del-border: #cf222e;
   --mono: "JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace;
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #1a1a1a;
   --fg: #e5e7eb;
   --muted: #9ca3af;
@@ -28,6 +38,14 @@
   --accent: #3b82f6;
   --error-bg: #450a0a;
   --error-fg: #fca5a5;
+  --info-bg: #422006;
+  --info-fg: #fde68a;
+  --diff-add-line: rgba(46, 160, 67, 0.1);
+  --diff-add-token: rgba(46, 160, 67, 0.35);
+  --diff-add-border: #3fb950;
+  --diff-del-line: rgba(248, 81, 73, 0.1);
+  --diff-del-token: rgba(248, 81, 73, 0.35);
+  --diff-del-border: #f85149;
 }
 
 :root {

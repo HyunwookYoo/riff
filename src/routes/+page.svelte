@@ -198,7 +198,8 @@
     align-items: center;
     gap: 10px;
     padding: 8px 12px;
-    background: var(--selected);
+    background: var(--info-bg);
+    color: var(--info-fg);
     border-bottom: 1px solid var(--border);
     font-size: 0.9em;
   }
@@ -211,7 +212,7 @@
     border-radius: 4px;
     border: 1px solid var(--border);
     background: var(--input-bg);
-    color: inherit;
+    color: var(--fg);
     cursor: pointer;
   }
   .update-banner button.primary {

@@ -302,22 +302,22 @@
     text-decoration: none !important;
   }
   :global(.cm-merge-b .cm-changedText) {
-    background: rgba(46, 160, 67, 0.35) !important;
+    background: var(--diff-add-token) !important;
   }
   :global(.cm-merge-b .cm-changedLine),
   :global(.cm-inlineChangedLine) {
-    background: rgba(46, 160, 67, 0.1) !important;
+    background: var(--diff-add-line) !important;
   }
   :global(.cm-merge-a .cm-changedText) {
-    background: rgba(248, 81, 73, 0.35) !important;
+    background: var(--diff-del-token) !important;
   }
   :global(.cm-merge-a .cm-changedLine) {
-    background: rgba(248, 81, 73, 0.1) !important;
+    background: var(--diff-del-line) !important;
   }
   :global(.cm-deletedChunk) {
-    background: rgba(248, 81, 73, 0.1) !important;
+    background: var(--diff-del-line) !important;
   }
   :global(.cm-deletedChunk .cm-deletedText) {
-    background: rgba(248, 81, 73, 0.35) !important;
+    background: var(--diff-del-token) !important;
   }
 </style>
