@@ -307,15 +307,18 @@
   :global(.cm-merge-b .cm-changedLine),
   :global(.cm-inlineChangedLine) {
     background: var(--diff-add-line) !important;
+    box-shadow: inset 3px 0 var(--diff-add-border);
   }
   :global(.cm-merge-a .cm-changedText) {
     background: var(--diff-del-token) !important;
   }
   :global(.cm-merge-a .cm-changedLine) {
     background: var(--diff-del-line) !important;
+    box-shadow: inset 3px 0 var(--diff-del-border);
   }
   :global(.cm-deletedChunk) {
     background: var(--diff-del-line) !important;
+    box-shadow: inset 3px 0 var(--diff-del-border);
   }
   :global(.cm-deletedChunk .cm-deletedText) {
     background: var(--diff-del-token) !important;

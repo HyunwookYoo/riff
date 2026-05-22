@@ -15,11 +15,11 @@
   --error-fg: #991b1b;
   --info-bg: #fef3c7;
   --info-fg: #78350f;
-  --diff-add-line: rgba(46, 160, 67, 0.1);
-  --diff-add-token: rgba(46, 160, 67, 0.35);
+  --diff-add-line: rgba(46, 160, 67, 0.08);
+  --diff-add-token: rgba(46, 160, 67, 0.32);
   --diff-add-border: #1f883d;
-  --diff-del-line: rgba(248, 81, 73, 0.1);
-  --diff-del-token: rgba(248, 81, 73, 0.35);
+  --diff-del-line: rgba(248, 81, 73, 0.08);
+  --diff-del-token: rgba(248, 81, 73, 0.32);
   --diff-del-border: #cf222e;
   --mono: "JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace;
 }
@@ -40,11 +40,11 @@
   --error-fg: #fca5a5;
   --info-bg: #422006;
   --info-fg: #fde68a;
-  --diff-add-line: rgba(46, 160, 67, 0.1);
-  --diff-add-token: rgba(46, 160, 67, 0.35);
+  --diff-add-line: rgba(63, 185, 80, 0.14);
+  --diff-add-token: rgba(63, 185, 80, 0.42);
   --diff-add-border: #3fb950;
-  --diff-del-line: rgba(248, 81, 73, 0.1);
-  --diff-del-token: rgba(248, 81, 73, 0.35);
+  --diff-del-line: rgba(248, 81, 73, 0.14);
+  --diff-del-token: rgba(248, 81, 73, 0.42);
   --diff-del-border: #f85149;
 }
 
