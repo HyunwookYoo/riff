@@ -83,6 +83,7 @@
     const baseExts: Extension[] = [
       EditorView.editable.of(false),
       EditorView.lineWrapping,
+      EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } }),
       search({ top: true }),
       keymap.of(searchKeymap),
       fullLineChangePlugin,
@@ -333,9 +334,6 @@
   }
   :global(.cm-editor) {
     height: 100%;
-  }
-  :global(.cm-scroller) {
-    font-family: var(--mono);
   }
   :global(.cm-merge-revert) {
     display: none;
