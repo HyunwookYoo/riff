@@ -334,6 +334,9 @@
   :global(.cm-editor) {
     height: 100%;
   }
+  :global(.cm-scroller) {
+    font-family: var(--mono);
+  }
   :global(.cm-merge-revert) {
     display: none;
   }
