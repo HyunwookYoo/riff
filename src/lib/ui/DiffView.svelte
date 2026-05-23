@@ -83,6 +83,7 @@
     const baseExts: Extension[] = [
       EditorView.editable.of(false),
       EditorView.lineWrapping,
+      EditorView.darkTheme.of(dark),
       EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } }),
       search({ top: true }),
       keymap.of(searchKeymap),
@@ -337,6 +338,10 @@
   }
   :global(.cm-merge-revert) {
     display: none;
+  }
+  :global(.cm-collapsedLines:hover) {
+    background: var(--hover) !important;
+    color: var(--fg) !important;
   }
 
   /* Default @codemirror/merge marks changed substrings with a bottom-gradient
