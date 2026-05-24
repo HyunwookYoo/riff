@@ -102,7 +102,12 @@ export function setMode(m: CompareMode): void {
   appState.files = [];
   appState.selectedFile = null;
   appState.error = null;
-  if (m === "worktree" && appState.repoPath) {
+  if (!appState.repoPath) return;
+  // Auto-reload after toggling. Worktree never needs inputs; branch needs
+  // both refs filled — otherwise leave it for the user to type and Compare.
+  if (m === "worktree") {
+    void compare();
+  } else if (appState.startBranch && appState.targetBranch) {
     void compare();
   }
 }
