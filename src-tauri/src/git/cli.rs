@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -43,6 +44,10 @@ struct Session {
     /// The currently in-flight `git diff` child for streaming diff_files.
     /// Replacing this slot is how we cancel an outstanding stream.
     diff_files_child: Option<Arc<Mutex<Option<Child>>>>,
+    /// Same pattern as `diff_files_child`, but for `worktree_files`. Each
+    /// worktree_files invocation spawns up to two children (diff + ls-files)
+    /// in sequence and stores the active one here.
+    worktree_files_child: Option<Arc<Mutex<Option<Child>>>>,
 }
 
 /// A long-running `git cat-file` process kept around for a single repo.
@@ -163,10 +168,12 @@ impl Drop for Session {
         // Batch processes clean themselves up via their own Drop, but an
         // in-flight diff_files child is owned by an Arc shared with the
         // streaming task — dropping our Arc reference alone won't kill it.
-        if let Some(arc) = self.diff_files_child.take() {
-            if let Some(mut child) = arc.lock().unwrap().take() {
-                let _ = child.kill();
-                let _ = child.wait();
+        for slot in [self.diff_files_child.take(), self.worktree_files_child.take()] {
+            if let Some(arc) = slot {
+                if let Some(mut child) = arc.lock().unwrap().take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
             }
         }
     }
@@ -182,6 +189,7 @@ impl Session {
             batch,
             merge_base_cache: HashMap::new(),
             diff_files_child: None,
+            worktree_files_child: None,
         })
     }
 
@@ -491,6 +499,194 @@ impl GitLayer for GitCli {
             new_size: new_size.unwrap_or(0),
         })
     }
+
+    fn worktree_files(
+        &self,
+        path: &Path,
+        ignore_whitespace: bool,
+        on_file: &mut dyn FnMut(ChangedFile) -> Result<(), GitError>,
+    ) -> Result<(), GitError> {
+        // Long-lived single kill slot for this invocation. A newer call replaces
+        // it in the session, which cancels whichever child we currently hold.
+        let kill_slot: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
+        {
+            let mut guard = self.session.lock().unwrap();
+            ensure_session(&mut guard, path)?;
+            let session = guard.as_mut().expect("ensure_session populated guard");
+            let prev = session.worktree_files_child.replace(kill_slot.clone());
+            drop(guard);
+            if let Some(prev) = prev {
+                if let Some(mut c) = prev.lock().unwrap().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+            }
+        }
+
+        // Phase 1: tracked changes via `git diff HEAD --name-status -z --find-renames [-w]`.
+        let mut diff_args = vec!["diff", "HEAD", "--name-status", "-z", "--find-renames"];
+        if ignore_whitespace {
+            diff_args.push("-w");
+        }
+        let mut diff_child = git_command()
+            .arg("-C")
+            .arg(path)
+            .args(&diff_args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let diff_stdout = diff_child
+            .stdout
+            .take()
+            .ok_or_else(|| GitError::CommandFailed("worktree diff stdout not piped".into()))?;
+        *kill_slot.lock().unwrap() = Some(diff_child);
+
+        let mut reader = BufReader::new(diff_stdout);
+        let parse_result = stream_parse_name_status(&mut reader, on_file);
+        if let Some(mut c) = kill_slot.lock().unwrap().take() {
+            let _ = c.wait();
+        }
+        if let Err(e) = parse_result {
+            clear_worktree_slot_if_ours(&self.session, &kill_slot);
+            return Err(e);
+        }
+
+        // If a newer call cancelled us, skip phase 2.
+        {
+            let guard = self.session.lock().unwrap();
+            let still_active = guard
+                .as_ref()
+                .and_then(|s| s.worktree_files_child.as_ref())
+                .map(|cur| Arc::ptr_eq(cur, &kill_slot))
+                .unwrap_or(false);
+            if !still_active {
+                return Ok(());
+            }
+        }
+
+        // Phase 2: untracked files via `git ls-files --others --exclude-standard -z`.
+        let mut ls_child = git_command()
+            .arg("-C")
+            .arg(path)
+            .args(["ls-files", "--others", "--exclude-standard", "-z"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let ls_stdout = ls_child
+            .stdout
+            .take()
+            .ok_or_else(|| GitError::CommandFailed("ls-files stdout not piped".into()))?;
+        *kill_slot.lock().unwrap() = Some(ls_child);
+
+        let mut reader = BufReader::new(ls_stdout);
+        let parse_result = stream_parse_ls_files(&mut reader, on_file);
+        if let Some(mut c) = kill_slot.lock().unwrap().take() {
+            let _ = c.wait();
+        }
+
+        clear_worktree_slot_if_ours(&self.session, &kill_slot);
+        parse_result
+    }
+
+    fn worktree_file_diff(
+        &self,
+        path: &Path,
+        file_path: &str,
+        old_path: Option<&str>,
+        status: FileStatus,
+        force: bool,
+    ) -> Result<FileDiff, GitError> {
+        validate_path(file_path)?;
+        if let Some(p) = old_path {
+            validate_path(p)?;
+        }
+
+        let mut guard = self.session.lock().unwrap();
+        ensure_session(&mut guard, path)?;
+        let session = guard.as_mut().expect("ensure_session populated guard");
+
+        let needs_head = !matches!(status, FileStatus::Added);
+        let needs_fs = !matches!(status, FileStatus::Deleted);
+
+        let head_target = old_path.unwrap_or(file_path);
+        let head_spec = format!("HEAD:{head_target}");
+        let old_size = if needs_head {
+            match session.batch_check.query_size(&head_spec)? {
+                BatchResponse::Found { size } => Some(size),
+                BatchResponse::Missing => None,
+            }
+        } else {
+            None
+        };
+
+        let fs_path = path.join(file_path);
+        let new_size = if needs_fs {
+            match fs::metadata(&fs_path) {
+                Ok(m) => Some(m.len()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(GitError::Io(e)),
+            }
+        } else {
+            None
+        };
+
+        let max_side = old_size.unwrap_or(0).max(new_size.unwrap_or(0));
+        if !force && max_side > LARGE_FILE_BYTES {
+            return Ok(FileDiff::TooLarge {
+                old_size: old_size.unwrap_or(0),
+                new_size: new_size.unwrap_or(0),
+            });
+        }
+
+        let old_bytes = if old_size.is_some() {
+            match session.batch.query_content(&head_spec)? {
+                BatchContent::Found { bytes } => bytes,
+                BatchContent::Missing => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        let new_bytes = if new_size.is_some() {
+            match fs::read(&fs_path) {
+                Ok(b) => b,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(e) => return Err(GitError::Io(e)),
+            }
+        } else {
+            Vec::new()
+        };
+
+        if is_binary(&old_bytes) || is_binary(&new_bytes) {
+            return Ok(FileDiff::Binary {
+                old_size: old_size.unwrap_or(0),
+                new_size: new_size.unwrap_or(0),
+            });
+        }
+
+        Ok(FileDiff::Text {
+            old_content: String::from_utf8_lossy(&old_bytes).into_owned(),
+            new_content: String::from_utf8_lossy(&new_bytes).into_owned(),
+            old_size: old_size.unwrap_or(0),
+            new_size: new_size.unwrap_or(0),
+        })
+    }
+}
+
+fn clear_worktree_slot_if_ours(
+    session: &Mutex<Option<Session>>,
+    kill_slot: &Arc<Mutex<Option<Child>>>,
+) {
+    let mut guard = session.lock().unwrap();
+    if let Some(s) = guard.as_mut() {
+        let still_ours = s
+            .worktree_files_child
+            .as_ref()
+            .map(|cur| Arc::ptr_eq(cur, kill_slot))
+            .unwrap_or(false);
+        if still_ours {
+            s.worktree_files_child = None;
+        }
+    }
 }
 
 /// Read one NUL-terminated field, returning the bytes without the trailing NUL.
@@ -567,6 +763,27 @@ fn bytes_to_string(b: &[u8]) -> Result<String, GitError> {
         .map_err(|_| GitError::Parse("path not utf-8".into()))
 }
 
+/// Streaming parser for `git ls-files -z` output. Each NUL-terminated path is
+/// emitted as a `ChangedFile { status: Added, old_path: None }`.
+fn stream_parse_ls_files<R: BufRead>(
+    reader: &mut R,
+    emit: &mut dyn FnMut(ChangedFile) -> Result<(), GitError>,
+) -> Result<(), GitError> {
+    loop {
+        let Some(p) = read_nul_field(reader)? else {
+            return Ok(());
+        };
+        if p.is_empty() {
+            continue;
+        }
+        emit(ChangedFile {
+            path: bytes_to_string(&p)?,
+            old_path: None,
+            status: FileStatus::Added,
+        })?;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,6 +857,36 @@ mod tests {
         assert!(validate_path("-rf").is_err());
         assert!(validate_path("src/main.rs").is_ok());
         assert!(validate_path("a b/c.txt").is_ok());
+    }
+
+    #[test]
+    fn parse_ls_files_untracked() {
+        let input = b"src/new.rs\0docs/draft.md\0";
+        let mut out = Vec::new();
+        let mut reader = Cursor::new(input);
+        stream_parse_ls_files(&mut reader, &mut |f| {
+            out.push(f);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].path, "src/new.rs");
+        assert_eq!(out[0].status, FileStatus::Added);
+        assert!(out[0].old_path.is_none());
+        assert_eq!(out[1].path, "docs/draft.md");
+        assert_eq!(out[1].status, FileStatus::Added);
+    }
+
+    #[test]
+    fn parse_ls_files_empty() {
+        let mut out = Vec::new();
+        let mut reader = Cursor::new(b"");
+        stream_parse_ls_files(&mut reader, &mut |f| {
+            out.push(f);
+            Ok(())
+        })
+        .unwrap();
+        assert!(out.is_empty());
     }
 
     #[test]

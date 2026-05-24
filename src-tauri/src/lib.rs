@@ -4,7 +4,7 @@ pub mod store;
 
 use std::path::Path;
 
-use git::{Branch, ChangedFile, DiffMode, FileDiff, GitCli, GitError, GitLayer};
+use git::{Branch, ChangedFile, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer};
 use store::{PersistedState, StoreError};
 
 #[tauri::command]
@@ -64,6 +64,38 @@ fn file_diff(
 }
 
 #[tauri::command]
+fn worktree_files(
+    state: tauri::State<GitCli>,
+    path: String,
+    ignore_whitespace: bool,
+    on_file: tauri::ipc::Channel<ChangedFile>,
+) -> Result<(), GitError> {
+    state.worktree_files(Path::new(&path), ignore_whitespace, &mut |f| {
+        on_file
+            .send(f)
+            .map_err(|e| GitError::CommandFailed(e.to_string()))
+    })
+}
+
+#[tauri::command]
+fn worktree_file_diff(
+    state: tauri::State<GitCli>,
+    path: String,
+    file_path: String,
+    old_path: Option<String>,
+    status: FileStatus,
+    force: bool,
+) -> Result<FileDiff, GitError> {
+    state.worktree_file_diff(
+        Path::new(&path),
+        &file_path,
+        old_path.as_deref(),
+        status,
+        force,
+    )
+}
+
+#[tauri::command]
 fn load_state(app: tauri::AppHandle) -> Result<PersistedState, StoreError> {
     store::load(&app)
 }
@@ -100,6 +132,8 @@ pub fn run() {
             list_refs,
             diff_files,
             file_diff,
+            worktree_files,
+            worktree_file_diff,
             load_state,
             add_recent_repo,
             remove_recent_repo,
