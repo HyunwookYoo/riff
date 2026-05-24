@@ -5,7 +5,7 @@
   import { MergeView, unifiedMergeView } from "@codemirror/merge";
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
-  import { fileDiff } from "$lib/git";
+  import { fileDiff, worktreeFileDiff } from "$lib/git";
   import type { ChangedFile, FileDiff } from "$lib/types";
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
@@ -28,16 +28,19 @@
     langOverride = null;
   });
 
-  // Re-render whenever the selected file, view mode, theme, or override changes.
+  // Re-render whenever the selected file, view mode, theme, override, or
+  // compare mode changes.
   $effect(() => {
     const file = appState.selectedFile;
     const mode = appState.viewMode;
     const theme = appState.effectiveTheme;
     const ov = langOverride;
+    const cm = appState.compareMode;
     void file;
     void mode;
     void theme;
     void ov;
+    void cm;
     load(false);
   });
 
@@ -50,15 +53,25 @@
 
     pending = true;
     try {
-      diff = await fileDiff(
-        appState.repoPath,
-        appState.startBranch,
-        appState.targetBranch,
-        appState.mode,
-        file.path,
-        file.old_path,
-        force,
-      );
+      if (appState.compareMode === "worktree") {
+        diff = await worktreeFileDiff(
+          appState.repoPath,
+          file.path,
+          file.old_path,
+          file.status,
+          force,
+        );
+      } else {
+        diff = await fileDiff(
+          appState.repoPath,
+          appState.startBranch,
+          appState.targetBranch,
+          appState.mode,
+          file.path,
+          file.old_path,
+          force,
+        );
+      }
     } catch (e) {
       loadError = String(e);
     } finally {

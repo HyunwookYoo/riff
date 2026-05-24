@@ -7,12 +7,16 @@
     addRecentRepo,
     diffFiles,
     listRefs,
+    setCompareMode,
     validateRepo,
+    worktreeFiles,
   } from "$lib/git";
   import { chooseTheme } from "$lib/theme";
   import { detectLanguage } from "$lib/diff/lang";
   import { preloadLanguages } from "$lib/diff/shiki";
-  import type { ThemeChoice } from "$lib/types";
+  import type { ChangedFile, CompareMode, ThemeChoice } from "$lib/types";
+  import BranchModeFields from "./BranchModeFields.svelte";
+  import WorkTreeFields from "./WorkTreeFields.svelte";
 
   let pathInput = $state(appState.repoPath);
 
@@ -33,6 +37,11 @@
       ]);
       appState.branches = branches;
       appState.recentRepos = recentRepos;
+      // Working tree mode has no inputs to fill in — load immediately so the
+      // user sees their uncommitted changes on repo open.
+      if (appState.compareMode === "worktree") {
+        void compare();
+      }
     } catch (e) {
       appState.error = String(e);
       appState.branches = [];
@@ -65,32 +74,69 @@
   let compareSession = 0;
 
   async function compare() {
-    if (!appState.repoPath || !appState.startBranch || !appState.targetBranch) {
-      appState.error = "repo, start, and target are required";
+    if (!appState.repoPath) {
+      appState.error = "no repository selected";
+      return;
+    }
+    if (
+      appState.compareMode === "branch" &&
+      (!appState.startBranch || !appState.targetBranch)
+    ) {
+      appState.error = "start and target are required";
       return;
     }
     const session = ++compareSession;
+    // Worktree refreshes preserve the user's current selection if it survives;
+    // branch compares (different ref pair) reset to the first file.
+    const previousPath =
+      appState.compareMode === "worktree"
+        ? (appState.selectedFile?.path ?? null)
+        : null;
+
     appState.loadingFiles = true;
     appState.error = null;
     appState.files = [];
     appState.selectedFile = null;
 
+    const onFile = (file: ChangedFile) => {
+      if (session !== compareSession) return;
+      appState.files.push(file);
+      if (previousPath) {
+        if (file.path === previousPath && !appState.selectedFile) {
+          appState.selectedFile = file;
+        }
+      } else if (!appState.selectedFile) {
+        appState.selectedFile = file;
+      }
+      void preloadLanguages([detectLanguage(file.path)]);
+    };
+
     try {
-      await diffFiles(
-        appState.repoPath,
-        appState.startBranch,
-        appState.targetBranch,
-        appState.mode,
-        appState.ignoreWhitespace,
-        (file) => {
-          if (session !== compareSession) return;
-          appState.files.push(file);
-          if (!appState.selectedFile) {
-            appState.selectedFile = file;
-          }
-          void preloadLanguages([detectLanguage(file.path)]);
-        },
-      );
+      if (appState.compareMode === "worktree") {
+        await worktreeFiles(
+          appState.repoPath,
+          appState.ignoreWhitespace,
+          onFile,
+        );
+      } else {
+        await diffFiles(
+          appState.repoPath,
+          appState.startBranch,
+          appState.targetBranch,
+          appState.mode,
+          appState.ignoreWhitespace,
+          onFile,
+        );
+      }
+      // Previous selection didn't survive the refresh — fall back to first file.
+      if (
+        session === compareSession &&
+        previousPath &&
+        !appState.selectedFile &&
+        appState.files.length > 0
+      ) {
+        appState.selectedFile = appState.files[0];
+      }
     } catch (e) {
       if (session === compareSession) {
         appState.error = String(e);
@@ -101,6 +147,18 @@
       if (session === compareSession) {
         appState.loadingFiles = false;
       }
+    }
+  }
+
+  function setMode(m: CompareMode) {
+    if (m === appState.compareMode) return;
+    appState.compareMode = m;
+    void setCompareMode(m);
+    appState.files = [];
+    appState.selectedFile = null;
+    appState.error = null;
+    if (m === "worktree" && appState.repoPath) {
+      void compare();
     }
   }
 
@@ -135,31 +193,30 @@
   </datalist>
   <button onclick={browse}>Browse…</button>
 
-  <input
-    type="text"
-    class="ref"
-    list="branch-list"
-    placeholder="start (branch / commit / tag)"
-    bind:value={appState.startBranch}
-  />
-  <span class="sep">→</span>
-  <input
-    type="text"
-    class="ref"
-    list="branch-list"
-    placeholder="target"
-    bind:value={appState.targetBranch}
-  />
-  <datalist id="branch-list">
-    {#each appState.branches as b (b.name + b.kind)}
-      <option value={b.name}>{b.kind}</option>
-    {/each}
-  </datalist>
+  <div class="mode-toggle" role="group" aria-label="Compare mode">
+    <button
+      type="button"
+      class:active={appState.compareMode === "branch"}
+      onclick={() => setMode("branch")}
+      title="Compare two refs"
+    >
+      Branch
+    </button>
+    <button
+      type="button"
+      class:active={appState.compareMode === "worktree"}
+      onclick={() => setMode("worktree")}
+      title="Uncommitted changes vs HEAD (Ctrl+Shift+W)"
+    >
+      Working Tree
+    </button>
+  </div>
 
-  <select bind:value={appState.mode} title="Diff mode">
-    <option value="three-dot">3-dot (...)</option>
-    <option value="two-dot">2-dot (..)</option>
-  </select>
+  {#if appState.compareMode === "branch"}
+    <BranchModeFields />
+  {:else}
+    <WorkTreeFields />
+  {/if}
 
   <label class="check" title="Ignore whitespace changes (-w)">
     <input type="checkbox" bind:checked={appState.ignoreWhitespace} />
@@ -169,15 +226,26 @@
   <select
     title="Theme"
     value={appState.theme}
-    onchange={(e) => chooseTheme((e.currentTarget as HTMLSelectElement).value as ThemeChoice)}
+    onchange={(e) =>
+      chooseTheme((e.currentTarget as HTMLSelectElement).value as ThemeChoice)}
   >
     <option value="system">System</option>
     <option value="light">Light</option>
     <option value="dark">Dark</option>
   </select>
 
-  <button class="primary" onclick={compare} disabled={appState.loadingFiles || appState.loadingRepo}>
-    {appState.loadingFiles ? "…" : "Compare"}
+  <button
+    class="primary"
+    onclick={compare}
+    disabled={appState.loadingFiles || appState.loadingRepo}
+  >
+    {#if appState.loadingFiles}
+      …
+    {:else if appState.compareMode === "worktree"}
+      Refresh
+    {:else}
+      Compare
+    {/if}
   </button>
 </div>
 
@@ -197,12 +265,6 @@
   .path {
     flex: 1 1 auto;
     min-width: 200px;
-  }
-  .ref {
-    width: 180px;
-  }
-  .sep {
-    opacity: 0.6;
   }
   .primary {
     background: var(--accent);
@@ -244,5 +306,25 @@
   .check input {
     margin: 0;
     cursor: pointer;
+  }
+  .mode-toggle {
+    display: inline-flex;
+  }
+  .mode-toggle button {
+    border-radius: 0;
+    font-size: 0.85em;
+  }
+  .mode-toggle button:first-child {
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+  }
+  .mode-toggle button:last-child {
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+    border-left: none;
+  }
+  .mode-toggle button.active {
+    background: var(--selected);
+    border-color: var(--accent);
   }
 </style>
