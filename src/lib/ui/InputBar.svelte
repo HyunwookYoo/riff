@@ -3,18 +3,10 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { appState } from "$lib/store.svelte";
-  import {
-    addRecentRepo,
-    diffFiles,
-    listRefs,
-    setCompareMode,
-    validateRepo,
-    worktreeFiles,
-  } from "$lib/git";
+  import { addRecentRepo, listRefs, validateRepo } from "$lib/git";
+  import { compare, setMode } from "$lib/compare";
   import { chooseTheme } from "$lib/theme";
-  import { detectLanguage } from "$lib/diff/lang";
-  import { preloadLanguages } from "$lib/diff/shiki";
-  import type { ChangedFile, CompareMode, ThemeChoice } from "$lib/types";
+  import type { ThemeChoice } from "$lib/types";
   import BranchModeFields from "./BranchModeFields.svelte";
   import WorkTreeFields from "./WorkTreeFields.svelte";
 
@@ -65,100 +57,6 @@
   function onPathSubmit() {
     if (pathInput && pathInput !== appState.repoPath) {
       loadRepo(pathInput);
-    }
-  }
-
-  // Monotonic id so a stale stream from a cancelled compare can't poison the
-  // newer one's state. The Rust side also kills its previous child, but events
-  // already in flight on the JS bus would otherwise still land.
-  let compareSession = 0;
-
-  async function compare() {
-    if (!appState.repoPath) {
-      appState.error = "no repository selected";
-      return;
-    }
-    if (
-      appState.compareMode === "branch" &&
-      (!appState.startBranch || !appState.targetBranch)
-    ) {
-      appState.error = "start and target are required";
-      return;
-    }
-    const session = ++compareSession;
-    // Worktree refreshes preserve the user's current selection if it survives;
-    // branch compares (different ref pair) reset to the first file.
-    const previousPath =
-      appState.compareMode === "worktree"
-        ? (appState.selectedFile?.path ?? null)
-        : null;
-
-    appState.loadingFiles = true;
-    appState.error = null;
-    appState.files = [];
-    appState.selectedFile = null;
-
-    const onFile = (file: ChangedFile) => {
-      if (session !== compareSession) return;
-      appState.files.push(file);
-      if (previousPath) {
-        if (file.path === previousPath && !appState.selectedFile) {
-          appState.selectedFile = file;
-        }
-      } else if (!appState.selectedFile) {
-        appState.selectedFile = file;
-      }
-      void preloadLanguages([detectLanguage(file.path)]);
-    };
-
-    try {
-      if (appState.compareMode === "worktree") {
-        await worktreeFiles(
-          appState.repoPath,
-          appState.ignoreWhitespace,
-          onFile,
-        );
-      } else {
-        await diffFiles(
-          appState.repoPath,
-          appState.startBranch,
-          appState.targetBranch,
-          appState.mode,
-          appState.ignoreWhitespace,
-          onFile,
-        );
-      }
-      // Previous selection didn't survive the refresh — fall back to first file.
-      if (
-        session === compareSession &&
-        previousPath &&
-        !appState.selectedFile &&
-        appState.files.length > 0
-      ) {
-        appState.selectedFile = appState.files[0];
-      }
-    } catch (e) {
-      if (session === compareSession) {
-        appState.error = String(e);
-        appState.files = [];
-        appState.selectedFile = null;
-      }
-    } finally {
-      if (session === compareSession) {
-        appState.loadingFiles = false;
-      }
-    }
-  }
-
-  function setMode(m: CompareMode) {
-    if (m === appState.compareMode) return;
-    appState.compareMode = m;
-    void setCompareMode(m);
-    appState.files = [];
-    appState.selectedFile = null;
-    appState.error = null;
-    if (m === "worktree" && appState.repoPath) {
-      void compare();
     }
   }
 
@@ -236,7 +134,7 @@
 
   <button
     class="primary"
-    onclick={compare}
+    onclick={() => void compare()}
     disabled={appState.loadingFiles || appState.loadingRepo}
   >
     {#if appState.loadingFiles}

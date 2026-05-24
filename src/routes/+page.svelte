@@ -2,11 +2,13 @@
   import { onMount } from "svelte";
   import { goToNextChunk, goToPreviousChunk } from "@codemirror/merge";
   import { openSearchPanel } from "@codemirror/search";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import InputBar from "$lib/ui/InputBar.svelte";
   import FileList from "$lib/ui/FileList.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import { appState } from "$lib/store.svelte";
   import { loadState } from "$lib/git";
+  import { compare, toggleMode } from "$lib/compare";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
   import { adjustFontSize, applyFontSize, resetFontSize } from "$lib/font";
   import { getActiveDiffView } from "$lib/diff/activeView";
@@ -39,6 +41,27 @@
     }
   });
 
+  // Auto-refresh on window focus when viewing the working tree: the user
+  // probably just came back from editing files in another window. Silent so a
+  // transient git error doesn't flash an error banner.
+  onMount(() => {
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (
+          focused &&
+          appState.compareMode === "worktree" &&
+          appState.repoPath &&
+          !appState.loadingFiles &&
+          !appState.loadingRepo
+        ) {
+          void compare({ silent: true });
+        }
+      })
+      .then((u) => (unlisten = u));
+    return () => unlisten?.();
+  });
+
   async function installUpdate() {
     if (!pendingUpdate || appState.updateInstalling) return;
     appState.updateInstalling = true;
@@ -63,6 +86,19 @@
   function onKeyDown(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName?.toLowerCase();
+
+    // Ctrl+Shift+W toggles compare mode regardless of focus, so the user can
+    // flip modes even while a ref input has the cursor.
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      e.shiftKey &&
+      e.key.toLowerCase() === "w"
+    ) {
+      toggleMode();
+      e.preventDefault();
+      return;
+    }
+
     // Always yield to form controls so typing in path/branch inputs is untouched.
     if (tag === "input" || tag === "textarea" || tag === "select") return;
 
@@ -73,6 +109,16 @@
         openSearchPanel(v);
         e.preventDefault();
       }
+      return;
+    }
+
+    // F5 or Ctrl+R refreshes the working tree view.
+    const isRefresh =
+      e.key === "F5" ||
+      ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "r");
+    if (isRefresh && appState.compareMode === "worktree") {
+      void compare();
+      e.preventDefault();
       return;
     }
 
