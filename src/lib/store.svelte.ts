@@ -1,6 +1,7 @@
 import type {
   Branch,
   ChangedFile,
+  CompareMode,
   DiffMode,
   ThemeChoice,
   ViewMode,
@@ -12,6 +13,7 @@ class AppState {
   startBranch = $state("");
   targetBranch = $state("");
   mode = $state<DiffMode>("three-dot");
+  compareMode = $state<CompareMode>("branch");
   files = $state<ChangedFile[]>([]);
   selectedFile = $state<ChangedFile | null>(null);
   loadingRepo = $state(false);

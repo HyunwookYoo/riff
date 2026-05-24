@@ -120,6 +120,11 @@ fn set_font_size(app: tauri::AppHandle, size: u8) -> Result<(), StoreError> {
     store::set_font_size(&app, size)
 }
 
+#[tauri::command]
+fn set_compare_mode(app: tauri::AppHandle, mode: String) -> Result<(), StoreError> {
+    store::set_compare_mode(&app, mode)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -139,6 +144,7 @@ pub fn run() {
             remove_recent_repo,
             set_theme,
             set_font_size,
+            set_compare_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

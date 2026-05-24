@@ -44,8 +44,11 @@ export type ViewMode = "side-by-side" | "unified";
 
 export type ThemeChoice = "system" | "light" | "dark";
 
+export type CompareMode = "branch" | "worktree";
+
 export interface PersistedState {
   recent_repos: string[];
   theme: ThemeChoice;
   font_size: number;
+  compare_mode: CompareMode;
 }

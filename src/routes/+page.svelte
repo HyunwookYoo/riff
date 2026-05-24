@@ -21,6 +21,7 @@
       appState.recentRepos = s.recent_repos;
       appState.theme = s.theme;
       appState.fontSize = s.font_size;
+      appState.compareMode = s.compare_mode;
     } catch {
       // First-run / corrupt state: keep defaults silently.
     }

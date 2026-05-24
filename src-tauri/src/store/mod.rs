@@ -20,6 +20,8 @@ pub struct PersistedState {
     pub theme: String,
     #[serde(default = "default_font_size")]
     pub font_size: u8,
+    #[serde(default = "default_compare_mode")]
+    pub compare_mode: String,
 }
 
 fn default_theme() -> String {
@@ -30,12 +32,17 @@ fn default_font_size() -> u8 {
     13
 }
 
+fn default_compare_mode() -> String {
+    "branch".into()
+}
+
 impl Default for PersistedState {
     fn default() -> Self {
         Self {
             recent_repos: Vec::new(),
             theme: default_theme(),
             font_size: default_font_size(),
+            compare_mode: default_compare_mode(),
         }
     }
 }
@@ -111,5 +118,11 @@ pub fn set_theme(app: &AppHandle, theme: String) -> Result<(), StoreError> {
 pub fn set_font_size(app: &AppHandle, size: u8) -> Result<(), StoreError> {
     let mut state = load(app)?;
     state.font_size = size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+    save(app, &state)
+}
+
+pub fn set_compare_mode(app: &AppHandle, mode: String) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    state.compare_mode = mode;
     save(app, &state)
 }

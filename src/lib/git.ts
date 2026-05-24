@@ -2,8 +2,10 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   Branch,
   ChangedFile,
+  CompareMode,
   DiffMode,
   FileDiff,
+  FileStatus,
   PersistedState,
   ThemeChoice,
 } from "./types";
@@ -30,6 +32,10 @@ export function setTheme(theme: ThemeChoice): Promise<void> {
 
 export function setFontSize(size: number): Promise<void> {
   return invoke("set_font_size", { size });
+}
+
+export function setCompareMode(mode: CompareMode): Promise<void> {
+  return invoke("set_compare_mode", { mode });
 }
 
 export function listRefs(path: string): Promise<Branch[]> {
@@ -77,6 +83,40 @@ export function fileDiff(
     mode,
     filePath,
     oldPath,
+    force,
+  });
+}
+
+/**
+ * Stream uncommitted changes against HEAD (tracked diff + untracked files).
+ * Mirrors `diffFiles` but takes no refs.
+ */
+export function worktreeFiles(
+  path: string,
+  ignoreWhitespace: boolean,
+  onFile: (file: ChangedFile) => void,
+): Promise<void> {
+  const channel = new Channel<ChangedFile>();
+  channel.onmessage = onFile;
+  return invoke("worktree_files", {
+    path,
+    ignoreWhitespace,
+    onFile: channel,
+  });
+}
+
+export function worktreeFileDiff(
+  path: string,
+  filePath: string,
+  oldPath: string | null,
+  status: FileStatus,
+  force: boolean,
+): Promise<FileDiff> {
+  return invoke("worktree_file_diff", {
+    path,
+    filePath,
+    oldPath,
+    status,
     force,
   });
 }
