@@ -1,6 +1,6 @@
 [package]
 name = "riff"
-version = "0.1.9"
+version = "0.1.10"
 description = "Lightweight Git diff viewer"
 authors = ["hyunw"]
 edition = "2021"
