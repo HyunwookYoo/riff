@@ -16,6 +16,13 @@ interface CompareOptions {
    * would be jarring.
    */
   silent?: boolean;
+  /**
+   * If set, prefer to re-select the file at this path after the new file
+   * list streams in. Used by drill-in Back to restore the previously viewed
+   * file. Overrides the worktree-only auto-preserve default; pass `null` to
+   * force "select first file".
+   */
+  preservePath?: string | null;
 }
 
 export async function compare(opts: CompareOptions = {}): Promise<void> {
@@ -34,9 +41,11 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
   // Worktree refreshes preserve the user's current selection if it survives;
   // branch compares (different ref pair) reset to the first file.
   const previousPath =
-    appState.compareMode === "worktree"
-      ? (appState.selectedFile?.path ?? null)
-      : null;
+    opts.preservePath !== undefined
+      ? opts.preservePath
+      : appState.compareMode === "worktree"
+        ? (appState.selectedFile?.path ?? null)
+        : null;
 
   appState.loadingFiles = true;
   appState.error = null;

@@ -4,7 +4,7 @@ pub mod store;
 
 use std::path::Path;
 
-use git::{Branch, ChangedFile, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer};
+use git::{Blame, Branch, ChangedFile, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer};
 use store::{PersistedState, StoreError};
 
 #[tauri::command]
@@ -96,6 +96,17 @@ fn worktree_file_diff(
 }
 
 #[tauri::command]
+fn blame_file(
+    state: tauri::State<GitCli>,
+    path: String,
+    file_path: String,
+    rev: String,
+    use_contents: bool,
+) -> Result<Blame, GitError> {
+    state.blame_file(Path::new(&path), &file_path, &rev, use_contents)
+}
+
+#[tauri::command]
 fn load_state(app: tauri::AppHandle) -> Result<PersistedState, StoreError> {
     store::load(&app)
 }
@@ -139,6 +150,7 @@ pub fn run() {
             file_diff,
             worktree_files,
             worktree_file_diff,
+            blame_file,
             load_state,
             add_recent_repo,
             remove_recent_repo,

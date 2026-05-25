@@ -1,9 +1,11 @@
+pub mod blame;
 pub mod cli;
 pub mod error;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+pub use blame::{Blame, BlameCommit};
 pub use cli::GitCli;
 pub use error::GitError;
 
@@ -114,4 +116,17 @@ pub trait GitLayer {
         status: FileStatus,
         force: bool,
     ) -> Result<FileDiff, GitError>;
+    /// Run `git blame --porcelain -w -M` on `file_path` at `rev` and return a
+    /// deduplicated line→commit mapping. When `use_contents` is true, blame
+    /// reads the working-copy contents at `repo/file_path` against HEAD —
+    /// uncommitted lines come back with the zero SHA (see
+    /// `blame::UNCOMMITTED_SHORT`). Cancellation of any prior in-flight
+    /// blame is the implementation's responsibility.
+    fn blame_file(
+        &self,
+        path: &Path,
+        file_path: &str,
+        rev: &str,
+        use_contents: bool,
+    ) -> Result<Blame, GitError>;
 }

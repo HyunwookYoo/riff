@@ -1,6 +1,7 @@
 import type {
   Branch,
   ChangedFile,
+  CompareCtx,
   CompareMode,
   DiffMode,
   ThemeChoice,
@@ -30,6 +31,11 @@ class AppState {
     null,
   );
   updateInstalling = $state(false);
+  // Blame mode is session-only — first run starts OFF, no PersistedState.
+  blameMode = $state(false);
+  // Drill-in history stack. Each entry is the compare context the user can
+  // return to. Session-only.
+  history = $state<CompareCtx[]>([]);
 }
 
 export const appState = new AppState();

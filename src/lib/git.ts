@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
+  Blame,
   Branch,
   ChangedFile,
   CompareMode,
@@ -118,5 +119,24 @@ export function worktreeFileDiff(
     oldPath,
     status,
     force,
+  });
+}
+
+/**
+ * Run `git blame --porcelain -w -M` on a file. `rev` is ignored when
+ * `useContents` is true (worktree mode blames the working copy against HEAD).
+ * Lines with no commit (uncommitted edits) come back with sha "00000000".
+ */
+export function blameFile(
+  path: string,
+  filePath: string,
+  rev: string,
+  useContents: boolean,
+): Promise<Blame> {
+  return invoke("blame_file", {
+    path,
+    filePath,
+    rev,
+    useContents,
   });
 }

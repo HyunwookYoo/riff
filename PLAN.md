@@ -71,7 +71,7 @@
 
 ### 4.2 모듈 인터페이스 (확장성 핵심)
 
-- **`GitLayer` trait**: `list_branches()`, `diff_files(spec)`, `file_diff(spec, path)`, `(future) blame(file, rev)`
+- **`GitLayer` trait**: `list_branches()`, `diff_files(spec)`, `file_diff(spec, path)`, `blame_file(file, rev, use_contents)` (v0.2.x, §12)
   - 현재 구현: `GitCli`. 향후 `LibGit2`, `MockGit` 추가 가능
 - **`DiffParser`**: git unified diff → 파일별 hunk 구조체 변환
 - **`RecentRepoStore`**: Tauri config dir에 JSON 저장
@@ -110,7 +110,7 @@
 
 ### 제외 (v0.2+ 로드맵)
 
-- git blame
+- git blame + commit drill-in (상세 §12)
 - 다중 탭 비교
 - 인라인 코멘트/리뷰
 - viewed/unviewed 체크박스
@@ -126,7 +126,7 @@
 | 버전 | 핵심 추가 |
 |---|---|
 | **v0.1.0** | 위 MVP scope |
-| **v0.2.x** | git blame (hover & gutter), viewed/unviewed 체크박스 |
+| **v0.2.x** | git blame + commit drill-in (§12), viewed/unviewed 체크박스 |
 | **v0.3.x** | 다중 탭, search across files |
 | **v0.4.x** | 인라인 코멘트 + export |
 | **v1.0** | 안정화, 코드 서명 검토 |
@@ -242,4 +242,218 @@
 15. **CI/CD** → GH Actions + tauri-action, tag-driven
 16. **Name** → Riff
 17. **MVP extras** → 파일내 검색 + 파일 트리 + 단축키
-18. **Blame** → v0.2 분리
+18. **Blame** → v0.2 분리 (상세 §12)
+
+---
+
+## 12. v0.2.x — git blame + commit drill-in 상세 설계
+
+> grill-me 인터뷰(2026-05-25)를 통해 합의된 v0.2.x 핵심 기능 설계.
+
+### 12.1 요구사항
+
+| # | 원본 요구 | 확정된 해석 |
+|---|---|---|
+| 1 | 가능한 가볍게 | Lazy fetch + 모드 OFF가 default + 컬럼 추가 X. 토글이 OFF일 때 현재 UI 100% 유지 |
+| 2 | 현재 UI/UX와 크게 틀어지지 않게 | 툴바에 "Blame" 토글 버튼 1개 추가 외 다른 UI 변경 0. Mode ON 시에만 시각 추가 |
+| 3 | 커밋한 사람의 이름과 commit 제목 | author + relative date + subject + short SHA(8자) 팝오버 |
+
+### 12.2 결정 사항
+
+#### A. Blame 기본 동작
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 1 | UI surface | Hover/click 팝오버 (영구 컬럼 없음) |
+| 2 | Blame side | New side만 (target ref / worktree에서는 HEAD) |
+| 3 | Worktree | `git blame --contents <fs_path> HEAD -- <path>`. 미커밋 라인은 zero SHA → "Not Committed Yet"으로 표시 |
+| 4 | Trigger | 단축키 `b`로 모드 토글 (단축키 primary) |
+| 5 | Visual state | 툴바에 작은 "Blame" 토글 버튼 (Split/Unified 옆 mode 그룹) |
+| 6 | Fetch | Lazy — 토글 ON + 첫 hover 시점에 파일 단위 fetch. 이후 캐시 히트 |
+| 7 | Flags | `-w -M --porcelain --abbrev=8` (공백 무시 + 파일 내 코드 이동 추적) |
+| 8 | 팝오버 내용 | author + relative date + subject + short SHA |
+| 9 | SHA 클릭 | 클립보드 복사 + 짧은 토스트 |
+
+#### B. Visual grouping (Blame mode ON 시에만)
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 10 | 좌측 컬러 bar | 2-3px gutter, commit SHA hash → HSL 색. light/dark theme별 고정 채도/명도 |
+| 11 | Hover highlight | 한 라인 hover 시 동일 commit의 모든 라인이 background highlight |
+| 12 | 조건 | Mode OFF 시 100% 원래 UI (gutter, highlight 모두 사라짐) |
+| 13 | "Not Committed Yet" 라인 | 회색/점선 bar로 구분 (commit color 안 입힘) |
+
+#### C. Commit drill-in
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 14 | UI surface | 메인 view를 `<sha>^..<sha>` 비교로 일시 교체 |
+| 15 | Scope | 전체 commit (모든 파일) — FileList + DiffView 재사용 |
+| 16 | Trigger | 팝오버의 "View commit →" 링크 클릭 |
+| 17 | Drill depth | Unlimited (commit view 안에서 또 blame → 또 drill 가능) |
+| 18 | Back | 상단 breadcrumb의 ← Back 버튼 + `Esc` 단축키 |
+| 19 | History | in-memory stack, 앱 재시작 시 reset (PersistedState 추가 안 함) |
+
+### 12.3 팝오버 layout
+
+```
+┌─────────────────────────────────────┐
+│ Hyunwook Yoo · 2 days ago           │
+│ feat(ui): worktree compare mode     │
+│ [18e5299]            View commit →  │
+└─────────────────────────────────────┘
+```
+
+- `[18e5299]` 클릭 → 클립보드 복사 + 짧은 토스트
+- `View commit →` 클릭 → 메인 view drill-in (history stack push)
+- 팝오버 자체에 hover하면 sticky (마우스 떼도 안 사라짐) — CodeMirror `hoverTooltip` 표준 동작
+
+### 12.4 Drill-in 동작
+
+```
+원래 비교: main...feature  [Split | Unified]  [Blame ON]
+   ↓ "View commit →" (18e5299)
+
+┌──────────────────────────────────────────────────────┐
+│ ← Back  │  Viewing 18e5299 (was: main...feature)     │
+├──────────────────────────────────────────────────────┤
+│ files   │ diff (그 commit의 변경 — `<sha>^..<sha>`)   │
+└──────────────────────────────────────────────────────┘
+
+Esc → history pop → 원래 비교 복원
+```
+
+- Stack entry: `{ mode: 'branch'|'worktree', start, target, diffMode }`
+- Esc 충돌 처리: search box가 열려 있으면 search close 우선, 아니면 back
+- Commit view 안에서도 blame mode가 ON이면 동일하게 작동 → 또 drill 가능
+- Merge commit의 `<sha>^..<sha>`는 first-parent diff (표준 동작)
+
+### 12.5 Backend (`src-tauri/src/git/`)
+
+**`GitLayer` trait 확장:**
+
+```rust
+pub struct BlameCommit {
+    pub sha: String,         // 8자 short
+    pub author: String,
+    pub author_time: i64,    // unix timestamp
+    pub summary: String,     // commit subject
+}
+
+pub struct Blame {
+    pub commits: Vec<BlameCommit>,    // dedup
+    pub line_commit: Vec<usize>,      // line N → commits 인덱스
+}
+
+pub trait GitLayer {
+    // ...기존 메서드...
+    fn blame_file(
+        &self,
+        path: &Path,
+        file_path: &str,
+        rev: &str,
+        use_contents: bool,    // worktree: working copy 기준
+    ) -> Result<Blame, GitError>;
+}
+```
+
+**Implementation 핵심:**
+
+- Branch mode: `git blame -w -M --porcelain --abbrev=8 <rev> -- <path>`
+- Worktree mode: `git blame -w -M --porcelain --abbrev=8 --contents <fs_path> HEAD -- <path>`
+- `--porcelain` 출력은 commit별 grouping이 이미 제공됨 → dedup 자연스러움
+- Cancellation: `kill_slot` 패턴 (기존 `diff_files`와 동일하게 session에 in-flight blame child 보관)
+- 캐시: branch mode는 (path, file_path, rev) 키로 session 캐시. Worktree는 file mtime 기반 invalidation
+
+**새 Tauri command:**
+
+```rust
+#[tauri::command]
+fn blame_file(
+    state: tauri::State<GitCli>,
+    path: String,
+    file_path: String,
+    rev: String,
+    use_contents: bool,
+) -> Result<Blame, GitError>
+```
+
+### 12.6 Frontend (`src/lib/`)
+
+**새 타입 (`types.ts`):**
+
+```ts
+export interface BlameCommit {
+  sha: string;
+  author: string;
+  author_time: number;
+  summary: string;
+}
+export interface Blame {
+  commits: BlameCommit[];
+  line_commit: number[];
+}
+```
+
+**새 wrapper (`git.ts`):**
+
+```ts
+export function blameFile(
+  path: string,
+  filePath: string,
+  rev: string,
+  useContents: boolean,
+): Promise<Blame>;
+```
+
+**Store (`store.svelte.ts`):**
+
+- `blameMode: boolean` — session only (PersistedState에 추가 안 함)
+- `history: CompareCtx[]` — drill-in stack, session only
+- `CompareCtx = { compareMode, mode, start, target }` (현재 비교 컨텍스트의 snapshot)
+
+**DiffView.svelte 확장:**
+
+- 툴바 "Blame" 토글 버튼 (Split/Unified 옆 mode 그룹)
+- `b` 단축키 → toggle blameMode
+- CodeMirror `hoverTooltip` extension — `blameMode === true`일 때만 활성
+- 컬러 bar gutter (CodeMirror `gutter()` API) — `blameMode === true`일 때만 활성, `EditorView.compartment`로 dynamic add/remove
+- Line hover handler → 같은 commit set lookup + class toggle (background highlight)
+- Color hash:
+
+```ts
+function commitColor(sha: string, isDark: boolean): string {
+  const hue = parseInt(sha.slice(0, 6), 16) % 360;
+  return isDark ? `hsl(${hue}, 50%, 55%)` : `hsl(${hue}, 60%, 45%)`;
+}
+```
+
+**새 컴포넌트:**
+
+- `BlamePopover.svelte` — popover content (author, relative date, subject, SHA, View commit link)
+- `Breadcrumb.svelte` — 상단 navigation, `appState.history.length > 0`일 때만 렌더
+
+**README 단축키 표 업데이트:**
+
+| Key | Action |
+|---|---|
+| `b` | Toggle blame mode |
+| `Esc` | (Blame drill-in 시) back to previous compare |
+
+### 12.7 Skip 조건 (toggle ON이어도 무반응)
+
+- Binary 파일 (`FileDiff::Binary`)
+- TooLarge 파일 ("Load anyway" 누르기 전)
+- Untracked 파일 (worktree mode, HEAD에 없음)
+- blame 호출 실패 (예: shallow clone, detached HEAD) → 팝오버에 짧은 에러 메시지 ("Blame unavailable")
+
+### 12.8 작업 규모 예상
+
+| 단계 | 작업 | 예상 |
+|---|---|---|
+| 1 | Backend: `blame_file` trait + porcelain parser + Tauri command + 단위 테스트 | 0.5~1일 |
+| 2 | Frontend blame UI: hoverTooltip + popover + 토글 + 캐싱 + `b` 단축키 | 1~1.5일 |
+| 3 | Visual grouping: 컬러 bar gutter + hover highlight + color hash | 0.5~1일 |
+| 4 | Commit drill-in: history stack + breadcrumb + Esc 핸들러 + view 트리거 wiring | 0.5~1일 |
+| 5 | Polish + README + 수동 테스트 | 0.5일 |
+| | **총** | **~3.5~4.5일** |

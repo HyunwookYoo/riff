@@ -6,9 +6,11 @@
   import InputBar from "$lib/ui/InputBar.svelte";
   import FileList from "$lib/ui/FileList.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
+  import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
   import { appState } from "$lib/store.svelte";
   import { loadState } from "$lib/git";
   import { compare, toggleMode } from "$lib/compare";
+  import { popHistory } from "$lib/history";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
   import { adjustFontSize, applyFontSize, resetFontSize } from "$lib/font";
   import { getActiveDiffView } from "$lib/diff/activeView";
@@ -122,6 +124,17 @@
       return;
     }
 
+    // Esc backs out of a commit drill-in. Yields to CodeMirror's search
+    // panel: if it consumed Esc to close itself, defaultPrevented is set
+    // and we leave the history stack alone.
+    if (e.key === "Escape" && !e.defaultPrevented) {
+      if (appState.history.length > 0) {
+        popHistory();
+        e.preventDefault();
+      }
+      return;
+    }
+
     if (e.ctrlKey || e.metaKey) {
       // Ctrl/Cmd + = / + / - / 0 → diff font size
       if (e.key === "=" || e.key === "+") {
@@ -162,6 +175,10 @@
         }
         break;
       }
+      case "b":
+        appState.blameMode = !appState.blameMode;
+        e.preventDefault();
+        break;
     }
   }
 </script>
@@ -170,6 +187,7 @@
 
 <div class="app">
   <InputBar />
+  <Breadcrumb />
   {#if appState.availableUpdate}
     <div class="update-banner">
       <span>

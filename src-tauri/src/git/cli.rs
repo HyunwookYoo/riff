@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use super::blame::{parse_porcelain, Blame};
 use super::{Branch, BranchKind, ChangedFile, DiffMode, FileDiff, FileStatus, GitError, GitLayer};
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -48,6 +49,8 @@ struct Session {
     /// worktree_files invocation spawns up to two children (diff + ls-files)
     /// in sequence and stores the active one here.
     worktree_files_child: Option<Arc<Mutex<Option<Child>>>>,
+    /// Same pattern as the other `*_child` slots, but for in-flight blame.
+    blame_child: Option<Arc<Mutex<Option<Child>>>>,
 }
 
 /// A long-running `git cat-file` process kept around for a single repo.
@@ -168,7 +171,11 @@ impl Drop for Session {
         // Batch processes clean themselves up via their own Drop, but an
         // in-flight diff_files child is owned by an Arc shared with the
         // streaming task — dropping our Arc reference alone won't kill it.
-        for slot in [self.diff_files_child.take(), self.worktree_files_child.take()] {
+        for slot in [
+            self.diff_files_child.take(),
+            self.worktree_files_child.take(),
+            self.blame_child.take(),
+        ] {
             if let Some(arc) = slot {
                 if let Some(mut child) = arc.lock().unwrap().take() {
                     let _ = child.kill();
@@ -190,6 +197,7 @@ impl Session {
             merge_base_cache: HashMap::new(),
             diff_files_child: None,
             worktree_files_child: None,
+            blame_child: None,
         })
     }
 
@@ -669,6 +677,124 @@ impl GitLayer for GitCli {
             old_size: old_size.unwrap_or(0),
             new_size: new_size.unwrap_or(0),
         })
+    }
+
+    fn blame_file(
+        &self,
+        path: &Path,
+        file_path: &str,
+        rev: &str,
+        use_contents: bool,
+    ) -> Result<Blame, GitError> {
+        validate_path(file_path)?;
+        if !use_contents {
+            validate_ref(rev)?;
+        }
+
+        // Args: blame -w -M --porcelain. When `use_contents`, blame the
+        // working copy against HEAD; otherwise blame at `rev`.
+        let mut args: Vec<String> = vec![
+            "blame".into(),
+            "-w".into(),
+            "-M".into(),
+            "--porcelain".into(),
+        ];
+        let fs_path_str;
+        if use_contents {
+            let fs_path = path.join(file_path);
+            fs_path_str = fs_path.to_string_lossy().into_owned();
+            args.push("--contents".into());
+            args.push(fs_path_str);
+            args.push("HEAD".into());
+        } else {
+            args.push(rev.into());
+        }
+        args.push("--".into());
+        args.push(file_path.into());
+
+        let mut child = git_command()
+            .arg("-C")
+            .arg(path)
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| GitError::CommandFailed("blame stdout not piped".into()))?;
+        let stderr = child.stderr.take();
+
+        // Install killable handle in session, cancelling any prior blame.
+        let kill_slot = Arc::new(Mutex::new(Some(child)));
+        {
+            let mut guard = self.session.lock().unwrap();
+            ensure_session(&mut guard, path)?;
+            let session = guard.as_mut().expect("ensure_session populated guard");
+            let prev = session.blame_child.replace(kill_slot.clone());
+            drop(guard);
+            if let Some(prev) = prev {
+                if let Some(mut c) = prev.lock().unwrap().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+            }
+        }
+
+        let mut buf = Vec::new();
+        let mut reader = BufReader::new(stdout);
+        let read_result = reader.read_to_end(&mut buf);
+
+        // Reap our own child (may have been killed by a newer call).
+        let exit_status = kill_slot
+            .lock()
+            .unwrap()
+            .take()
+            .and_then(|mut c| c.wait().ok());
+
+        // Clear our slot if it still points at us; record whether we were
+        // still the active blame at completion.
+        let still_ours = {
+            let mut guard = self.session.lock().unwrap();
+            if let Some(session) = guard.as_mut() {
+                let s = session
+                    .blame_child
+                    .as_ref()
+                    .map(|cur| Arc::ptr_eq(cur, &kill_slot))
+                    .unwrap_or(false);
+                if s {
+                    session.blame_child = None;
+                }
+                s
+            } else {
+                false
+            }
+        };
+
+        if !still_ours {
+            return Err(GitError::CommandFailed("blame cancelled".into()));
+        }
+
+        read_result?;
+
+        if let Some(status) = exit_status {
+            if !status.success() {
+                let mut stderr_buf = String::new();
+                if let Some(mut s) = stderr {
+                    use std::io::Read;
+                    let _ = s.read_to_string(&mut stderr_buf);
+                }
+                let trimmed = stderr_buf.trim();
+                return Err(GitError::CommandFailed(if trimmed.is_empty() {
+                    format!("git blame failed: exit {status}")
+                } else {
+                    trimmed.to_string()
+                }));
+            }
+        }
+
+        parse_porcelain(&buf)
     }
 }
 

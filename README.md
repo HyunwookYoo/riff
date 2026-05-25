@@ -26,6 +26,8 @@ Future updates check in-app: when an update is available, a banner appears in th
 | `j` / `k` | Next / previous file |
 | `n` / `p` | Next / previous chunk |
 | `Ctrl+F` | Search in current file |
+| `b` | Toggle blame mode |
+| `Esc` | Back out of a commit drill-in |
 
 ### Other controls
 
@@ -34,6 +36,7 @@ Future updates check in-app: when an update is available, a banner appears in th
 - **Theme** — System (follows OS) / Light / Dark.
 - **Tree / Flat** — switch the file list layout.
 - **Language** dropdown in the diff toolbar — override auto-detected syntax highlighting.
+- **Blame** — toggle blame mode in the diff toolbar (or press `b`). When ON, a thin color bar appears next to each line (color per commit), and hovering a line shows a popover with author, relative date, commit subject, and short SHA. Click the SHA to copy it; click **View commit →** to drill into that commit's full change set. `Esc` (or the **← Back** button in the breadcrumb that appears) returns to the previous compare.
 
 ## Development
 

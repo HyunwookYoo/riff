@@ -52,3 +52,25 @@ export interface PersistedState {
   font_size: number;
   compare_mode: CompareMode;
 }
+
+export interface BlameCommit {
+  sha: string;
+  author: string;
+  author_time: number;
+  summary: string;
+}
+
+export interface Blame {
+  commits: BlameCommit[];
+  /** `line_commit[i]` is the index into `commits` for (1-based) line `i+1`. */
+  line_commit: number[];
+}
+
+/** Snapshot of a compare context, pushed onto the history stack on drill-in. */
+export interface CompareCtx {
+  compareMode: CompareMode;
+  mode: DiffMode;
+  startBranch: string;
+  targetBranch: string;
+  selectedFilePath: string | null;
+}
