@@ -122,25 +122,10 @@
   }
 
   /** When the user is searching we render a *filtered* tree containing only
-   * the matching paths (and their ancestors). All dirs are auto-expanded so
-   * matches are visible immediately. */
+   * the matching paths (and their ancestors). */
   const searchTree = $derived.by<TreePathNode[]>(() => {
     if (query.trim() === "") return [];
     return buildPathTree(fuzzyResults.map((r) => r.path));
-  });
-
-  const searchExpandedDirs = $derived.by<Set<string>>(() => {
-    const dirs = new Set<string>();
-    const walk = (nodes: TreePathNode[]) => {
-      for (const n of nodes) {
-        if (n.kind === "dir") {
-          dirs.add(n.path);
-          walk(n.children);
-        }
-      }
-    };
-    walk(searchTree);
-    return dirs;
   });
 
   /** File path the keyboard cursor is on within fuzzy results. Independent of
@@ -148,6 +133,63 @@
   const highlightedPath = $derived<string | null>(
     fuzzyResults[highlightedIndex]?.path ?? null,
   );
+
+  /** Find a C/C++ header/source companion for `filePath` among `candidates`
+   * (the current fuzzy result set). Looks for the same stem with a matching
+   * opposite extension (.h ↔ .cpp, plus .hpp/.hxx/.cc/.cxx/.c variants).
+   * Returns null when no companion is in the result set. */
+  function companionInResults(
+    filePath: string,
+    candidates: string[],
+  ): string | null {
+    const slash = filePath.lastIndexOf("/");
+    const base = filePath.slice(slash + 1);
+    const dot = base.lastIndexOf(".");
+    if (dot < 0) return null;
+    const stem = base.slice(0, dot);
+    const ext = base.slice(dot + 1).toLowerCase();
+    let opposite: string[];
+    if (ext === "h" || ext === "hpp" || ext === "hxx") {
+      opposite = ["cpp", "cc", "cxx", "c"];
+    } else if (ext === "cpp" || ext === "cc" || ext === "cxx" || ext === "c") {
+      opposite = ["h", "hpp", "hxx"];
+    } else {
+      return null;
+    }
+    for (const c of candidates) {
+      if (c === filePath) continue;
+      const cs = c.lastIndexOf("/");
+      const cbase = c.slice(cs + 1);
+      const cdot = cbase.lastIndexOf(".");
+      if (cdot < 0) continue;
+      if (
+        cbase.slice(0, cdot) === stem &&
+        opposite.includes(cbase.slice(cdot + 1).toLowerCase())
+      ) {
+        return c;
+      }
+    }
+    return null;
+  }
+
+  /** During search, only expand the path of the keyboard-focused match
+   * (plus its .h/.cpp companion if both are in the result set). All other
+   * sibling folders stay collapsed — the user navigates between matches
+   * via ↑↓/Enter or by typing, not by visually scanning expanded folders. */
+  const searchExpandedDirs = $derived.by<Set<string>>(() => {
+    const dirs = new Set<string>();
+    const focused = highlightedPath;
+    if (!focused) return dirs;
+    for (const a of ancestorDirs(focused)) dirs.add(a);
+    const companion = companionInResults(
+      focused,
+      fuzzyResults.map((r) => r.path),
+    );
+    if (companion) {
+      for (const a of ancestorDirs(companion)) dirs.add(a);
+    }
+    return dirs;
+  });
 
   /** Commits enriched with line counts and first-line, then sorted per mode. */
   type CommitRow = BlameCommit & { lineCount: number; firstLine: number };
