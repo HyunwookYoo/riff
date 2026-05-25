@@ -146,14 +146,14 @@ pub fn parse_porcelain(input: &[u8]) -> Result<Blame, GitError> {
 /// True if `line` starts with a 40-char hex SHA followed by a space — i.e.,
 /// the first line of a blame group.
 fn is_header_line(line: &str) -> bool {
-    if line.len() < 41 {
+    let bytes = line.as_bytes();
+    if bytes.len() < 41 {
         return false;
     }
-    let (sha, rest) = line.split_at(40);
-    if !rest.starts_with(' ') {
+    if bytes[40] != b' ' {
         return false;
     }
-    sha.bytes().all(|b| b.is_ascii_hexdigit())
+    bytes[..40].iter().all(|b| b.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
