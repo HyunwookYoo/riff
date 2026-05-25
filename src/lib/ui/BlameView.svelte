@@ -57,8 +57,21 @@
   const fuzzyResults = $derived.by<FuzzyRow[]>(() => {
     const q = query.trim();
     if (!q) return [];
-    return fuzzysort
-      .go(q, appState.repoFiles, { limit: MAX_FUZZY_ROWS })
+    // Pull more than we'll show — the basename filter below may drop a
+    // chunk of folder-only hits, and we still want to fill MAX_FUZZY_ROWS.
+    const raw = fuzzysort.go(q, appState.repoFiles, {
+      limit: MAX_FUZZY_ROWS * 4,
+    });
+    // Keep only matches that touch the file's basename. Without this, a
+    // query like "src/lib" matches every file under src/lib (chars all in
+    // the directory portion) and dumps the whole folder into the panel —
+    // not what the user wants.
+    const onlyBasenameHits = raw.filter((r) => {
+      const basenameStart = r.target.lastIndexOf("/") + 1;
+      return r.indexes.some((i) => i >= basenameStart);
+    });
+    return onlyBasenameHits
+      .slice(0, MAX_FUZZY_ROWS)
       .map((r) => ({ path: r.target, html: r.highlight("<mark>", "</mark>") }));
   });
 
