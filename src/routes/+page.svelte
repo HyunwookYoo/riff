@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { goToNextChunk, goToPreviousChunk } from "@codemirror/merge";
-  import { openSearchPanel } from "@codemirror/search";
+  import { gotoLine, openSearchPanel } from "@codemirror/search";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import InputBar from "$lib/ui/InputBar.svelte";
   import FileList from "$lib/ui/FileList.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
+  import TitleBar from "$lib/ui/TitleBar.svelte";
   import { appState } from "$lib/store.svelte";
   import { loadState } from "$lib/git";
   import { compare, cycleAppMode } from "$lib/compare";
@@ -116,6 +117,19 @@
       return;
     }
 
+    // Ctrl+G — opens CodeMirror's goto-line panel on the active editor.
+    // Works regardless of focus so the user can jump even while typing in
+    // the file picker.
+    const isCtrlG = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "g";
+    if (isCtrlG) {
+      const v = getActiveDiffView();
+      if (v) {
+        gotoLine(v);
+        e.preventDefault();
+      }
+      return;
+    }
+
     // F5 or Ctrl+R refreshes the working tree view.
     const isRefresh =
       e.key === "F5" ||
@@ -184,6 +198,7 @@
 <svelte:window onkeydown={onKeyDown} />
 
 <div class="app">
+  <TitleBar />
   <InputBar />
   <Breadcrumb />
   {#if appState.availableUpdate}

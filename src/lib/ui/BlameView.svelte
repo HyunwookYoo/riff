@@ -11,6 +11,7 @@
     gutter,
     hoverTooltip,
     keymap,
+    lineNumbers,
   } from "@codemirror/view";
   import { EditorState, type Extension, type Range } from "@codemirror/state";
   import { search, searchKeymap } from "@codemirror/search";
@@ -28,6 +29,7 @@
     type TreePathNode,
   } from "./pathTree";
   import PathTreeNode from "./PathTreeNode.svelte";
+  import Dropdown from "./Dropdown.svelte";
 
   let host: HTMLDivElement;
   let searchInput: HTMLInputElement;
@@ -262,10 +264,14 @@
     const dark = isDarkMode();
     const syntax = await shikiExtension(text, detectLanguage(path), dark);
     const exts: Extension[] = [
+      // readOnly (not just editable=false) hides the Replace fields in the
+      // Ctrl+F search panel — this app is a viewer, replace is dead weight.
+      EditorState.readOnly.of(true),
       EditorView.editable.of(false),
       EditorView.lineWrapping,
       EditorView.darkTheme.of(dark),
       EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } }),
+      lineNumbers(),
       search({ top: true }),
       keymap.of(searchKeymap),
       blameGutterExt,
@@ -773,15 +779,16 @@
           </button>
           <button type="button" onclick={() => adjustFontSize(1)}>A+</button>
         </div>
-        <select
-          class="sort"
+        <Dropdown
           title="Commit sidepanel sort order"
-          bind:value={sortMode}
-        >
-          <option value="time-desc">Recent first</option>
-          <option value="first-line">By first line</option>
-          <option value="line-count">Most lines</option>
-        </select>
+          value={sortMode}
+          options={[
+            { value: "time-desc", label: "Recent first" },
+            { value: "first-line", label: "By first line" },
+            { value: "line-count", label: "Most lines" },
+          ]}
+          onchange={(v) => (sortMode = v as SortMode)}
+        />
       </div>
     </header>
     {#if !appState.blameFilePath}
@@ -972,14 +979,6 @@
     font-variant-numeric: tabular-nums;
     opacity: 0.75;
   }
-  .sort {
-    padding: 2px 6px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    background: var(--input-bg);
-    color: inherit;
-    font-size: 0.85em;
-  }
   .host {
     flex: 1;
     overflow: auto;
@@ -1041,6 +1040,10 @@
   }
   .commit-row.active {
     background: var(--selected);
+    color: var(--selected-fg);
+  }
+  .commit-row.active .drill {
+    color: var(--selected-fg);
   }
   .commit-row:not(.active):hover {
     background: var(--hover);

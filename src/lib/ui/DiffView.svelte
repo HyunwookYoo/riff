@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { EditorView, keymap } from "@codemirror/view";
+  import { EditorView, keymap, lineNumbers } from "@codemirror/view";
   import { EditorState, type Extension } from "@codemirror/state";
   import { MergeView, unifiedMergeView } from "@codemirror/merge";
   import { search, searchKeymap } from "@codemirror/search";
@@ -12,6 +12,7 @@
   import { fullLineChangePlugin } from "$lib/diff/fullLine";
   import { setActiveDiffView } from "$lib/diff/activeView";
   import { adjustFontSize, resetFontSize } from "$lib/font";
+  import Dropdown from "./Dropdown.svelte";
 
   let host: HTMLDivElement;
   let mergeView: MergeView | null = null;
@@ -21,6 +22,14 @@
   let loadError = $state<string | null>(null);
   let detectedLang = $state<string | null>(null);
   let langOverride = $state<string | null>(null);
+
+  const langOptions = $derived([
+    {
+      value: "",
+      label: `Auto${detectedLang ? ` (${detectedLang})` : " (plain)"}`,
+    },
+    ...supportedLanguages.map((l) => ({ value: l, label: l })),
+  ]);
 
   // Reset override whenever the selected file or compare context changes.
   $effect(() => {
@@ -97,10 +106,14 @@
     ]);
 
     const baseExts: Extension[] = [
+      // readOnly (vs. just editable=false) hides the Replace fields in the
+      // Ctrl+F search panel — this app is a viewer.
+      EditorState.readOnly.of(true),
       EditorView.editable.of(false),
       EditorView.lineWrapping,
       EditorView.darkTheme.of(dark),
       EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } }),
+      lineNumbers(),
       search({ top: true }),
       keymap.of(searchKeymap),
       fullLineChangePlugin,
@@ -166,22 +179,12 @@
   <div class="toolbar">
     <div class="meta">
       {#if diff?.kind === "text"}
-        <select
-          class="lang"
+        <Dropdown
           title="Override language"
           value={langOverride ?? ""}
-          onchange={(e) => {
-            const v = (e.currentTarget as HTMLSelectElement).value;
-            langOverride = v === "" ? null : v;
-          }}
-        >
-          <option value="">
-            Auto{detectedLang ? ` (${detectedLang})` : " (plain)"}
-          </option>
-          {#each supportedLanguages as l (l)}
-            <option value={l}>{l}</option>
-          {/each}
-        </select>
+          options={langOptions}
+          onchange={(v) => (langOverride = v === "" ? null : v)}
+        />
       {/if}
       {#if diff && diff.kind !== "text"}
         <span class="sizes">
@@ -262,15 +265,6 @@
     opacity: 0.75;
     font-family: var(--mono);
   }
-  .lang {
-    font-size: 0.85em;
-    padding: 1px 4px;
-    border-radius: 3px;
-    border: 1px solid var(--border);
-    background: var(--input-bg);
-    color: inherit;
-    text-transform: lowercase;
-  }
   .modes {
     display: flex;
     gap: 4px;
@@ -286,8 +280,10 @@
     font-size: 0.85em;
   }
   .modes button.active {
-    background: var(--selected);
-    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    box-shadow: inset 0 -2px 0 var(--accent);
   }
   .font-size {
     display: inline-flex;

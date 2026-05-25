@@ -9,6 +9,7 @@
   import type { ThemeChoice } from "$lib/types";
   import BranchModeFields from "./BranchModeFields.svelte";
   import WorkTreeFields from "./WorkTreeFields.svelte";
+  import Dropdown from "./Dropdown.svelte";
 
   let pathInput = $state(appState.repoPath);
 
@@ -155,16 +156,16 @@
     </label>
   {/if}
 
-  <select
+  <Dropdown
     title="Theme"
     value={appState.theme}
-    onchange={(e) =>
-      chooseTheme((e.currentTarget as HTMLSelectElement).value as ThemeChoice)}
-  >
-    <option value="system">System</option>
-    <option value="light">Light</option>
-    <option value="dark">Dark</option>
-  </select>
+    options={[
+      { value: "system", label: "System" },
+      { value: "light", label: "Light" },
+      { value: "dark", label: "Dark" },
+    ]}
+    onchange={(v) => chooseTheme(v as ThemeChoice)}
+  />
 
   {#if appState.appMode === "compare"}
     <button
@@ -227,7 +228,6 @@
     white-space: pre-wrap;
   }
   input,
-  select,
   button {
     font-size: 0.9em;
     padding: 4px 8px;
@@ -274,7 +274,12 @@
     border-bottom-right-radius: 4px;
   }
   .mode-toggle button.active {
-    background: var(--selected);
-    border-color: var(--accent);
+    /* Rider tab-style: accent underline + soft accent fill (same hue family
+     * in both themes — avoids the light=white / dark=black inversion that
+     * `--input-bg` would cause). */
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    box-shadow: inset 0 -2px 0 var(--accent);
   }
 </style>

@@ -97,6 +97,10 @@
   }
   .row.active {
     background: var(--selected);
+    color: var(--selected-fg);
+  }
+  .row.active :global(.badge) {
+    color: white;
   }
   .chev {
     display: inline-block;

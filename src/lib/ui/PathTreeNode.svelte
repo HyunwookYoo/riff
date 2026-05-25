@@ -115,6 +115,11 @@
   }
   .row.active {
     background: var(--selected);
+    color: var(--selected-fg);
+  }
+  .row.active .file-icon {
+    color: var(--selected-fg);
+    opacity: 1;
   }
   .row.highlighted {
     background: var(--hover);
@@ -149,9 +154,6 @@
   }
   .file-icon {
     opacity: 0.55;
-  }
-  .row.active .file-icon {
-    opacity: 1;
   }
   .name {
     overflow: hidden;

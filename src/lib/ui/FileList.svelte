@@ -173,6 +173,11 @@
   }
   ul button.active {
     background: var(--selected);
+    color: var(--selected-fg);
+  }
+  ul button.active .badge {
+    /* status badges keep their semantic color; force white text contrast */
+    color: white;
   }
   .badge {
     flex-shrink: 0;
