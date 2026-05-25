@@ -20,6 +20,9 @@
     appState.selectedFile = null;
     appState.startBranch = "";
     appState.targetBranch = "";
+    // Blame-mode caches/file pin from the previous repo are also stale.
+    appState.repoFiles = [];
+    appState.blameFilePath = null;
     try {
       await validateRepo(path);
       appState.repoPath = path;
@@ -60,6 +63,20 @@
     }
   }
 
+  // Direct mode-toggle buttons. Unlike Ctrl+Shift+W (which cycles), these
+  // jump to a specific workspace. Entering blame carries selectedFile over
+  // so the user lands on its blame, matching the cycle's hand-off behavior.
+  function enterCompareMode(target: "branch" | "worktree") {
+    if (appState.appMode === "blame") appState.appMode = "compare";
+    setMode(target);
+  }
+  function enterBlameMode() {
+    if (appState.selectedFile) {
+      appState.blameFilePath = appState.selectedFile.path;
+    }
+    appState.appMode = "blame";
+  }
+
   onMount(() => {
     let unlisten: (() => void) | undefined;
     getCurrentWindow()
@@ -74,6 +91,38 @@
     return () => unlisten?.();
   });
 </script>
+
+<div class="mode-bar">
+  <div class="mode-toggle" role="group" aria-label="Workspace mode">
+    <button
+      type="button"
+      class:active={appState.appMode === "compare" &&
+        appState.compareMode === "branch"}
+      onclick={() => enterCompareMode("branch")}
+      title="Compare two refs"
+    >
+      Branch
+    </button>
+    <button
+      type="button"
+      class:active={appState.appMode === "compare" &&
+        appState.compareMode === "worktree"}
+      onclick={() => enterCompareMode("worktree")}
+      title="Uncommitted changes vs HEAD"
+    >
+      Working Tree
+    </button>
+    <button
+      type="button"
+      class:active={appState.appMode === "blame"}
+      onclick={enterBlameMode}
+      title="Blame a file"
+    >
+      Blame
+    </button>
+  </div>
+  <span class="mode-hint">Ctrl+Shift+W to cycle</span>
+</div>
 
 <div class="bar">
   <input
@@ -91,35 +140,20 @@
   </datalist>
   <button onclick={browse}>Browse…</button>
 
-  <div class="mode-toggle" role="group" aria-label="Compare mode">
-    <button
-      type="button"
-      class:active={appState.compareMode === "branch"}
-      onclick={() => setMode("branch")}
-      title="Compare two refs"
-    >
-      Branch
-    </button>
-    <button
-      type="button"
-      class:active={appState.compareMode === "worktree"}
-      onclick={() => setMode("worktree")}
-      title="Uncommitted changes vs HEAD (Ctrl+Shift+W)"
-    >
-      Working Tree
-    </button>
-  </div>
-
-  {#if appState.compareMode === "branch"}
-    <BranchModeFields />
-  {:else}
-    <WorkTreeFields />
+  {#if appState.appMode === "compare"}
+    {#if appState.compareMode === "branch"}
+      <BranchModeFields />
+    {:else}
+      <WorkTreeFields />
+    {/if}
   {/if}
 
-  <label class="check" title="Ignore whitespace changes (-w)">
-    <input type="checkbox" bind:checked={appState.ignoreWhitespace} />
-    <span>ws</span>
-  </label>
+  {#if appState.appMode === "compare"}
+    <label class="check" title="Ignore whitespace changes (-w)">
+      <input type="checkbox" bind:checked={appState.ignoreWhitespace} />
+      <span>ws</span>
+    </label>
+  {/if}
 
   <select
     title="Theme"
@@ -132,19 +166,21 @@
     <option value="dark">Dark</option>
   </select>
 
-  <button
-    class="primary"
-    onclick={() => void compare()}
-    disabled={appState.loadingFiles || appState.loadingRepo}
-  >
-    {#if appState.loadingFiles}
-      …
-    {:else if appState.compareMode === "worktree"}
-      Refresh
-    {:else}
-      Compare
-    {/if}
-  </button>
+  {#if appState.appMode === "compare"}
+    <button
+      class="primary"
+      onclick={() => void compare()}
+      disabled={appState.loadingFiles || appState.loadingRepo}
+    >
+      {#if appState.loadingFiles}
+        …
+      {:else if appState.compareMode === "worktree"}
+        Refresh
+      {:else}
+        Compare
+      {/if}
+    </button>
+  {/if}
 </div>
 
 {#if appState.error}
@@ -152,6 +188,20 @@
 {/if}
 
 <style>
+  .mode-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bar-bg);
+  }
+  .mode-hint {
+    font-size: 0.75em;
+    opacity: 0.5;
+    margin-left: auto;
+    font-family: var(--mono);
+  }
   .bar {
     display: flex;
     gap: 6px;
@@ -212,6 +262,9 @@
     border-radius: 0;
     font-size: 0.85em;
   }
+  .mode-toggle button + button {
+    border-left: none;
+  }
   .mode-toggle button:first-child {
     border-top-left-radius: 4px;
     border-bottom-left-radius: 4px;
@@ -219,7 +272,6 @@
   .mode-toggle button:last-child {
     border-top-right-radius: 4px;
     border-bottom-right-radius: 4px;
-    border-left: none;
   }
   .mode-toggle button.active {
     background: var(--selected);

@@ -6,10 +6,11 @@
   import InputBar from "$lib/ui/InputBar.svelte";
   import FileList from "$lib/ui/FileList.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
+  import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
   import { appState } from "$lib/store.svelte";
   import { loadState } from "$lib/git";
-  import { compare, toggleMode } from "$lib/compare";
+  import { compare, cycleAppMode } from "$lib/compare";
   import { popHistory } from "$lib/history";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
   import { adjustFontSize, applyFontSize, resetFontSize } from "$lib/font";
@@ -89,14 +90,15 @@
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName?.toLowerCase();
 
-    // Ctrl+Shift+W toggles compare mode regardless of focus, so the user can
-    // flip modes even while a ref input has the cursor.
+    // Ctrl+Shift+W cycles app modes (branch compare → worktree compare → blame)
+    // regardless of focus, so the user can switch even while a ref input has
+    // the cursor.
     if (
       (e.ctrlKey || e.metaKey) &&
       e.shiftKey &&
       e.key.toLowerCase() === "w"
     ) {
-      toggleMode();
+      cycleAppMode();
       e.preventDefault();
       return;
     }
@@ -175,10 +177,6 @@
         }
         break;
       }
-      case "b":
-        appState.blameMode = !appState.blameMode;
-        e.preventDefault();
-        break;
     }
   }
 </script>
@@ -206,29 +204,33 @@
     </div>
   {/if}
   <div class="body">
-    <FileList />
-    <main class="diff">
-      {#if appState.selectedFile}
-        <header>
-          <span class="badge" data-status={appState.selectedFile.status}>
-            {appState.selectedFile.status}
-          </span>
-          <span class="path">{appState.selectedFile.path}</span>
-          {#if appState.selectedFile.old_path}
-            <span class="from">(from {appState.selectedFile.old_path})</span>
-          {/if}
-        </header>
-        <DiffView />
-      {:else if appState.loadingRepo}
-        <div class="placeholder">Opening repository…</div>
-      {:else if appState.loadingFiles}
-        <div class="placeholder">Scanning changed files…</div>
-      {:else}
-        <div class="placeholder">
-          Select a repository and two refs to compare.
-        </div>
-      {/if}
-    </main>
+    {#if appState.appMode === "blame"}
+      <BlameView />
+    {:else}
+      <FileList />
+      <main class="diff">
+        {#if appState.selectedFile}
+          <header>
+            <span class="badge" data-status={appState.selectedFile.status}>
+              {appState.selectedFile.status}
+            </span>
+            <span class="path">{appState.selectedFile.path}</span>
+            {#if appState.selectedFile.old_path}
+              <span class="from">(from {appState.selectedFile.old_path})</span>
+            {/if}
+          </header>
+          <DiffView />
+        {:else if appState.loadingRepo}
+          <div class="placeholder">Opening repository…</div>
+        {:else if appState.loadingFiles}
+          <div class="placeholder">Scanning changed files…</div>
+        {:else}
+          <div class="placeholder">
+            Select a repository and two refs to compare.
+          </div>
+        {/if}
+      </main>
+    {/if}
   </div>
 </div>
 

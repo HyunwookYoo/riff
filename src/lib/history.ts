@@ -9,6 +9,7 @@ import type { CompareCtx } from "./types";
  */
 export function pushAndDrillToCommit(sha: string): void {
   const ctx: CompareCtx = {
+    appMode: appState.appMode,
     compareMode: appState.compareMode,
     mode: appState.mode,
     startBranch: appState.startBranch,
@@ -16,6 +17,9 @@ export function pushAndDrillToCommit(sha: string): void {
     selectedFilePath: appState.selectedFile?.path ?? null,
   };
   appState.history.push(ctx);
+  // Drill always renders in compare mode — blame mode has no concept of a
+  // single-commit diff view.
+  appState.appMode = "compare";
   appState.compareMode = "branch";
   appState.mode = "two-dot";
   appState.startBranch = `${sha}^`;
@@ -24,14 +28,19 @@ export function pushAndDrillToCommit(sha: string): void {
   void compare();
 }
 
-/** Pop the top history frame and restore that compare context. */
+/** Pop the top history frame and restore the saved workspace context. */
 export function popHistory(): void {
   const ctx = appState.history.pop();
   if (!ctx) return;
+  appState.appMode = ctx.appMode;
   appState.compareMode = ctx.compareMode;
   appState.mode = ctx.mode;
   appState.startBranch = ctx.startBranch;
   appState.targetBranch = ctx.targetBranch;
   appState.selectedFile = null;
-  void compare({ preservePath: ctx.selectedFilePath });
+  // Compare-side rehydration: reload the file list. Blame-side state lives in
+  // `appState.blameFilePath` and survives the drill round-trip on its own.
+  if (ctx.appMode === "compare") {
+    void compare({ preservePath: ctx.selectedFilePath });
+  }
 }

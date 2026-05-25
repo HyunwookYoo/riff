@@ -127,6 +127,22 @@ export function worktreeFileDiff(
  * `useContents` is true (worktree mode blames the working copy against HEAD).
  * Lines with no commit (uncommitted edits) come back with sha "00000000".
  */
+/**
+ * List every tracked file in the repo. Submodule gitlinks are filtered out.
+ * Returns a flat list of repo-relative paths in `git ls-files` order.
+ */
+export function listRepoFiles(path: string): Promise<string[]> {
+  return invoke("list_repo_files", { path });
+}
+
+/**
+ * Read a tracked file's working-tree contents. Hard 2MB cap on the backend —
+ * larger files reject with a `CommandFailed` error.
+ */
+export function readRepoFile(path: string, filePath: string): Promise<string> {
+  return invoke("read_repo_file", { path, filePath });
+}
+
 export function blameFile(
   path: string,
   filePath: string,

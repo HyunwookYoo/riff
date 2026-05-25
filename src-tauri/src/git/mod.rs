@@ -116,6 +116,10 @@ pub trait GitLayer {
         status: FileStatus,
         force: bool,
     ) -> Result<FileDiff, GitError>;
+    /// List every tracked file in the repo (`git ls-files -s -z`), filtering
+    /// out gitlink entries (mode 160000) so submodule paths don't surface to
+    /// the blame file picker — `git blame` doesn't work on them.
+    fn list_repo_files(&self, path: &Path) -> Result<Vec<String>, GitError>;
     /// Run `git blame --porcelain -w -M` on `file_path` at `rev` and return a
     /// deduplicated line→commit mapping. When `use_contents` is true, blame
     /// reads the working-copy contents at `repo/file_path` against HEAD —

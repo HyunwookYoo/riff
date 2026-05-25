@@ -46,6 +46,11 @@ export type ThemeChoice = "system" | "light" | "dark";
 
 export type CompareMode = "branch" | "worktree";
 
+/// Top-level workspace mode. `compare` covers branch + worktree diff (the
+/// sub-mode is `CompareMode`); `blame` is the standalone blame workspace.
+/// Session-only — never persisted.
+export type AppMode = "compare" | "blame";
+
 export interface PersistedState {
   recent_repos: string[];
   theme: ThemeChoice;
@@ -66,8 +71,10 @@ export interface Blame {
   line_commit: number[];
 }
 
-/** Snapshot of a compare context, pushed onto the history stack on drill-in. */
+/** Snapshot of a workspace context, pushed onto the history stack on drill-in.
+ * `appMode` lets us return to blame mode if that's where the drill started. */
 export interface CompareCtx {
+  appMode: AppMode;
   compareMode: CompareMode;
   mode: DiffMode;
   startBranch: string;

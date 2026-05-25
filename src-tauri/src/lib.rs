@@ -96,6 +96,49 @@ fn worktree_file_diff(
 }
 
 #[tauri::command]
+fn list_repo_files(state: tauri::State<GitCli>, path: String) -> Result<Vec<String>, GitError> {
+    state.list_repo_files(Path::new(&path))
+}
+
+/// Read a tracked file's working-tree contents for the blame view. Path safety
+/// is enforced here (no absolute paths, no `..` traversal) because this
+/// bypasses git's index — it reads straight from disk.
+#[tauri::command]
+fn read_repo_file(path: String, file_path: String) -> Result<String, GitError> {
+    use std::fs;
+    use std::path::Component;
+
+    if file_path.is_empty() {
+        return Err(GitError::CommandFailed("empty file path".into()));
+    }
+    let rel = Path::new(&file_path);
+    if rel.is_absolute() {
+        return Err(GitError::CommandFailed("absolute path not allowed".into()));
+    }
+    if rel
+        .components()
+        .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_) | Component::RootDir))
+    {
+        return Err(GitError::CommandFailed(
+            "invalid path component in file path".into(),
+        ));
+    }
+
+    let full = Path::new(&path).join(rel);
+    let meta = fs::metadata(&full).map_err(GitError::Io)?;
+    // Hard cap so a stray binary or huge log file can't lock up the editor.
+    const BLAME_READ_CAP: u64 = 2_000_000;
+    if meta.len() > BLAME_READ_CAP {
+        return Err(GitError::CommandFailed(format!(
+            "file too large for blame view ({} bytes)",
+            meta.len()
+        )));
+    }
+    let bytes = fs::read(&full).map_err(GitError::Io)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[tauri::command]
 fn blame_file(
     state: tauri::State<GitCli>,
     path: String,
@@ -151,6 +194,8 @@ pub fn run() {
             worktree_files,
             worktree_file_diff,
             blame_file,
+            list_repo_files,
+            read_repo_file,
             load_state,
             add_recent_repo,
             remove_recent_repo,

@@ -679,6 +679,11 @@ impl GitLayer for GitCli {
         })
     }
 
+    fn list_repo_files(&self, path: &Path) -> Result<Vec<String>, GitError> {
+        let stdout = self.run(path, &["ls-files", "-s", "-z"])?;
+        parse_ls_files_stage(&stdout)
+    }
+
     fn blame_file(
         &self,
         path: &Path,
@@ -910,6 +915,30 @@ fn stream_parse_ls_files<R: BufRead>(
     }
 }
 
+/// Parse `git ls-files -s -z` output. Each NUL-terminated record is
+/// `<mode> SP <oid> SP <stage>\t<path>`. Gitlink entries (mode 160000) are
+/// dropped — submodules can't be blamed.
+fn parse_ls_files_stage(bytes: &[u8]) -> Result<Vec<String>, GitError> {
+    let mut out = Vec::new();
+    for entry in bytes.split(|&b| b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let tab = entry
+            .iter()
+            .position(|&b| b == b'\t')
+            .ok_or_else(|| GitError::Parse("ls-files -s: missing tab".into()))?;
+        let meta = &entry[..tab];
+        let path = &entry[tab + 1..];
+        let mode_end = meta.iter().position(|&b| b == b' ').unwrap_or(meta.len());
+        if &meta[..mode_end] == b"160000" {
+            continue;
+        }
+        out.push(bytes_to_string(path)?);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1013,6 +1042,39 @@ mod tests {
         })
         .unwrap();
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn parse_ls_files_stage_basic() {
+        let input = b"100644 abc123 0\tsrc/main.rs\0100755 def456 0\tscripts/run.sh\0";
+        let out = parse_ls_files_stage(input).unwrap();
+        assert_eq!(out, vec!["src/main.rs", "scripts/run.sh"]);
+    }
+
+    #[test]
+    fn parse_ls_files_stage_filters_submodule() {
+        let input = b"100644 abc123 0\tsrc/main.rs\0160000 deadbeef 0\tvendor/sub\0100644 def456 0\tREADME\0";
+        let out = parse_ls_files_stage(input).unwrap();
+        assert_eq!(out, vec!["src/main.rs", "README"]);
+    }
+
+    #[test]
+    fn parse_ls_files_stage_empty() {
+        assert!(parse_ls_files_stage(b"").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_ls_files_stage_path_with_spaces() {
+        let input = b"100644 abc123 0\tsrc/file with spaces.rs\0";
+        let out = parse_ls_files_stage(input).unwrap();
+        assert_eq!(out, vec!["src/file with spaces.rs"]);
+    }
+
+    #[test]
+    fn parse_ls_files_stage_rejects_missing_tab() {
+        // No tab between meta and path — malformed.
+        let input = b"100644 abc123 0 src/main.rs\0";
+        assert!(parse_ls_files_stage(input).is_err());
     }
 
     #[test]

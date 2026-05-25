@@ -121,6 +121,27 @@ export function setMode(m: CompareMode): void {
   }
 }
 
-export function toggleMode(): void {
-  setMode(appState.compareMode === "branch" ? "worktree" : "branch");
+/// Cycle the workspace: branch-compare → worktree-compare → blame → branch-compare.
+/// Triggered by Ctrl+Shift+W. Leaving blame always lands on branch-compare —
+/// the cycle is positional, not a stack pop.
+export function cycleAppMode(): void {
+  if (appState.appMode === "blame") {
+    appState.appMode = "compare";
+    if (appState.compareMode !== "branch") {
+      setMode("branch");
+    }
+    return;
+  }
+  if (appState.compareMode === "branch") {
+    setMode("worktree");
+    return;
+  }
+  // Entering blame from compare: carry the currently selected file over so
+  // the user lands on its blame view instead of an empty picker. The current
+  // selection always wins — a stale blameFilePath from an earlier visit would
+  // be confusing here.
+  if (appState.selectedFile) {
+    appState.blameFilePath = appState.selectedFile.path;
+  }
+  appState.appMode = "blame";
 }
