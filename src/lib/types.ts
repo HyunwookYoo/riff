@@ -66,6 +66,13 @@ export interface PersistedState {
   manual_repos_by_main: Record<string, string[]>;
 }
 
+/// A repo-qualified file path. Used by the unified blame picker
+/// (§13.3 #20-23) to remember which repo a path lives in.
+export interface RepoFile {
+  repoIdx: number;
+  path: string;
+}
+
 /// Submodule info as returned by the backend `list_submodules` command.
 /// Mirror of Rust `SubmoduleInfo`.
 export interface SubmoduleInfo {

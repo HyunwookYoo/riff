@@ -1,5 +1,6 @@
+import { appState } from "./store.svelte";
 import { listSubmodules, validateRepo } from "./git";
-import type { RepoEntry } from "./types";
+import type { RepoEntry, RepoFile } from "./types";
 
 /**
  * Last path component, OS-agnostic. Trims trailing slashes so paths like
@@ -77,3 +78,14 @@ export async function buildWorkspace(
 
   return repos;
 }
+
+/**
+ * Resolve a repo-qualified file target (§13.3 #23) to the absolute repo
+ * path needed by `blameFile` / `readRepoFile`. Returns null when the
+ * workspace no longer contains that repo idx (e.g. user switched main).
+ */
+export function repoPathFor(target: RepoFile | null): string | null {
+  if (!target) return null;
+  return appState.repos[target.repoIdx]?.path ?? null;
+}
+

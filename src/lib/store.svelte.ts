@@ -6,6 +6,7 @@ import type {
   CompareMode,
   DiffMode,
   RepoEntry,
+  RepoFile,
   ThemeChoice,
   ViewMode,
 } from "./types";
@@ -41,11 +42,14 @@ class AppState {
   updateInstalling = $state(false);
   // Top-level workspace mode. Session-only — first run starts in compare.
   appMode = $state<AppMode>("compare");
-  // Path of the file currently being blamed. Persists across drill-in/back so
-  // returning to blame mode lands you on the same file. Session-only.
-  blameFilePath = $state<string | null>(null);
-  // Cached `git ls-files` result for the open repo. Cleared on repo switch.
-  repoFiles = $state<string[]>([]);
+  // File currently being blamed, repo-qualified (§13.3 #23). Persists across
+  // drill-in/back so returning to blame mode lands you on the same file.
+  // Session-only.
+  blameTarget = $state<RepoFile | null>(null);
+  // Cached `git ls-files` results for every repo in the workspace (§13.3 #20).
+  // Each entry is `{ repoIdx, path }`; the blame picker fuzzy-searches the
+  // whole union. Cleared on repo switch by InputBar.
+  repoFiles = $state<RepoFile[]>([]);
   // Drill-in history stack. Each entry is the compare context the user can
   // return to. Session-only.
   history = $state<CompareCtx[]>([]);

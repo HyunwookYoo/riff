@@ -5,6 +5,11 @@
   interface Props {
     node: TreePathNode;
     expanded: Set<string>;
+    /** Prefix applied to dir paths when looking up `expanded` (§13.3 #20).
+     * In multi-root, callers pass "<repoIdx>:" so the same directory path
+     * in two different repos has independent collapse state. Defaults to
+     * "" for single-repo / legacy callers. */
+    groupKeyPrefix?: string;
     selectedPath: string | null;
     /** Path under the search keyboard cursor — visually marked but doesn't
      * load. Used during fuzzy-filtered tree mode. */
@@ -17,6 +22,7 @@
   let {
     node,
     expanded,
+    groupKeyPrefix = "",
     selectedPath,
     highlightedPath = null,
     depth = 0,
@@ -29,7 +35,7 @@
 </script>
 
 {#if node.kind === "dir"}
-  {@const isOpen = expanded.has(node.path)}
+  {@const isOpen = expanded.has(groupKeyPrefix + node.path)}
   <button
     type="button"
     class="row dir-row"
@@ -57,6 +63,7 @@
       <Self
         node={child}
         {expanded}
+        {groupKeyPrefix}
         {selectedPath}
         {highlightedPath}
         depth={depth + 1}

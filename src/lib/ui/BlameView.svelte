@@ -18,7 +18,8 @@
   import { appState } from "$lib/store.svelte";
   import { blameFile, listRepoFiles, readRepoFile } from "$lib/git";
   import { pushAndDrillToCommit } from "$lib/history";
-  import type { Blame, BlameCommit } from "$lib/types";
+  import { repoPathFor } from "$lib/workspace";
+  import type { Blame, BlameCommit, RepoFile } from "$lib/types";
   import { detectLanguage } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
   import { setActiveDiffView } from "$lib/diff/activeView";
@@ -50,16 +51,45 @@
   /** Cap on fuzzy result rows. */
   const MAX_FUZZY_ROWS = 200;
 
-  /** Built tree (no root node); rebuilt only when repoFiles identity changes. */
-  const repoTree = $derived(buildPathTree(appState.repoFiles));
+  /** True when the workspace has more than one repo (§13). Drives whether to
+   * group the picker by repo and whether to show repo prefixes in results. */
+  const showGroups = $derived(appState.repos.length > 1);
 
-  type FuzzyRow = { path: string; html: string };
+  /** Files for one repo, paired with the repo metadata. Used to render the
+   * per-repo tree-mode groups. */
+  interface RepoFilesGroup {
+    idx: number;
+    files: string[]; // paths only
+    tree: TreePathNode[];
+  }
+  const repoGroups = $derived.by<RepoFilesGroup[]>(() => {
+    const buckets = new Map<number, string[]>();
+    for (const f of appState.repoFiles) {
+      let bucket = buckets.get(f.repoIdx);
+      if (!bucket) {
+        bucket = [];
+        buckets.set(f.repoIdx, bucket);
+      }
+      bucket.push(f.path);
+    }
+    const out: RepoFilesGroup[] = [];
+    for (let i = 0; i < appState.repos.length; i++) {
+      const files = buckets.get(i) ?? [];
+      if (files.length === 0) continue;
+      out.push({ idx: i, files, tree: buildPathTree(files) });
+    }
+    return out;
+  });
+
+  type FuzzyRow = { repoIdx: number; path: string; html: string };
   const fuzzyResults = $derived.by<FuzzyRow[]>(() => {
     const q = query.trim();
     if (!q) return [];
     // Pull more than we'll show — the basename filter below may drop a
     // chunk of folder-only hits, and we still want to fill MAX_FUZZY_ROWS.
+    // The `key` form lets us recover repoIdx from the matched object.
     const raw = fuzzysort.go(q, appState.repoFiles, {
+      key: "path",
       limit: MAX_FUZZY_ROWS * 4,
     });
     // Keep only matches that touch the file's basename. Without this, a
@@ -70,28 +100,44 @@
       const basenameStart = r.target.lastIndexOf("/") + 1;
       return r.indexes.some((i) => i >= basenameStart);
     });
-    return onlyBasenameHits
-      .slice(0, MAX_FUZZY_ROWS)
-      .map((r) => ({ path: r.target, html: r.highlight("<mark>", "</mark>") }));
+    return onlyBasenameHits.slice(0, MAX_FUZZY_ROWS).map((r) => ({
+      repoIdx: r.obj.repoIdx,
+      path: r.obj.path,
+      html: r.highlight("<mark>", "</mark>"),
+    }));
   });
 
-  /** Set of expanded directory paths. Initial expansion = top-level dirs +
-   * ancestors of the currently selected file. User toggles via clicks. */
+  /** Set of expanded directory paths, keyed `<repoIdx>:<dirPath>` so the same
+   * path in different repos has independent collapse state. Initial expansion
+   * = top-level dirs of every group + ancestors of the currently selected
+   * file. User toggles via clicks. */
   let expandedDirs = $state<Set<string>>(new Set());
-  /** Tracks whether we've seeded `expandedDirs` for the current repo's tree.
-   * Re-seeded when repo files change shape (different repo, or list reload). */
+  /** Re-seeded when the repo file set changes shape (different repo, or list
+   * reload). */
   let treeSeedKey = $state("");
+
+  /** Repo groups in the picker that are collapsed at the header level. */
+  let collapsedPickerGroups = $state<Set<number>>(new Set());
+
+  function dirKey(repoIdx: number, path: string): string {
+    return `${repoIdx}:${path}`;
+  }
 
   $effect(() => {
     const key = `${appState.repoPath}|${appState.repoFiles.length}`;
     if (key === treeSeedKey) return;
     treeSeedKey = key;
     const next = new Set<string>();
-    for (const node of repoTree) {
-      if (node.kind === "dir") next.add(node.path);
+    for (const g of repoGroups) {
+      for (const node of g.tree) {
+        if (node.kind === "dir") next.add(dirKey(g.idx, node.path));
+      }
     }
-    if (appState.blameFilePath) {
-      for (const a of ancestorDirs(appState.blameFilePath)) next.add(a);
+    const target = appState.blameTarget;
+    if (target) {
+      for (const a of ancestorDirs(target.path)) {
+        next.add(dirKey(target.repoIdx, a));
+      }
     }
     expandedDirs = next;
   });
@@ -99,51 +145,53 @@
   // Auto-expand ancestors when the picked file changes (e.g. via fuzzy search)
   // so switching back to the tree view lands you on the highlighted entry.
   $effect(() => {
-    const path = appState.blameFilePath;
-    if (!path) return;
-    const ancestors = ancestorDirs(path);
+    const target = appState.blameTarget;
+    if (!target) return;
+    const ancestors = ancestorDirs(target.path);
     if (ancestors.length === 0) return;
     let changed = false;
     const next = new Set(expandedDirs);
     for (const a of ancestors) {
-      if (!next.has(a)) {
-        next.add(a);
+      const k = dirKey(target.repoIdx, a);
+      if (!next.has(k)) {
+        next.add(k);
         changed = true;
       }
     }
     if (changed) expandedDirs = next;
   });
 
-  function toggleDir(path: string) {
+  function toggleDir(key: string) {
     const next = new Set(expandedDirs);
-    if (next.has(path)) next.delete(path);
-    else next.add(path);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
     expandedDirs = next;
   }
 
-  /** When the user is searching we render a *filtered* tree containing only
-   * the matching paths (and their ancestors). */
-  const searchTree = $derived.by<TreePathNode[]>(() => {
-    if (query.trim() === "") return [];
-    return buildPathTree(fuzzyResults.map((r) => r.path));
-  });
+  function togglePickerGroup(idx: number) {
+    const next = new Set(collapsedPickerGroups);
+    if (next.has(idx)) next.delete(idx);
+    else next.add(idx);
+    collapsedPickerGroups = next;
+  }
 
-  /** File path the keyboard cursor is on within fuzzy results. Independent of
-   * the actively-blamed file — Enter is what commits the selection. */
-  const highlightedPath = $derived<string | null>(
-    fuzzyResults[highlightedIndex]?.path ?? null,
+  /** The fuzzy result row the keyboard cursor is on. Independent of the
+   * actively-blamed file — Enter is what commits the selection. */
+  const highlightedRow = $derived<FuzzyRow | null>(
+    fuzzyResults[highlightedIndex] ?? null,
   );
 
-  /** Find a C/C++ header/source companion for `filePath` among `candidates`
+  /** Find a C/C++ header/source companion for `target` among `candidates`
    * (the current fuzzy result set). Looks for the same stem with a matching
    * opposite extension (.h ↔ .cpp, plus .hpp/.hxx/.cc/.cxx/.c variants).
-   * Returns null when no companion is in the result set. */
+   * §13.3 #22: companion must be in the **same repo** — a stray same-name
+   * file in another repo isn't a real pairing. */
   function companionInResults(
-    filePath: string,
-    candidates: string[],
-  ): string | null {
-    const slash = filePath.lastIndexOf("/");
-    const base = filePath.slice(slash + 1);
+    target: RepoFile,
+    candidates: FuzzyRow[],
+  ): RepoFile | null {
+    const slash = target.path.lastIndexOf("/");
+    const base = target.path.slice(slash + 1);
     const dot = base.lastIndexOf(".");
     if (dot < 0) return null;
     const stem = base.slice(0, dot);
@@ -157,39 +205,21 @@
       return null;
     }
     for (const c of candidates) {
-      if (c === filePath) continue;
-      const cs = c.lastIndexOf("/");
-      const cbase = c.slice(cs + 1);
+      if (c.repoIdx !== target.repoIdx) continue;
+      if (c.path === target.path) continue;
+      const cs = c.path.lastIndexOf("/");
+      const cbase = c.path.slice(cs + 1);
       const cdot = cbase.lastIndexOf(".");
       if (cdot < 0) continue;
       if (
         cbase.slice(0, cdot) === stem &&
         opposite.includes(cbase.slice(cdot + 1).toLowerCase())
       ) {
-        return c;
+        return { repoIdx: c.repoIdx, path: c.path };
       }
     }
     return null;
   }
-
-  /** During search, only expand the path of the keyboard-focused match
-   * (plus its .h/.cpp companion if both are in the result set). All other
-   * sibling folders stay collapsed — the user navigates between matches
-   * via ↑↓/Enter or by typing, not by visually scanning expanded folders. */
-  const searchExpandedDirs = $derived.by<Set<string>>(() => {
-    const dirs = new Set<string>();
-    const focused = highlightedPath;
-    if (!focused) return dirs;
-    for (const a of ancestorDirs(focused)) dirs.add(a);
-    const companion = companionInResults(
-      focused,
-      fuzzyResults.map((r) => r.path),
-    );
-    if (companion) {
-      for (const a of ancestorDirs(companion)) dirs.add(a);
-    }
-    return dirs;
-  });
 
   /** Commits enriched with line counts and first-line, then sorted per mode. */
   type CommitRow = BlameCommit & { lineCount: number; firstLine: number };
@@ -225,17 +255,34 @@
 
   // ---- effects ----
 
-  // Load repo file list once per open repo. Cleared on repo switch by InputBar.
+  // Load every workspace repo's file list. Cleared on main switch by
+  // InputBar; fanned out concurrently across repos here so big workspaces
+  // don't block on the slowest list_repo_files call.
   $effect(() => {
     const repo = appState.repoPath;
-    if (!repo || appState.repoFiles.length > 0) return;
+    const repos = appState.repos;
+    if (!repo || repos.length === 0 || appState.repoFiles.length > 0) return;
     void (async () => {
       try {
-        const files = await listRepoFiles(repo);
-        if (appState.repoPath === repo) {
-          appState.repoFiles = files;
-          repoFilesError = null;
+        const lists = await Promise.all(
+          repos.map(async (r) => {
+            try {
+              return await listRepoFiles(r.path);
+            } catch (e) {
+              console.warn(`listRepoFiles failed for ${r.path}:`, e);
+              return [] as string[];
+            }
+          }),
+        );
+        if (appState.repoPath !== repo) return;
+        const out: RepoFile[] = [];
+        for (let i = 0; i < lists.length; i++) {
+          for (const path of lists[i]) {
+            out.push({ repoIdx: i, path });
+          }
         }
+        appState.repoFiles = out;
+        repoFilesError = null;
       } catch (e) {
         repoFilesError = String(e);
       }
@@ -255,13 +302,14 @@
 
   // Keep the highlighted row visible as the user arrows through results.
   $effect(() => {
-    const path = highlightedPath;
-    if (!path) return;
+    const row = highlightedRow;
+    if (!row) return;
     // Defer to next frame so the tree DOM has rendered the new highlight.
     requestAnimationFrame(() => {
-      const el = document.querySelector(
-        `.picker .results [data-path="${CSS.escape(path)}"]`,
-      );
+      const sel = `.picker .results [data-row-key="${row.repoIdx}:${CSS.escape(
+        row.path,
+      )}"]`;
+      const el = document.querySelector(sel);
       el?.scrollIntoView({ block: "nearest" });
     });
   });
@@ -269,20 +317,25 @@
   // (Re)load file content + blame whenever the picked file or repo changes.
   // Also re-runs on theme change so the editor remounts with the right shiki.
   $effect(() => {
-    const path = appState.blameFilePath;
-    const repo = appState.repoPath;
+    const target = appState.blameTarget;
+    const repoMain = appState.repoPath;
     void appState.effectiveTheme;
-    if (!repo || !path) {
+    if (!repoMain || !target) {
       teardownEditor();
       fileText = null;
       blameData = null;
       blameLoading = false;
       return;
     }
-    void load(repo, path);
+    void load(target);
   });
 
-  async function load(repo: string, path: string) {
+  function sameTarget(a: RepoFile | null, b: RepoFile | null): boolean {
+    if (!a || !b) return a === b;
+    return a.repoIdx === b.repoIdx && a.path === b.path;
+  }
+
+  async function load(target: RepoFile) {
     teardownEditor();
     fileText = null;
     loadError = null;
@@ -291,27 +344,34 @@
     selectedCommitSha = null;
     blameLoading = true;
 
+    const repoPath = repoPathFor(target);
+    if (!repoPath) {
+      loadError = "repo no longer in workspace";
+      blameLoading = false;
+      return;
+    }
+
     let text: string;
     let blame: Blame;
     try {
       [text, blame] = await Promise.all([
-        readRepoFile(repo, path),
-        blameFile(repo, path, "HEAD", true),
+        readRepoFile(repoPath, target.path),
+        blameFile(repoPath, target.path, "HEAD", true),
       ]);
     } catch (e) {
-      if (appState.blameFilePath !== path) return;
+      if (!sameTarget(appState.blameTarget, target)) return;
       loadError = String(e);
       blameLoading = false;
       return;
     }
 
     // Race: user picked a different file while we were loading.
-    if (appState.blameFilePath !== path) return;
+    if (!sameTarget(appState.blameTarget, target)) return;
     fileText = text;
     blameData = blame;
     blameLoading = false;
     await tick();
-    await mountEditor(path, text);
+    await mountEditor(target.path, text);
   }
 
   async function mountEditor(path: string, text: string) {
@@ -361,9 +421,9 @@
 
   // ---- selection handlers ----
 
-  function selectFile(path: string) {
-    if (appState.blameFilePath === path) return;
-    appState.blameFilePath = path;
+  function selectFile(target: RepoFile) {
+    if (sameTarget(appState.blameTarget, target)) return;
+    appState.blameTarget = target;
   }
 
   function selectCommit(sha: string, firstLine: number) {
@@ -402,7 +462,7 @@
     }
     if (e.key === "Enter") {
       const row = fuzzyResults[highlightedIndex];
-      if (row) selectFile(row.path);
+      if (row) selectFile({ repoIdx: row.repoIdx, path: row.path });
       e.preventDefault();
       return;
     }
@@ -710,7 +770,8 @@
       viewBtn.textContent = "View commit →";
       viewBtn.title = "Open this commit's changes";
       viewBtn.addEventListener("click", () => {
-        pushAndDrillToCommit(commit.sha);
+        // §13.8: drill into the commit in the same repo the blame was run on.
+        pushAndDrillToCommit(commit.sha, appState.blameTarget?.repoIdx);
       });
       actions.appendChild(viewBtn);
       dom.appendChild(actions);
@@ -795,36 +856,89 @@
       {:else if appState.repoFiles.length === 0}
         <div class="empty">No repo open, or scanning files…</div>
       {:else if query.trim() === ""}
-        {#each repoTree as node (node.kind === "dir" ? "d:" + node.path : "f:" + node.path)}
-          <PathTreeNode
-            {node}
-            expanded={expandedDirs}
-            selectedPath={appState.blameFilePath}
-            onSelectFile={selectFile}
-            onToggleDir={toggleDir}
-          />
+        {#each repoGroups as g (g.idx)}
+          {@const collapsed = collapsedPickerGroups.has(g.idx)}
+          {#if showGroups}
+            <button
+              type="button"
+              class="picker-group-header"
+              onclick={() => togglePickerGroup(g.idx)}
+              title={appState.repos[g.idx]?.path ?? ""}
+            >
+              <span class="caret">{collapsed ? "▸" : "▾"}</span>
+              <span class="repo-name">
+                {appState.repos[g.idx]?.displayName ?? "?"}
+              </span>
+              <span class="kind-badge" data-kind={appState.repos[g.idx]?.kind}>
+                {appState.repos[g.idx]?.kind ?? ""}
+              </span>
+              <span class="group-count">{g.files.length}</span>
+            </button>
+          {/if}
+          {#if !showGroups || !collapsed}
+            {#each g.tree as node (node.kind === "dir" ? "d:" + g.idx + ":" + node.path : "f:" + g.idx + ":" + node.path)}
+              <PathTreeNode
+                {node}
+                expanded={expandedDirs}
+                groupKeyPrefix={g.idx + ":"}
+                selectedPath={appState.blameTarget?.repoIdx === g.idx
+                  ? appState.blameTarget.path
+                  : null}
+                onSelectFile={(p) => selectFile({ repoIdx: g.idx, path: p })}
+                onToggleDir={(p) => toggleDir(dirKey(g.idx, p))}
+              />
+            {/each}
+          {/if}
         {/each}
       {:else if fuzzyResults.length === 0}
         <div class="empty">No matches.</div>
       {:else}
-        {#each searchTree as node (node.kind === "dir" ? "d:" + node.path : "f:" + node.path)}
-          <PathTreeNode
-            {node}
-            expanded={searchExpandedDirs}
-            selectedPath={appState.blameFilePath}
-            {highlightedPath}
-            onSelectFile={selectFile}
-            onToggleDir={() => {}}
-          />
-        {/each}
+        <ul class="fuzzy-list">
+          {#each fuzzyResults as r, i (r.repoIdx + ":" + r.path)}
+            <li>
+              <button
+                type="button"
+                class="fuzzy-row"
+                class:active={appState.blameTarget?.repoIdx === r.repoIdx &&
+                  appState.blameTarget?.path === r.path}
+                class:highlighted={i === highlightedIndex}
+                data-row-key="{r.repoIdx}:{r.path}"
+                onclick={() => selectFile({ repoIdx: r.repoIdx, path: r.path })}
+                title={r.path}
+              >
+                {#if showGroups}
+                  <span
+                    class="row-repo"
+                    data-kind={appState.repos[r.repoIdx]?.kind}
+                  >
+                    {appState.repos[r.repoIdx]?.displayName ?? "?"}
+                  </span>
+                {/if}
+                <span class="row-path">{@html r.html}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
       {/if}
     </div>
   </aside>
 
   <main class="editor-pane">
     <header class="toolbar">
-      <span class="path" title={appState.blameFilePath ?? ""}>
-        {appState.blameFilePath ?? "No file selected"}
+      <span class="path" title={appState.blameTarget?.path ?? ""}>
+        {#if appState.blameTarget}
+          {#if showGroups}
+            <span
+              class="path-repo"
+              data-kind={appState.repos[appState.blameTarget.repoIdx]?.kind}
+            >
+              {appState.repos[appState.blameTarget.repoIdx]?.displayName ?? "?"}
+            </span>
+          {/if}
+          {appState.blameTarget.path}
+        {:else}
+          No file selected
+        {/if}
       </span>
       <div class="actions">
         <div class="font-size" title="Editor font size (Ctrl +/- / 0)">
@@ -846,7 +960,7 @@
         />
       </div>
     </header>
-    {#if !appState.blameFilePath}
+    {#if !appState.blameTarget}
       <div class="placeholder">
         Pick a file on the left to view its blame.
       </div>
@@ -912,7 +1026,8 @@
                 type="button"
                 class="drill"
                 title="View this commit's changes"
-                onclick={() => pushAndDrillToCommit(c.sha)}
+                onclick={() =>
+                  pushAndDrillToCommit(c.sha, appState.blameTarget?.repoIdx)}
               >
                 →
               </button>
@@ -1001,6 +1116,119 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     opacity: 0.8;
+  }
+  .path-repo,
+  .row-repo {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.75em;
+    font-weight: 500;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .path-repo[data-kind="submodule"],
+  .row-repo[data-kind="submodule"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .picker-group-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    border: none;
+    background: var(--bar-bg);
+    color: inherit;
+    padding: 4px 10px;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.78em;
+    font-weight: 600;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+  }
+  .picker-group-header:hover {
+    background: var(--hover);
+  }
+  .picker-group-header .caret {
+    width: 12px;
+    opacity: 0.7;
+    font-size: 0.85em;
+  }
+  .picker-group-header .repo-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .picker-group-header .group-count {
+    opacity: 0.55;
+    font-weight: 400;
+  }
+  .kind-badge {
+    font-size: 0.7em;
+    font-weight: 500;
+    padding: 1px 6px;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: var(--input-bg);
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  .kind-badge[data-kind="submodule"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .fuzzy-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .fuzzy-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: inherit;
+    padding: 3px 10px;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.82em;
+    font-family: var(--mono);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .fuzzy-row:hover {
+    background: var(--hover);
+  }
+  .fuzzy-row.active {
+    background: var(--selected);
+    color: var(--selected-fg);
+  }
+  .fuzzy-row.highlighted:not(.active) {
+    background: var(--hover);
+    box-shadow: inset 2px 0 var(--accent);
+  }
+  .fuzzy-row .row-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .fuzzy-row :global(mark) {
+    background: transparent;
+    color: var(--accent);
+    font-weight: 600;
   }
   .actions {
     display: flex;

@@ -239,10 +239,13 @@ export function cycleAppMode(): void {
   }
   // Entering blame from compare: carry the currently selected file over so
   // the user lands on its blame view instead of an empty picker. The current
-  // selection always wins — a stale blameFilePath from an earlier visit would
-  // be confusing here.
+  // selection always wins — a stale blameTarget from an earlier visit would
+  // be confusing here. Repo-qualified so multi-root opens the right repo.
   if (appState.selectedFile) {
-    appState.blameFilePath = appState.selectedFile.path;
+    appState.blameTarget = {
+      repoIdx: appState.selectedFile.repoIdx ?? 0,
+      path: appState.selectedFile.path,
+    };
   }
   appState.appMode = "blame";
 }

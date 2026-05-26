@@ -24,7 +24,7 @@
     appState.targetBranch = "";
     // Blame-mode caches/file pin from the previous repo are also stale.
     appState.repoFiles = [];
-    appState.blameFilePath = null;
+    appState.blameTarget = null;
     try {
       await validateRepo(path);
       appState.repoPath = path;
@@ -81,7 +81,11 @@
   }
   function enterBlameMode() {
     if (appState.selectedFile) {
-      appState.blameFilePath = appState.selectedFile.path;
+      // Carry repoIdx so multi-root blame opens in the right repo.
+      appState.blameTarget = {
+        repoIdx: appState.selectedFile.repoIdx ?? 0,
+        path: appState.selectedFile.path,
+      };
     }
     appState.appMode = "blame";
   }
