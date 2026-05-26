@@ -71,8 +71,21 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
   appState.files = [];
   appState.selectedFile = null;
 
+  // Paths of submodule gitlinks inside main. When main lists a changed
+  // file at one of these paths it's actually the submodule-pointer bump
+  // (git reports submodule mods as `M\t<path>` in name-status output).
+  // Drop those — the submodule's own group renders the real change set
+  // with the right semantics, and clicking the gitlink as a regular file
+  // would try to read a directory and trigger ACCESS_DENIED.
+  const submoduleGitlinkPaths = new Set(
+    appState.repos
+      .filter((r) => r.kind === "submodule" && r.parentGitlinkPath)
+      .map((r) => r.parentGitlinkPath!),
+  );
+
   const makeOnFile = (repoIdx: number) => (file: ChangedFile) => {
     if (session !== compareSession) return;
+    if (repoIdx === 0 && submoduleGitlinkPaths.has(file.path)) return;
     file.repoIdx = repoIdx;
     appState.files.push(file);
     if (previousPath) {
