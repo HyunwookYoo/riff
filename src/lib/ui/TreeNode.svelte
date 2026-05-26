@@ -9,11 +9,15 @@
     depth = 0,
     collapsed,
     onToggle,
+    repoIdx = 0,
   }: {
     node: TreeNode;
     depth?: number;
     collapsed: Set<string>;
     onToggle: (path: string) => void;
+    /// Workspace index (§13.4). Used to disambiguate the active-row check
+    /// when the same path exists in multiple repos.
+    repoIdx?: number;
   } = $props();
 
   function badge(s: FileStatus): string {
@@ -56,14 +60,15 @@
   </button>
   {#if !isCollapsed}
     {#each node.children as child (child.kind === "dir" ? "d:" + child.path : "f:" + child.file.path)}
-      <Self node={child} depth={depth + 1} {collapsed} {onToggle} />
+      <Self node={child} depth={depth + 1} {collapsed} {onToggle} {repoIdx} />
     {/each}
   {/if}
 {:else}
   <button
     type="button"
     class="row file"
-    class:active={appState.selectedFile?.path === node.file.path}
+    class:active={appState.selectedFile?.path === node.file.path &&
+      (appState.selectedFile?.repoIdx ?? 0) === repoIdx}
     style="padding-left: {8 + depth * 12}px"
     title={node.file.old_path
       ? `${node.file.old_path} → ${node.file.path}`

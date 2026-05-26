@@ -34,6 +34,7 @@
       const manualPaths = appState.manualReposByMain[path] ?? [];
       appState.repos = await buildWorkspace(path, manualPaths);
       appState.activeRepoIdx = null;
+      appState.collapsedRepos = new Set();
       const [branches, recentRepos] = await Promise.all([
         listRefs(path),
         addRecentRepo(path),

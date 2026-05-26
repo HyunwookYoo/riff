@@ -80,12 +80,22 @@
   }
 
   function moveSelection(delta: 1 | -1) {
-    if (appState.files.length === 0) return;
-    const cur = appState.selectedFile
-      ? appState.files.findIndex((f) => f.path === appState.selectedFile?.path)
+    // Multi-root (§13.3 #14): j/k skips collapsed repo groups. Path alone
+    // is ambiguous now — same path can live in main + a submodule — so we
+    // match selected by (repoIdx, path) and filter the candidate list to
+    // visible files.
+    const visible = appState.files.filter(
+      (f) => !appState.collapsedRepos.has(f.repoIdx ?? 0),
+    );
+    if (visible.length === 0) return;
+    const sel = appState.selectedFile;
+    const cur = sel
+      ? visible.findIndex(
+          (f) => f.path === sel.path && (f.repoIdx ?? 0) === (sel.repoIdx ?? 0),
+        )
       : -1;
-    const next = cur < 0 ? 0 : (cur + delta + appState.files.length) % appState.files.length;
-    appState.selectedFile = appState.files[next];
+    const next = cur < 0 ? 0 : (cur + delta + visible.length) % visible.length;
+    appState.selectedFile = visible[next];
   }
 
   function onKeyDown(e: KeyboardEvent) {
