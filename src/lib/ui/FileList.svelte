@@ -126,32 +126,18 @@
 
     {#each groups as group (group.idx)}
       {#if showGroups}
+        {@const isFocused = appState.activeRepoIdx === group.idx}
         <div
           class="group-header"
           class:collapsed={appState.collapsedRepos.has(group.idx)}
-          class:focused={appState.activeRepoIdx === group.idx}
+          class:focused={isFocused}
           title={group.repo.path}
         >
           <button
             type="button"
-            class="caret-btn"
-            aria-label="Toggle collapse"
-            onclick={(e) => {
-              e.stopPropagation();
-              toggleRepo(group.idx);
-            }}
-          >
-            <span class="caret">
-              {appState.collapsedRepos.has(group.idx) ? "▸" : "▾"}
-            </span>
-          </button>
-          <button
-            type="button"
-            class="focus-target"
-            title={appState.activeRepoIdx === group.idx
-              ? "Exit Focus (Esc)"
-              : "Focus on this repo — edits refs above"}
-            onclick={() => toggleFocus(group.idx)}
+            class="name-toggle"
+            title="Show / hide this repo's files"
+            onclick={() => toggleRepo(group.idx)}
           >
             <span class="repo-name">{group.repo.displayName}</span>
             <span class="kind-badge" data-kind={group.repo.kind}>
@@ -161,6 +147,18 @@
               <span class="override-dot" title="Branch override active">●</span>
             {/if}
             <span class="group-count">{group.files.length}</span>
+          </button>
+          <button
+            type="button"
+            class="enter-btn"
+            class:focused={isFocused}
+            title={isFocused
+              ? "Exit Focus (back to multi-root)"
+              : "Enter this repo — edits refs above"}
+            aria-label={isFocused ? "Exit focus" : "Focus on this repo"}
+            onclick={() => toggleFocus(group.idx)}
+          >
+            {isFocused ? "←" : "→"}
           </button>
         </div>
       {/if}
@@ -337,24 +335,10 @@
   .group-header.focused {
     background: var(--accent-soft);
   }
-  .group-header .caret-btn {
-    border: none;
-    background: transparent;
-    color: inherit;
-    padding: 4px 4px 4px 10px;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-  }
-  .group-header .caret-btn:hover {
-    background: var(--hover);
-  }
-  .group-header .caret {
-    width: 12px;
+  .group-header.collapsed .name-toggle {
     opacity: 0.7;
-    font-size: 0.85em;
   }
-  .group-header .focus-target {
+  .group-header .name-toggle {
     flex: 1;
     display: flex;
     align-items: center;
@@ -362,14 +346,14 @@
     border: none;
     background: transparent;
     color: inherit;
-    padding: 4px 10px 4px 4px;
+    padding: 4px 10px;
     text-align: left;
     cursor: pointer;
     font: inherit;
     font-weight: 600;
     min-width: 0;
   }
-  .group-header .focus-target:hover {
+  .group-header .name-toggle:hover {
     background: var(--hover);
   }
   .group-header .repo-name {
@@ -387,6 +371,24 @@
   .group-header .override-dot {
     color: var(--accent);
     font-size: 0.75em;
+  }
+  .group-header .enter-btn {
+    border: none;
+    border-left: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 0.95em;
+    font-family: var(--mono);
+    line-height: 1;
+  }
+  .group-header .enter-btn:hover {
+    background: var(--hover);
+    color: inherit;
+  }
+  .group-header .enter-btn.focused {
+    color: var(--accent);
   }
   .kind-badge {
     font-size: 0.7em;
