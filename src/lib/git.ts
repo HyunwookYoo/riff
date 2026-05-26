@@ -8,6 +8,7 @@ import type {
   FileDiff,
   FileStatus,
   PersistedState,
+  SubmoduleInfo,
   ThemeChoice,
 } from "./types";
 
@@ -155,4 +156,43 @@ export function blameFile(
     rev,
     useContents,
   });
+}
+
+/**
+ * Parse `.gitmodules` (via `git config -z`) and return declared submodules.
+ * Empty list when there is no `.gitmodules` or it has no entries.
+ */
+export function listSubmodules(path: string): Promise<SubmoduleInfo[]> {
+  return invoke("list_submodules", { path });
+}
+
+/**
+ * Look up the gitlink commit SHA for `submodulePath` inside `treeIsh`
+ * (a branch / tag / commit). Returns null when the path is not a gitlink
+ * at that tree. Used for gitlink-follow branch compare (§13.3 #7).
+ */
+export function submoduleShaAt(
+  path: string,
+  treeIsh: string,
+  submodulePath: string,
+): Promise<string | null> {
+  return invoke("submodule_sha_at", {
+    path,
+    treeIsh,
+    submodulePath,
+  });
+}
+
+export function addManualRepo(
+  mainRepo: string,
+  repo: string,
+): Promise<string[]> {
+  return invoke("add_manual_repo", { mainRepo, repo });
+}
+
+export function removeManualRepo(
+  mainRepo: string,
+  repo: string,
+): Promise<string[]> {
+  return invoke("remove_manual_repo", { mainRepo, repo });
 }

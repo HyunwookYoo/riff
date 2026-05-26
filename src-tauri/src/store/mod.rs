@@ -2,6 +2,7 @@
 //! Keeps the recent-repo list and user-set theme preference.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -22,6 +23,10 @@ pub struct PersistedState {
     pub font_size: u8,
     #[serde(default = "default_compare_mode")]
     pub compare_mode: String,
+    /// Multi-root workspace (§13.3 #5): per-main-repo list of manually added
+    /// extra repos. Submodules are auto-discovered and not stored here.
+    #[serde(default)]
+    pub manual_repos_by_main: HashMap<String, Vec<String>>,
 }
 
 fn default_theme() -> String {
@@ -43,6 +48,7 @@ impl Default for PersistedState {
             theme: default_theme(),
             font_size: default_font_size(),
             compare_mode: default_compare_mode(),
+            manual_repos_by_main: HashMap::new(),
         }
     }
 }
@@ -125,4 +131,38 @@ pub fn set_compare_mode(app: &AppHandle, mode: String) -> Result<(), StoreError>
     let mut state = load(app)?;
     state.compare_mode = mode;
     save(app, &state)
+}
+
+/// Append `repo` to the manual-repo list for `main_repo`. Skips duplicates.
+/// Returns the resulting list.
+pub fn add_manual_repo(
+    app: &AppHandle,
+    main_repo: String,
+    repo: String,
+) -> Result<Vec<String>, StoreError> {
+    let mut state = load(app)?;
+    let list = state.manual_repos_by_main.entry(main_repo).or_default();
+    if !list.iter().any(|p| p == &repo) {
+        list.push(repo);
+    }
+    let result = list.clone();
+    save(app, &state)?;
+    Ok(result)
+}
+
+pub fn remove_manual_repo(
+    app: &AppHandle,
+    main_repo: String,
+    repo: String,
+) -> Result<Vec<String>, StoreError> {
+    let mut state = load(app)?;
+    let entry = state.manual_repos_by_main.entry(main_repo.clone()).or_default();
+    entry.retain(|p| p != &repo);
+    let result = entry.clone();
+    // Don't leave behind an empty mapping — keeps state.json tidy.
+    if result.is_empty() {
+        state.manual_repos_by_main.remove(&main_repo);
+    }
+    save(app, &state)?;
+    Ok(result)
 }

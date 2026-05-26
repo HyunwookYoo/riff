@@ -28,6 +28,7 @@
       appState.theme = s.theme;
       appState.fontSize = s.font_size;
       appState.compareMode = s.compare_mode;
+      appState.manualReposByMain = s.manual_repos_by_main ?? {};
     } catch {
       // First-run / corrupt state: keep defaults silently.
     }

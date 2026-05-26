@@ -5,12 +5,19 @@ import type {
   CompareCtx,
   CompareMode,
   DiffMode,
+  RepoEntry,
   ThemeChoice,
   ViewMode,
 } from "./types";
 
 class AppState {
   repoPath = $state("");
+  // Multi-root workspace (§13.4). The main repo is always repos[0] and its
+  // path mirrors `repoPath` above. Submodule entries are appended when the
+  // main loads; manual entries from user action. Single-repo code paths
+  // that read `repoPath` keep working — `repos` is purely additive scaffold
+  // until §13 Steps 3-7 wire it into compare/blame/UI.
+  repos = $state<RepoEntry[]>([]);
   branches = $state<Branch[]>([]);
   startBranch = $state("");
   targetBranch = $state("");
@@ -42,6 +49,12 @@ class AppState {
   // Drill-in history stack. Each entry is the compare context the user can
   // return to. Session-only.
   history = $state<CompareCtx[]>([]);
+  // Focus state (§13.3 #15, drill-in #17). null = multi-root view (all repos
+  // visible), number = focused on repos[activeRepoIdx]. Session-only.
+  activeRepoIdx = $state<number | null>(null);
+  // Mirror of PersistedState.manual_repos_by_main — kept in sync with the
+  // backend so the popover can render without re-fetching on every open.
+  manualReposByMain = $state<Record<string, string[]>>({});
 }
 
 export const appState = new AppState();

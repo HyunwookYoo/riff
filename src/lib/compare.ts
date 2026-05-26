@@ -54,6 +54,9 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
 
   const onFile = (file: ChangedFile) => {
     if (session !== compareSession) return;
+    // Backend doesn't know about workspace structure — tag with the main
+    // repo index (§13). Multi-repo fetch in Step 4 will override per call.
+    file.repoIdx = 0;
     appState.files.push(file);
     if (previousPath) {
       if (file.path === previousPath && !appState.selectedFile) {

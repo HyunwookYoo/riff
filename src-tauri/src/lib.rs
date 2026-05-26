@@ -200,6 +200,24 @@ fn set_compare_mode(app: tauri::AppHandle, mode: String) -> Result<(), StoreErro
     store::set_compare_mode(&app, mode)
 }
 
+#[tauri::command]
+fn add_manual_repo(
+    app: tauri::AppHandle,
+    main_repo: String,
+    repo: String,
+) -> Result<Vec<String>, StoreError> {
+    store::add_manual_repo(&app, main_repo, repo)
+}
+
+#[tauri::command]
+fn remove_manual_repo(
+    app: tauri::AppHandle,
+    main_repo: String,
+    repo: String,
+) -> Result<Vec<String>, StoreError> {
+    store::remove_manual_repo(&app, main_repo, repo)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -225,6 +243,8 @@ pub fn run() {
             set_theme,
             set_font_size,
             set_compare_mode,
+            add_manual_repo,
+            remove_manual_repo,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

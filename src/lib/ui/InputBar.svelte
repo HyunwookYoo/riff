@@ -13,6 +13,13 @@
 
   let pathInput = $state(appState.repoPath);
 
+  /** Last path component, OS-agnostic (handles both / and \). */
+  function basename(p: string): string {
+    const trimmed = p.replace(/[\\/]+$/, "");
+    const idx = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+    return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
+  }
+
   async function loadRepo(path: string) {
     appState.loadingRepo = true;
     appState.error = null;
@@ -27,6 +34,16 @@
     try {
       await validateRepo(path);
       appState.repoPath = path;
+      // Multi-root scaffold (§13.4). Step 2 populates only the main entry —
+      // submodules and manual repos are wired in later steps.
+      appState.repos = [
+        {
+          path,
+          kind: "main",
+          displayName: basename(path),
+        },
+      ];
+      appState.activeRepoIdx = null;
       const [branches, recentRepos] = await Promise.all([
         listRefs(path),
         addRecentRepo(path),

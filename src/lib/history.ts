@@ -15,6 +15,7 @@ export function pushAndDrillToCommit(sha: string): void {
     startBranch: appState.startBranch,
     targetBranch: appState.targetBranch,
     selectedFilePath: appState.selectedFile?.path ?? null,
+    activeRepoIdx: appState.activeRepoIdx,
   };
   appState.history.push(ctx);
   // Drill always renders in compare mode — blame mode has no concept of a
@@ -37,6 +38,7 @@ export function popHistory(): void {
   appState.mode = ctx.mode;
   appState.startBranch = ctx.startBranch;
   appState.targetBranch = ctx.targetBranch;
+  appState.activeRepoIdx = ctx.activeRepoIdx;
   appState.selectedFile = null;
   // Compare-side rehydration: reload the file list. Blame-side state lives in
   // `appState.blameFilePath` and survives the drill round-trip on its own.
