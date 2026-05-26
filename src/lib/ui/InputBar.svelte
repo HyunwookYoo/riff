@@ -7,18 +7,12 @@
   import { compare, setMode } from "$lib/compare";
   import { chooseTheme } from "$lib/theme";
   import type { ThemeChoice } from "$lib/types";
+  import { buildWorkspace } from "$lib/workspace";
   import BranchModeFields from "./BranchModeFields.svelte";
   import WorkTreeFields from "./WorkTreeFields.svelte";
   import Dropdown from "./Dropdown.svelte";
 
   let pathInput = $state(appState.repoPath);
-
-  /** Last path component, OS-agnostic (handles both / and \). */
-  function basename(p: string): string {
-    const trimmed = p.replace(/[\\/]+$/, "");
-    const idx = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-    return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
-  }
 
   async function loadRepo(path: string) {
     appState.loadingRepo = true;
@@ -34,15 +28,11 @@
     try {
       await validateRepo(path);
       appState.repoPath = path;
-      // Multi-root scaffold (§13.4). Step 2 populates only the main entry —
-      // submodules and manual repos are wired in later steps.
-      appState.repos = [
-        {
-          path,
-          kind: "main",
-          displayName: basename(path),
-        },
-      ];
+      // Multi-root workspace (§13). Discover submodules from .gitmodules and
+      // restore any manual repos the user saved for this main. Failures inside
+      // buildWorkspace are non-fatal — falls back to [main only].
+      const manualPaths = appState.manualReposByMain[path] ?? [];
+      appState.repos = await buildWorkspace(path, manualPaths);
       appState.activeRepoIdx = null;
       const [branches, recentRepos] = await Promise.all([
         listRefs(path),
