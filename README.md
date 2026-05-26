@@ -1,118 +1,299 @@
 # Riff
 
-Lightweight Windows desktop app for comparing two Git branches (or any two refs) file-by-file, with syntax highlighting.
+Windows 데스크톱용 경량 Git diff 뷰어. 두 ref(브랜치/태그/커밋) 비교, 작업 트리 변경 확인, 라인별 blame까지 한 앱에서 처리합니다.
 
-Built with [Tauri 2](https://tauri.app), Svelte 5, [CodeMirror 6](https://codemirror.net) (`@codemirror/merge`), and [Shiki](https://shiki.style).
+[Tauri 2](https://tauri.app) + Svelte 5 + [CodeMirror 6](https://codemirror.net) (`@codemirror/merge`) + [Shiki](https://shiki.style) 기반.
 
-## Install
+---
 
-1. Download the latest `Riff_x.y.z_x64-setup.exe` from [Releases](https://github.com/HyunwookYoo/riff/releases/latest).
-2. Run it. Windows SmartScreen will show a warning because the installer isn't code-signed yet — click **More info** → **Run anyway**.
-3. WebView2 will be installed automatically if it's not already present.
+## 설치
 
-Future updates check in-app: when an update is available, a banner appears in the top bar; click **Install and restart**.
+1. [Releases](https://github.com/HyunwookYoo/riff/releases/latest)에서 최신 `Riff_x.y.z_x64-setup.exe`를 다운로드.
+2. 실행. 코드 서명 인증서가 없어 Windows SmartScreen 경고가 뜹니다 — **추가 정보 → 실행**을 선택합니다.
+3. WebView2가 없으면 인스톨러가 자동 설치합니다.
 
-## Usage
+업데이트가 있으면 앱 상단에 배너가 뜹니다 → **Install and restart** 클릭으로 갱신됩니다.
 
-1. Drop a repo folder into the path bar (or click **Browse…**).
-2. Type a start ref and a target ref. Branches, tags, and commit hashes are accepted; the dropdown autocompletes from local + remote refs.
-3. Click **Compare**.
-4. Click a file on the left to see its diff. Switch between **Split** and **Unified** in the top-right of the diff pane.
+---
 
-### Keyboard shortcuts
+## 워크스페이스 모드 (3가지)
 
-| Key | Action |
+상단 좌측의 토글에서 모드를 전환합니다. **`Ctrl+Shift+W`** 로 순환 전환할 수 있고, 입력 필드에 포커스가 있어도 동작합니다.
+
+| 모드 | 용도 |
 |---|---|
-| `j` / `k` | Next / previous file |
-| `n` / `p` | Next / previous chunk |
-| `Ctrl+F` | Search in current file |
-| `b` | Toggle blame mode |
-| `Esc` | Back out of a commit drill-in |
+| **Branch** | 두 ref를 골라 PR 스타일 비교 (브랜치 ↔ 브랜치 / 태그 / 커밋 해시) |
+| **Working Tree** | HEAD ↔ 현재 작업 트리(미커밋 변경 + untracked 포함) 비교 |
+| **Blame** | 파일 한 개를 골라 라인별 작성자/커밋 추적 (HEAD 기준, 미커밋 라인 표시) |
 
-### Other controls
+---
 
-- **3-dot / 2-dot** — compare modes. 3-dot uses the merge-base of start and target (GitHub PR style); 2-dot is a direct `start..target` diff.
-- **ws** — toggle `-w` (ignore whitespace) for the file list.
-- **Theme** — System (follows OS) / Light / Dark.
-- **Tree / Flat** — switch the file list layout.
-- **Language** dropdown in the diff toolbar — override auto-detected syntax highlighting.
-- **Blame** — toggle blame mode in the diff toolbar (or press `b`). When ON, a thin color bar appears next to each line (color per commit), and hovering a line shows a popover with author, relative date, commit subject, and short SHA. Click the SHA to copy it; click **View commit →** to drill into that commit's full change set. `Esc` (or the **← Back** button in the breadcrumb that appears) returns to the previous compare.
+## 1. 시작하기
 
-## Development
+### 저장소 열기
+세 가지 방법:
+- 경로 입력란에 폴더 경로 입력 후 Enter
+- **Browse…** 버튼으로 폴더 선택
+- 폴더를 창에 **드래그 앤 드롭**
 
-Requirements: Node.js 22+, Rust stable, and git on PATH.
+최근에 연 저장소는 입력란 자동완성에 남습니다.
 
+저장소를 열면 Working Tree 모드에서는 바로 변경 파일이 로드되고, Branch 모드에서는 ref 자동완성 목록(로컬/리모트/태그)을 채웁니다.
+
+---
+
+## 2. Branch 모드 — 두 ref 비교
+
+### 사용 흐름
+1. 좌측 모드 토글에서 **Branch** 선택.
+2. **start** 와 **target** 입력 (브랜치명/태그/커밋 해시 모두 가능, 드롭다운으로 자동완성).
+3. **3-dot (...)** vs **2-dot (..)** 선택:
+    - `3-dot`: GitHub PR과 동일. `git merge-base(start, target)` 부터 `target` 까지의 변경 (= start의 분기점 이후 target의 변화).
+    - `2-dot`: `start..target` 직접 diff (= target에는 있지만 start에는 없는 변경).
+4. **`ws`** 체크박스로 공백 무시(`-w`) 토글.
+5. **Compare** 클릭.
+
+### 좌측 파일 리스트
+- 파일별 상태 뱃지: `added` / `modified` / `deleted` / `renamed` / `copied` / `typechanged`.
+- **Flat / Tree** 토글 버튼으로 평면 ↔ 트리 뷰 전환.
+- **`j` / `k`** 로 다음/이전 파일 이동.
+
+### 우측 Diff 패널
+- **Split** (CodeMirror MergeView 좌우 분할) ↔ **Unified** 토글.
+- 자동 언어 감지 + 드롭다운에서 **수동 override** 가능 (Shiki 200+ 언어).
+- 라인 번호 표시.
+- 큰 변경 사이의 **변경 없는 라인은 자동 축소**(`collapseUnchanged`); 클릭으로 펼침.
+- **이진 파일**: 메타(크기 변화)만 표시, diff 생략.
+- **너무 큰 파일**: 자동 축소 + **Load anyway** 버튼으로 강제 로드.
+- 단축키:
+    - **`n` / `p`** — 다음/이전 변경 청크
+    - **`Ctrl+F`** — 파일 내 검색
+    - **`Ctrl+G`** — 라인 번호로 점프
+
+---
+
+## 3. Working Tree 모드 — 미커밋 변경 확인
+
+`HEAD` 와 현재 작업 트리를 비교합니다. ref 입력 없이 바로 동작합니다.
+
+- 액션 버튼이 **Refresh** 로 바뀝니다.
+- **`F5`** 또는 **`Ctrl+R`** 로 새로고침.
+- **창 포커스 복귀 시 자동 새로고침**: 다른 에디터에서 파일을 편집하고 Riff로 돌아오면 silent refresh가 실행돼 자동으로 최신 상태 반영. 일시적 git 에러는 배너로 표시하지 않고 콘솔에만 로그.
+- Untracked 파일도 `Added` 로 표시.
+
+---
+
+## 4. Blame 모드 — 라인별 작성자 추적
+
+Blame 모드는 독립된 3-pane 워크스페이스입니다:
+
+```
+┌───────────────────────────────────────────────────┐
+│  파일 피커  │   에디터 + Blame 거터    │  커밋 목록  │
+└───────────────────────────────────────────────────┘
+```
+
+### 파일 피커 (좌측)
+- **검색창**: 퍼지 파일 검색 (fuzzysort). 첫 진입 시 자동 포커스.
+- 검색어가 비어 있으면 **저장소 전체 파일 트리** 표시 (top-level 폴더 + 현재 blame 중인 파일의 조상 폴더만 펼침).
+- 검색 중에는 매칭 결과만 보여주는 **필터링된 트리**로 전환되고, 키보드 포커스가 있는 항목의 폴더만 펼쳐 시각적 노이즈를 줄임.
+- **매칭 규칙**: basename(파일명 부분)을 건드리는 매치만 살림. 예: `src/lib` 라고 쳤을 때 `src/lib/` 하위 모든 파일이 다 뜨지 않도록.
+- **C/C++ 동반 파일 자동 펼침**: 검색 결과에 `.h` 와 `.cpp` 같은 짝이 모두 있으면 함께 펼침.
+- **방향키/Enter** 로 키보드 탐색, **Esc** 로 검색어 클리어.
+
+### 에디터 패널 (가운데)
+- 파일 본문 (`HEAD` 기준) + Shiki 신택스 하이라이팅.
+- **인라인 blame 거터**: 줄마다 컬러 스트라이프 + short SHA + 작성자 + 상대 시간 (예: `1234abcd  Hyunw…  3d`).
+    - 색상은 commit SHA를 hash해서 HSL로 산출 (테마별 다른 채도/명도).
+    - 미커밋 라인은 회색 점선 패턴 + `—` + `uncommitted`.
+- **라인 호버 시 팝오버**: 작성자, 상대 날짜, 커밋 제목, short SHA, `View commit →` 액션.
+    - SHA 클릭 → 클립보드 복사 + 토스트.
+    - `View commit →` 클릭 → 그 커밋의 변경 전체로 **drill-in** (`<sha>^..<sha>` 비교 화면으로 전환).
+- **같은 커밋의 동료 라인 자동 하이라이트**: 한 줄에 호버하면 같은 커밋의 모든 라인이 부드럽게 강조.
+- **라인 클릭** → 우측 커밋 패널에서 해당 커밋을 선택(sticky 하이라이트로 고정).
+
+### 커밋 패널 (우측)
+파일에 기여한 모든 커밋 목록.
+
+- 각 행: 컬러 닷, short SHA, 작성자, 커밋 제목, 상대 시간, 기여 라인 수.
+- 정렬 옵션 (드롭다운):
+    - **Recent first** — 최신 커밋 먼저 (기본)
+    - **By first line** — 파일 내 첫 등장 라인 순
+    - **Most lines** — 기여 라인 수 내림차순
+- **클릭** → 에디터에서 해당 커밋의 첫 라인으로 스크롤 + 모든 해당 라인을 진하게 하이라이트(sticky).
+- **`→` 버튼** (호버 시 노출) → 그 커밋으로 drill-in.
+
+### 미커밋 라인 처리
+Worktree 편집은 `git blame --contents <fs_path> HEAD` 로 처리되어 `00000000` SHA로 표기됩니다 → 팝오버에 `Not Committed Yet (uncommitted edits — not yet in HEAD)` 표시.
+
+---
+
+## 5. Commit Drill-in & 히스토리
+
+Blame 팝오버 또는 커밋 패널에서 **View commit →** / **`→`** 를 클릭하면 메인 화면이 그 커밋의 변경 전체(`<sha>^..<sha>`)로 일시 전환됩니다.
+
+- 상단에 **breadcrumb** 가 표시되어 이전 컨텍스트를 알려줍니다.
+- **무한 깊이**: drill-in 안에서 또 blame을 켜서 또 drill 가능 (history stack 누적).
+- **돌아가기**:
+    - **`Esc`** 키
+    - breadcrumb의 **← Back** 버튼
+- 돌아가면 직전에 보던 파일까지 자동 복원됩니다 (`CompareCtx` 스냅샷에 selectedFilePath 포함).
+- 히스토리는 **세션 한정** — 앱 재시작 시 비워집니다.
+
+---
+
+## 6. 단축키 전체 목록
+
+### 전역
+| 키 | 동작 |
+|---|---|
+| `Ctrl+Shift+W` | 워크스페이스 순환 전환 (Branch → Working Tree → Blame → Branch …) |
+| `Ctrl` + `+` / `-` / `0` | 에디터 폰트 크기 증가 / 감소 / 기본값 복귀 |
+| `Esc` | drill-in 히스토리 pop (검색 패널이 열려있으면 그걸 먼저 닫음) |
+
+### Compare 모드 (Branch / Working Tree)
+| 키 | 동작 |
+|---|---|
+| `j` / `k` | 다음 / 이전 파일 |
+| `n` / `p` | 다음 / 이전 변경 청크 |
+| `Ctrl+F` | 현재 파일에서 검색 |
+| `Ctrl+G` | 라인 번호로 점프 |
+| `F5` / `Ctrl+R` | Working Tree 새로고침 (Branch 모드에선 무동작) |
+
+### Blame 모드
+| 키 | 동작 |
+|---|---|
+| 파일 피커에서 `↑` / `↓` | 매칭 결과 탐색 |
+| 파일 피커에서 `Enter` | 선택한 파일 열기 |
+| 파일 피커에서 `Esc` | 검색어 클리어 (비어 있으면 drill-in pop) |
+| `Ctrl+F` | 에디터에서 본문 검색 |
+| `Ctrl+G` | 라인 번호로 점프 |
+
+> ref 입력란이나 검색창에 포커스가 있을 때 일반 키(`j/k/n/p/b` 등)는 입력으로 흡수됩니다. `Ctrl+Shift+W` 와 `Ctrl±` 만 포커스 무시하고 동작합니다.
+
+---
+
+## 7. 옵션 / 토글
+
+| 위치 | 옵션 | 의미 |
+|---|---|---|
+| InputBar | **3-dot / 2-dot** | merge-base 기준(PR style) ↔ 직접 비교 |
+| InputBar | **ws** 체크박스 | `-w` 공백 변화 무시 |
+| InputBar | **Theme** | System(OS 따라감) / Light / Dark |
+| FileList | **Tree / Flat** | 파일 리스트 표시 모드 |
+| DiffView | **Split / Unified** | 좌우 분할 vs 단일 컬럼 |
+| DiffView | **Language** 드롭다운 | 자동 감지 override |
+| DiffView/BlameView | **A− / 숫자 / A+** | 폰트 크기 (Ctrl+/-/0 동일) |
+| BlameView | 정렬 드롭다운 | Recent / First line / Most lines |
+
+`compare_mode`, `theme`, `font_size`, `recent_repos`는 영속화됩니다 (앱 재시작 후 복원).
+`appMode`, `blameFilePath`, drill-in 히스토리는 **세션 한정**.
+
+---
+
+## 8. 시각 디테일
+
+- **Diff 색상**: 변경된 토큰은 underline이 아닌 GitHub 스타일 **filled background** (add: 녹색 톤, del: 빨강 톤). 단순 추가/삭제 라인에는 토큰 배경 생략 — 라인 전체 배경만으로 충분히 표시.
+- **컬러 스트라이프**: blame 거터와 커밋 패널 닷의 색상은 커밋 SHA 해시 → HSL 360°.
+- **모드 토글 액티브 상태**: Rider 스타일 — 같은 색계열의 soft fill + 하단 accent underline.
+
+---
+
+## 9. 개발
+
+### 요구사항
+- Node.js 22+
+- Rust stable + Visual Studio Build Tools (Windows MSVC)
+- `git` 이 PATH에 있어야 함 (Riff는 git CLI를 shell out 호출)
+
+### 셋업
 ```sh
 npm install
 npm run tauri dev
 ```
 
-Type-check and Rust check:
-
+### 검증
 ```sh
-npm run check
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml
+npm run check                                       # Svelte + TS 타입체크
+cargo check --manifest-path src-tauri/Cargo.toml    # Rust 컴파일 체크
+cargo test  --manifest-path src-tauri/Cargo.toml    # 유닛 테스트 (blame porcelain 파서 등)
 ```
 
-## Release process
+### 프로젝트 구조
+```
+src/                            SvelteKit 프론트엔드
+  routes/+page.svelte           최상위 레이아웃 + 전역 키 핸들러
+  lib/
+    ui/
+      InputBar.svelte           워크스페이스 토글 + ref/경로 입력
+      BranchModeFields.svelte   Branch 모드 ref 입력
+      WorkTreeFields.svelte     Working Tree 모드 라벨
+      FileList.svelte           좌측 변경 파일 리스트 (Flat/Tree)
+      DiffView.svelte           CodeMirror MergeView 통합
+      BlameView.svelte          파일 피커 + blame 에디터 + 커밋 패널
+      Breadcrumb.svelte         drill-in 히스토리 네비
+      TitleBar.svelte           커스텀 타이틀바 (decorations: false)
+      Dropdown.svelte           재사용 드롭다운
+      PathTreeNode / TreeNode   재귀 트리 노드
+      pathTree.ts / tree.ts     트리 빌더
+    diff/                       Shiki + 언어 감지 + 활성 view ref
+    git.ts                      Tauri command 래퍼
+    history.ts                  drill-in 히스토리 스택
+    compare.ts                  compare() / setMode() / cycleAppMode()
+    store.svelte.ts             AppState (Svelte 5 runes)
+    theme.ts                    테마 적용 + matchMedia 구독
+    font.ts                     폰트 크기 영속화
+    updater.ts                  업데이트 체크
+src-tauri/
+  src/
+    git/                        GitLayer trait + GitCli (git shell out)
+      blame.rs                  --porcelain 파서 + 단위 테스트
+      cli.rs                    diff_files / file_diff / worktree_files / blame_file
+    store/                      PersistedState (recent / theme / font / mode)
+    lib.rs                      Tauri command + plugin 초기화
+  capabilities/                 Tauri 2 permissions
+  tauri.conf.json               번들 + updater 설정
+.github/workflows/
+  ci.yml                        PR/push 시 lint + 타입체크
+  release.yml                   tag push (v*) → 빌드 + 서명 + draft release
+PLAN.md                         설계 문서 (의사결정 트레이스 포함)
+```
 
-Pushing a tag matching `v*` triggers `.github/workflows/release.yml`, which builds for Windows, signs the bundle for the auto-updater, drafts a GitHub Release, and publishes installer + `latest.json`.
+---
 
-### One-time setup (do this before the first release)
+## 10. 릴리스 절차
 
-1. **Generate the updater signing key** locally — keep this safe.
+`v*` 태그를 push하면 `.github/workflows/release.yml` 가 Windows 러너에서 빌드 → 자동 업데이터용 ed25519 서명 → **draft** GitHub Release 생성 → 인스톨러 + `latest.json` 업로드까지 자동 수행합니다.
 
-   ```sh
-   npx @tauri-apps/cli signer generate -w riff-updater.key
-   ```
+### 최초 1회 셋업 (첫 릴리스 전)
 
-   You'll be asked for a password. Remember it — you'll need it as a GitHub secret.
+1. **updater 서명 키 생성** — 로컬에서 안전하게 보관할 것.
+    ```sh
+    npx @tauri-apps/cli signer generate -w riff-updater.key
+    ```
+    패스워드는 GitHub Secret에 등록할 값이라 기억 필수.
 
-2. **Back up the private key.** Save `riff-updater.key` to your password manager (e.g., 1Password / Bitwarden). GitHub Secrets is **not** a backup — losing this key permanently breaks the auto-updater for every installed copy, and the only recovery is for users to reinstall manually.
+2. **private key 백업**. `riff-updater.key` 를 패스워드 매니저(1Password / Bitwarden 등)에 별도 저장. **GitHub Secrets는 백업이 아닙니다** — 이 키를 잃으면 모든 사용자의 자동 업데이트가 영구적으로 끊깁니다 (수동 재설치만이 복구).
 
-3. **Add GitHub repo secrets** (Settings → Secrets and variables → Actions):
-   - `TAURI_SIGNING_PRIVATE_KEY` — contents of `riff-updater.key`
-   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password from step 1
+3. **GitHub repo secrets 등록** (Settings → Secrets and variables → Actions):
+    - `TAURI_SIGNING_PRIVATE_KEY` — `riff-updater.key` 의 전체 내용
+    - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — 1단계 패스워드
 
-4. **Paste the public key** (printed by `signer generate`) into `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`, replacing the placeholder string. Commit and push.
+4. `signer generate` 가 출력한 **public key** 를 `src-tauri/tauri.conf.json` 의 `plugins.updater.pubkey` 에 붙여넣기. 커밋 & push.
 
-### Cutting a release
-
+### 릴리스 컷
 ```sh
-# Bump version in src-tauri/tauri.conf.json AND package.json
-git commit -am "release: v0.1.1"
-git tag v0.1.1
+# 버전을 4곳에서 동일하게 bump: package.json, package-lock.json,
+# src-tauri/Cargo.toml, src-tauri/Cargo.lock, src-tauri/tauri.conf.json
+git commit -am "release: v0.X.Y"
+git tag v0.X.Y
 git push origin main --tags
 ```
 
-The workflow creates a **draft** release. Edit the notes on GitHub, then **Publish** it. Installed copies will detect the new `latest.json` on their next startup.
+워크플로가 **draft** Release를 생성합니다. 릴리스 노트를 작성/편집 후 **Publish** 누르면 설치된 클라이언트들이 다음 시작 시 새 `latest.json` 을 감지해 업데이트 배너를 띄웁니다.
 
-## Project layout
+---
 
-```
-src/                     SvelteKit frontend
-  lib/
-    ui/                  InputBar, FileList, TreeNode, DiffView
-    diff/                Shiki integration, language detection, active-view ref
-    git.ts               Tauri command wrappers
-    store.svelte.ts      AppState (Svelte 5 runes)
-    theme.ts             Theme apply + matchMedia subscription
-    updater.ts           Updater check wrapper
-src-tauri/
-  src/
-    git/                 GitLayer trait + GitCli (shell out to `git`)
-    diff/                (placeholder for future diff helpers)
-    store/               Persisted state (recent repos, theme)
-    lib.rs               Tauri commands + plugin init
-  capabilities/          Tauri 2 permissions
-  tauri.conf.json        Bundle + updater config
-.github/workflows/
-  ci.yml                 Lint + type-check on PR/push
-  release.yml            tauri-action on tag push
-PLAN.md                  Design doc
-```
+## 11. 라이선스
 
-## License
-
-MIT — see [LICENSE](LICENSE) once added.
+MIT — `LICENSE` 파일 참조.
