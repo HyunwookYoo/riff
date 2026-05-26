@@ -1,6 +1,7 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import type { ChangedFile, FileStatus, RepoEntry } from "$lib/types";
+  import { toggleFocus } from "$lib/focus";
   import { buildTree } from "./tree";
   import TreeNode from "./TreeNode.svelte";
 
@@ -24,8 +25,16 @@
       bucket.push(f);
     }
     // Iterate repos in their workspace order so the layout is stable.
+    // When Focus is active (§13.3 #15), only the active repo's group is
+    // emitted — the others are hidden until Esc / header re-click.
     const out: Group[] = [];
     for (let i = 0; i < appState.repos.length; i++) {
+      if (
+        appState.activeRepoIdx !== null &&
+        appState.activeRepoIdx !== i
+      ) {
+        continue;
+      }
       out.push({ idx: i, repo: appState.repos[i], files: buckets.get(i) ?? [] });
     }
     return out;
@@ -117,22 +126,40 @@
 
     {#each groups as group (group.idx)}
       {#if showGroups}
-        <button
-          type="button"
+        <div
           class="group-header"
           class:collapsed={appState.collapsedRepos.has(group.idx)}
-          onclick={() => toggleRepo(group.idx)}
+          class:focused={appState.activeRepoIdx === group.idx}
           title={group.repo.path}
         >
-          <span class="caret">
-            {appState.collapsedRepos.has(group.idx) ? "▸" : "▾"}
-          </span>
-          <span class="repo-name">{group.repo.displayName}</span>
-          <span class="kind-badge" data-kind={group.repo.kind}>
-            {kindLabel(group.repo.kind)}
-          </span>
-          <span class="group-count">{group.files.length}</span>
-        </button>
+          <button
+            type="button"
+            class="caret-btn"
+            aria-label="Toggle collapse"
+            onclick={(e) => {
+              e.stopPropagation();
+              toggleRepo(group.idx);
+            }}
+          >
+            <span class="caret">
+              {appState.collapsedRepos.has(group.idx) ? "▸" : "▾"}
+            </span>
+          </button>
+          <button
+            type="button"
+            class="focus-target"
+            title={appState.activeRepoIdx === group.idx
+              ? "Exit Focus (Esc)"
+              : "Focus on this repo"}
+            onclick={() => toggleFocus(group.idx)}
+          >
+            <span class="repo-name">{group.repo.displayName}</span>
+            <span class="kind-badge" data-kind={group.repo.kind}>
+              {kindLabel(group.repo.kind)}
+            </span>
+            <span class="group-count">{group.files.length}</span>
+          </button>
+        </div>
       {/if}
 
       {#if !showGroups || !appState.collapsedRepos.has(group.idx)}
@@ -294,28 +321,53 @@
   }
   .group-header {
     display: flex;
-    align-items: center;
-    gap: 6px;
+    align-items: stretch;
     width: 100%;
-    border: none;
     background: var(--bar-bg);
     color: inherit;
-    padding: 4px 10px;
-    text-align: left;
-    cursor: pointer;
     font-size: 0.8em;
     font-weight: 600;
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
     user-select: none;
   }
-  .group-header:hover {
+  .group-header.focused {
+    background: var(--accent-soft);
+  }
+  .group-header .caret-btn {
+    border: none;
+    background: transparent;
+    color: inherit;
+    padding: 4px 4px 4px 10px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+  }
+  .group-header .caret-btn:hover {
     background: var(--hover);
   }
   .group-header .caret {
     width: 12px;
     opacity: 0.7;
     font-size: 0.85em;
+  }
+  .group-header .focus-target {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    padding: 4px 10px 4px 4px;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+    min-width: 0;
+  }
+  .group-header .focus-target:hover {
+    background: var(--hover);
   }
   .group-header .repo-name {
     overflow: hidden;

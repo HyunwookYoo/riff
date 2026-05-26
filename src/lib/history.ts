@@ -6,8 +6,13 @@ import type { CompareCtx } from "./types";
  * Push the current compare context onto the history stack and drill into a
  * single commit. Implemented as a `<sha>^..<sha>` two-dot branch compare so
  * the existing FileList/DiffView pipeline renders the change set unchanged.
+ *
+ * For multi-root drill-in (§13.8): pass the originating file's `repoIdx` so
+ * the drilled view is automatically focused on that repo — the other repos'
+ * refs wouldn't resolve `<sha>^` anyway. Omit `repoIdx` for single-repo
+ * drill-in (current behavior).
  */
-export function pushAndDrillToCommit(sha: string): void {
+export function pushAndDrillToCommit(sha: string, repoIdx?: number): void {
   const ctx: CompareCtx = {
     appMode: appState.appMode,
     compareMode: appState.compareMode,
@@ -26,6 +31,16 @@ export function pushAndDrillToCommit(sha: string): void {
   appState.startBranch = `${sha}^`;
   appState.targetBranch = sha;
   appState.selectedFile = null;
+  // Multi-root: focus on the originating repo so compare() only fetches
+  // changes from that repo (§13.8). For single-repo this stays null.
+  if (
+    repoIdx !== undefined &&
+    repoIdx >= 0 &&
+    repoIdx < appState.repos.length &&
+    appState.repos.length > 1
+  ) {
+    appState.activeRepoIdx = repoIdx;
+  }
   void compare();
 }
 

@@ -89,6 +89,15 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
   try {
     for (let i = 0; i < repos.length; i++) {
       if (session !== compareSession) break;
+      // Focus (§13.3 #15-19): skip repos that aren't the active one. During
+      // a commit drill-in the refs only make sense for one repo anyway, and
+      // for manual Focus the user explicitly asked to see just this repo.
+      if (
+        appState.activeRepoIdx !== null &&
+        appState.activeRepoIdx !== i
+      ) {
+        continue;
+      }
       const repo = repos[i];
       try {
         await fetchRepoChanges(repo, mainPath, makeOnFile(i));

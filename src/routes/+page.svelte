@@ -13,6 +13,7 @@
   import { loadState } from "$lib/git";
   import { compare, cycleAppMode } from "$lib/compare";
   import { popHistory } from "$lib/history";
+  import { exitFocus } from "$lib/focus";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
   import { adjustFontSize, applyFontSize, resetFontSize } from "$lib/font";
   import { getActiveDiffView } from "$lib/diff/activeView";
@@ -151,12 +152,16 @@
       return;
     }
 
-    // Esc backs out of a commit drill-in. Yields to CodeMirror's search
-    // panel: if it consumed Esc to close itself, defaultPrevented is set
-    // and we leave the history stack alone.
+    // Esc backs out of a commit drill-in, or exits Focus mode (§13.3 #15
+    // "Esc로 해제") when no history is pending. Yields to CodeMirror's
+    // search panel: if it consumed Esc to close itself, defaultPrevented
+    // is set and we leave both state machines alone.
     if (e.key === "Escape" && !e.defaultPrevented) {
       if (appState.history.length > 0) {
         popHistory();
+        e.preventDefault();
+      } else if (appState.activeRepoIdx !== null) {
+        exitFocus();
         e.preventDefault();
       }
       return;
