@@ -35,14 +35,16 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
     if (!opts.silent) appState.error = "no repository selected";
     return;
   }
+  const isTabMode = appState.workspaceLayout === "tabs";
   if (appState.compareMode === "branch") {
     // Branch mode needs refs from *somewhere*. When focused on a non-main
     // repo with its own override, that repo's refs are enough — main's
     // start/target may legitimately be blank. Otherwise main must be filled.
-    const focusedRepo =
-      appState.activeRepoIdx !== null
-        ? appState.repos[appState.activeRepoIdx]
-        : null;
+    // In Tabs the active tab plays the same role as Focus.
+    const focusIdx = isTabMode
+      ? (appState.activeRepoIdx ?? 0)
+      : appState.activeRepoIdx;
+    const focusedRepo = focusIdx !== null ? appState.repos[focusIdx] : null;
     const focusedHasOwnRefs =
       focusedRepo && focusedRepo.kind !== "main" && !!focusedRepo.override;
     if (
@@ -83,11 +85,48 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
       .map((r) => r.parentGitlinkPath!),
   );
 
+  // C: batch file arrivals. Per-file `appState.files.push(...)` triggers
+  // Svelte 5 reactivity for each push — with 100+ files that's 100+ reactive
+  // cycles + render passes during the stream. Buffer arrivals and flush via
+  // requestAnimationFrame so the file list grows in one batch per frame.
+  // The pending languages set is also accumulated to dedupe preloadLanguages
+  // calls.
+  let buffer: ChangedFile[] = [];
+  const pendingLangs = new Set<string | null>();
+  let flushScheduled = false;
+  function flushBuffer() {
+    flushScheduled = false;
+    if (session !== compareSession) {
+      buffer = [];
+      pendingLangs.clear();
+      return;
+    }
+    if (buffer.length > 0) {
+      // One reactive set vs N pushes. Spread the existing array so the
+      // previous identity is preserved-but-replaced — any $derived watchers
+      // observe a single change.
+      appState.files = appState.files.concat(buffer);
+      buffer = [];
+    }
+    if (pendingLangs.size > 0) {
+      void preloadLanguages([...pendingLangs]);
+      pendingLangs.clear();
+    }
+  }
+  function scheduleFlush() {
+    if (flushScheduled) return;
+    flushScheduled = true;
+    requestAnimationFrame(flushBuffer);
+  }
+
   const makeOnFile = (repoIdx: number) => (file: ChangedFile) => {
     if (session !== compareSession) return;
     if (repoIdx === 0 && submoduleGitlinkPaths.has(file.path)) return;
     file.repoIdx = repoIdx;
-    appState.files.push(file);
+    buffer.push(file);
+    // Selection updates immediately so a previously-viewed file is reopened
+    // as soon as it arrives — DiffView reads selectedFile directly and
+    // doesn't need the file to be in `appState.files` yet.
     if (previousPath) {
       if (
         file.path === previousPath &&
@@ -99,7 +138,8 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
     } else if (!appState.selectedFile) {
       appState.selectedFile = file;
     }
-    void preloadLanguages([detectLanguage(file.path)]);
+    pendingLangs.add(detectLanguage(file.path));
+    scheduleFlush();
   };
 
   // repos[] is the source of truth. Fall back to [main only] when it hasn't
@@ -111,12 +151,15 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
   const mainPath = repos[0].path;
 
   try {
+    // Sequential per-repo. The Rust `GitCli` keeps a single
+    // `Mutex<Option<Session>>` slot so parallel calls with different
+    // paths would thrash and drop each others' children mid-stream. A
+    // per-path session map would unlock real parallelism — tracked as a
+    // future optimization (§14 follow-up).
     for (let i = 0; i < repos.length; i++) {
       if (session !== compareSession) break;
-      // Focus (§13.3 #15-19): skip repos that aren't the active one. During
-      // a commit drill-in the refs only make sense for one repo anyway, and
-      // for manual Focus the user explicitly asked to see just this repo.
       if (
+        !isTabMode &&
         appState.activeRepoIdx !== null &&
         appState.activeRepoIdx !== i
       ) {
@@ -126,13 +169,13 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
       try {
         await fetchRepoChanges(repo, mainPath, makeOnFile(i));
       } catch (e) {
-        // One repo failing shouldn't kill the whole compare. Submodule pointer
-        // missing, override refs invalid, manual repo's branches don't
-        // exist — all common and recoverable. Log; user sees that repo's
-        // group is empty.
+        // One repo failing shouldn't kill the whole compare.
         console.warn(`compare: repo ${repo.path} failed:`, e);
       }
     }
+    // Final flush so anything queued in the last frame lands before we
+    // judge "did the previous selection survive?".
+    flushBuffer();
     // Previous selection didn't survive the refresh — fall back to first file.
     if (
       session === compareSession &&

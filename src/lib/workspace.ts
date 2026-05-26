@@ -3,6 +3,7 @@ import {
   addManualRepo,
   addRecentRepo,
   listRefs,
+  listRepoFiles,
   listSubmodules,
   removeManualRepo,
   submoduleShaAt,
@@ -129,6 +130,46 @@ export function repoPathFor(target: RepoFile | null): string | null {
 }
 
 /**
+ * Background-populate `appState.repoFiles` from every workspace repo's
+ * `git ls-files` so the blame picker opens instantly. Idempotent — bails
+ * early when the list is already populated, or when the user has navigated
+ * away mid-flight (path mismatch).
+ *
+ * Errors per-repo are swallowed (logged) so a single broken repo can't
+ * block the others from showing up.
+ */
+async function prewarmRepoFiles(
+  expectedMainPath: string,
+  repos: RepoEntry[],
+): Promise<void> {
+  if (appState.repoFiles.length > 0) return;
+  if (repos.length === 0) return;
+  try {
+    const lists = await Promise.all(
+      repos.map(async (r) => {
+        try {
+          return await listRepoFiles(r.path);
+        } catch (e) {
+          console.warn(`prewarm listRepoFiles failed for ${r.path}:`, e);
+          return [] as string[];
+        }
+      }),
+    );
+    if (appState.repoPath !== expectedMainPath) return;
+    if (appState.repoFiles.length > 0) return;
+    const out: RepoFile[] = [];
+    for (let i = 0; i < lists.length; i++) {
+      for (const path of lists[i]) {
+        out.push({ repoIdx: i, path });
+      }
+    }
+    appState.repoFiles = out;
+  } catch (e) {
+    console.warn("prewarmRepoFiles failed:", e);
+  }
+}
+
+/**
  * Resolve the (repo path, start ref, target ref) tuple to use when
  * fetching a single file's diff from `repos[idx]`. Mirrors the per-kind
  * rules in compare()'s fetchRepoChanges so DiffView opens the right file
@@ -223,6 +264,13 @@ export async function loadMainRepo(
     if (appState.compareMode === "worktree") {
       void compare();
     }
+    // Pre-warm the blame picker's file list in the background. BlameView's
+    // own `$effect` does the same lazily on first entry, but kicking it off
+    // here hides the latency: by the time the user clicks Blame the list is
+    // usually already populated and entering blame mode feels instant.
+    // Cheap to skip if the user never enters blame — listRepoFiles for each
+    // repo runs in parallel, and the backend caches the result.
+    void prewarmRepoFiles(path, appState.repos);
   } catch (e) {
     if (opts.silent) {
       console.warn("loadMainRepo failed:", e);

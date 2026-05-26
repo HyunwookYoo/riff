@@ -107,15 +107,16 @@ pub trait GitLayer {
         force: bool,
     ) -> Result<FileDiff, GitError>;
     /// Stream the working tree changes vs HEAD: tracked diff via
-    /// `git diff HEAD --name-status -z --find-renames`, followed by untracked
-    /// files via `git ls-files --others --exclude-standard -z` (emitted as
-    /// `Added`). Cancellation of any previously in-flight invocation is the
-    /// implementation's responsibility.
+    /// `git diff HEAD --name-status -z --find-renames` plus untracked files
+    /// via `git ls-files --others --exclude-standard -z` (emitted as `Added`).
+    /// Implementations may run the two passes concurrently — hence the `Send`
+    /// bound on `on_file`. Cancellation of any previously in-flight invocation
+    /// is the implementation's responsibility.
     fn worktree_files(
         &self,
         path: &Path,
         ignore_whitespace: bool,
-        on_file: &mut dyn FnMut(ChangedFile) -> Result<(), GitError>,
+        on_file: &mut (dyn FnMut(ChangedFile) -> Result<(), GitError> + Send),
     ) -> Result<(), GitError>;
     /// Per-file diff for working tree mode. Old side reads from HEAD blob
     /// (skipped when `status == Added`); new side reads from the filesystem

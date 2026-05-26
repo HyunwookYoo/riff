@@ -3,7 +3,10 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use super::blame::{parse_porcelain, Blame};
 use super::{
@@ -38,6 +41,11 @@ fn git_command() -> Command {
 /// doesn't pay process-spawn cost (and Defender scan) per call.
 pub struct GitCli {
     session: Mutex<Option<Session>>,
+    /// Per-path worktree caches with their FS watchers. Persists across
+    /// `session` swaps so multi-root mode toggles don't keep paying the
+    /// cold git startup cost. Entries are created lazily on first
+    /// `worktree_files` call against a given path.
+    worktree_caches: Mutex<HashMap<PathBuf, WorktreeCacheEntry>>,
 }
 
 struct Session {
@@ -48,12 +56,43 @@ struct Session {
     /// The currently in-flight `git diff` child for streaming diff_files.
     /// Replacing this slot is how we cancel an outstanding stream.
     diff_files_child: Option<Arc<Mutex<Option<Child>>>>,
-    /// Same pattern as `diff_files_child`, but for `worktree_files`. Each
-    /// worktree_files invocation spawns up to two children (diff + ls-files)
-    /// in sequence and stores the active one here.
-    worktree_files_child: Option<Arc<Mutex<Option<Child>>>>,
+    /// Same pattern as `diff_files_child`, but for `worktree_files`. The
+    /// two passes (diff HEAD + ls-files untracked) now run concurrently so
+    /// this holds *both* in-flight children — a Vec lets a newer call kill
+    /// the whole batch with one slot swap.
+    worktree_files_child: Option<Arc<Mutex<Vec<Child>>>>,
     /// Same pattern as the other `*_child` slots, but for in-flight blame.
     blame_child: Option<Arc<Mutex<Option<Child>>>>,
+}
+
+/// Per-path worktree cache held at the `GitCli` level, *outside* of the
+/// single-slot `Session`. Multi-root compares iterate across repo paths and
+/// each call swaps `session` to the new path — if the cache lived inside
+/// Session it would be dropped on every swap, defeating the purpose. Keeping
+/// the cache + watcher per path means each repo's cache survives unrelated
+/// session swaps and stays valid until the watcher signals a real change.
+struct WorktreeCacheEntry {
+    cache: Option<WorktreeCache>,
+    /// Set to true by the notify watcher whenever something inside the
+    /// watched path (or its `.git/`) changes. Read by the worktree_files
+    /// cache fast path.
+    cache_invalid: Arc<AtomicBool>,
+    /// Cache for `list_repo_files` — the blame picker's file union — keyed
+    /// on the same FS watcher. Has its own invalid flag so worktree_files
+    /// and list_repo_files don't clobber each other when both pre-clear the
+    /// flag at scan start.
+    repo_files: Option<Vec<String>>,
+    repo_files_invalid: Arc<AtomicBool>,
+    /// FS watcher. Held alive by the HashMap entry; dropped when the entry
+    /// is evicted. The field name is `_watcher` because it's never read
+    /// directly — its existence is what keeps the underlying ReadDirectory
+    /// loop running.
+    _watcher: Option<RecommendedWatcher>,
+}
+
+struct WorktreeCache {
+    files: Vec<ChangedFile>,
+    ignore_whitespace: bool,
 }
 
 /// A long-running `git cat-file` process kept around for a single repo.
@@ -172,18 +211,21 @@ impl Drop for BatchProcess {
 impl Drop for Session {
     fn drop(&mut self) {
         // Batch processes clean themselves up via their own Drop, but an
-        // in-flight diff_files child is owned by an Arc shared with the
-        // streaming task — dropping our Arc reference alone won't kill it.
-        for slot in [
-            self.diff_files_child.take(),
-            self.worktree_files_child.take(),
-            self.blame_child.take(),
-        ] {
+        // in-flight child held in a streaming slot is owned by an Arc
+        // shared with the streaming task — dropping our Arc reference
+        // alone won't kill it.
+        for slot in [self.diff_files_child.take(), self.blame_child.take()] {
             if let Some(arc) = slot {
                 if let Some(mut child) = arc.lock().unwrap().take() {
                     let _ = child.kill();
                     let _ = child.wait();
                 }
+            }
+        }
+        if let Some(arc) = self.worktree_files_child.take() {
+            for mut child in std::mem::take(&mut *arc.lock().unwrap()) {
+                let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }
@@ -235,6 +277,7 @@ impl GitCli {
     pub fn new() -> Self {
         Self {
             session: Mutex::new(None),
+            worktree_caches: Mutex::new(HashMap::new()),
         }
     }
 
@@ -515,11 +558,48 @@ impl GitLayer for GitCli {
         &self,
         path: &Path,
         ignore_whitespace: bool,
-        on_file: &mut dyn FnMut(ChangedFile) -> Result<(), GitError>,
+        on_file: &mut (dyn FnMut(ChangedFile) -> Result<(), GitError> + Send),
     ) -> Result<(), GitError> {
-        // Long-lived single kill slot for this invocation. A newer call replaces
-        // it in the session, which cancels whichever child we currently hold.
-        let kill_slot: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
+        // Fast path: serve from the per-path cache if the FS watcher hasn't
+        // seen any change since last scan AND the `-w` flag matches.
+        // Replaying is O(files) memcpy — for a typical worktree this
+        // finishes inside one animation frame, eliminating the per-toggle
+        // git startup cost. We hold the lock only long enough to clone the
+        // Vec so other repos' caches stay accessible.
+        let cached: Option<Vec<ChangedFile>> = {
+            let guard = self.worktree_caches.lock().unwrap();
+            guard.get(path).and_then(|entry| {
+                if entry.cache_invalid.load(Ordering::Relaxed) {
+                    return None;
+                }
+                let cache = entry.cache.as_ref()?;
+                if cache.ignore_whitespace != ignore_whitespace {
+                    return None;
+                }
+                Some(cache.files.clone())
+            })
+        };
+        if let Some(files) = cached {
+            for f in files {
+                on_file(f)?;
+            }
+            return Ok(());
+        }
+        // Ensure a watcher exists for this path before we run the scan, so
+        // any FS changes that land between now and our cache write are
+        // recorded. Idempotent — repeated calls for the same path reuse the
+        // existing entry. Pre-clear the flag so we can detect events that
+        // fire *during* the scan: if it's still false at the end, our
+        // accumulated data is consistent with the FS state we just observed
+        // and is safe to cache; if it flipped to true mid-scan, something
+        // changed under us and we leave it stale.
+        let flags = self.ensure_worktree_watcher(path);
+        flags.worktree.store(false, Ordering::Relaxed);
+
+        // Single kill slot holding *both* in-flight children. A newer call
+        // swaps the slot to cancel us — Drop / clear_worktree_slot_if_ours
+        // kills whichever children we left behind.
+        let kill_slot: Arc<Mutex<Vec<Child>>> = Arc::new(Mutex::new(Vec::new()));
         {
             let mut guard = self.session.lock().unwrap();
             ensure_session(&mut guard, path)?;
@@ -527,14 +607,19 @@ impl GitLayer for GitCli {
             let prev = session.worktree_files_child.replace(kill_slot.clone());
             drop(guard);
             if let Some(prev) = prev {
-                if let Some(mut c) = prev.lock().unwrap().take() {
+                for mut c in std::mem::take(&mut *prev.lock().unwrap()) {
                     let _ = c.kill();
                     let _ = c.wait();
                 }
             }
         }
 
-        // Phase 1: tracked changes via `git diff HEAD --name-status -z --find-renames [-w]`.
+        // Spawn both passes concurrently. Phase 1: tracked changes via
+        // `git diff HEAD --name-status -z --find-renames [-w]`. Phase 2:
+        // untracked files via `git ls-files --others --exclude-standard -z`.
+        // Running them in parallel halves the wall-clock latency that the
+        // user feels when toggling into worktree mode (two cold git starts
+        // collapse into one).
         let mut diff_args = vec!["diff", "HEAD", "--name-status", "-z", "--find-renames"];
         if ignore_whitespace {
             diff_args.push("-w");
@@ -550,32 +635,7 @@ impl GitLayer for GitCli {
             .stdout
             .take()
             .ok_or_else(|| GitError::CommandFailed("worktree diff stdout not piped".into()))?;
-        *kill_slot.lock().unwrap() = Some(diff_child);
 
-        let mut reader = BufReader::new(diff_stdout);
-        let parse_result = stream_parse_name_status(&mut reader, on_file);
-        if let Some(mut c) = kill_slot.lock().unwrap().take() {
-            let _ = c.wait();
-        }
-        if let Err(e) = parse_result {
-            clear_worktree_slot_if_ours(&self.session, &kill_slot);
-            return Err(e);
-        }
-
-        // If a newer call cancelled us, skip phase 2.
-        {
-            let guard = self.session.lock().unwrap();
-            let still_active = guard
-                .as_ref()
-                .and_then(|s| s.worktree_files_child.as_ref())
-                .map(|cur| Arc::ptr_eq(cur, &kill_slot))
-                .unwrap_or(false);
-            if !still_active {
-                return Ok(());
-            }
-        }
-
-        // Phase 2: untracked files via `git ls-files --others --exclude-standard -z`.
         let mut ls_child = git_command()
             .arg("-C")
             .arg(path)
@@ -587,16 +647,70 @@ impl GitLayer for GitCli {
             .stdout
             .take()
             .ok_or_else(|| GitError::CommandFailed("ls-files stdout not piped".into()))?;
-        *kill_slot.lock().unwrap() = Some(ls_child);
 
-        let mut reader = BufReader::new(ls_stdout);
-        let parse_result = stream_parse_ls_files(&mut reader, on_file);
-        if let Some(mut c) = kill_slot.lock().unwrap().take() {
+        kill_slot.lock().unwrap().extend([diff_child, ls_child]);
+
+        // Accumulate every emitted file so we can populate the cache once
+        // the scan finishes. The user's `on_file` callback also receives
+        // each file as before — caching is a side-channel.
+        let accumulator: Mutex<Vec<ChangedFile>> = Mutex::new(Vec::new());
+        // Two threads, one per stream, share `on_file` through a Mutex so
+        // emitted files don't interleave mid-record. Using std::thread::scope
+        // means we can borrow `on_file` directly without 'static or Arc.
+        let on_file_mutex: Mutex<&mut (dyn FnMut(ChangedFile) -> Result<(), GitError> + Send)> =
+            Mutex::new(on_file);
+
+        let (parse_diff, parse_ls) = std::thread::scope(|s| {
+            let diff_handle = s.spawn(|| {
+                let mut reader = BufReader::new(diff_stdout);
+                stream_parse_name_status(&mut reader, &mut |f| {
+                    accumulator.lock().unwrap().push(f.clone());
+                    on_file_mutex.lock().unwrap()(f)
+                })
+            });
+            let ls_handle = s.spawn(|| {
+                let mut reader = BufReader::new(ls_stdout);
+                stream_parse_ls_files(&mut reader, &mut |f| {
+                    accumulator.lock().unwrap().push(f.clone());
+                    on_file_mutex.lock().unwrap()(f)
+                })
+            });
+            (
+                diff_handle.join().unwrap_or_else(|_| {
+                    Err(GitError::CommandFailed("worktree diff thread panicked".into()))
+                }),
+                ls_handle.join().unwrap_or_else(|_| {
+                    Err(GitError::CommandFailed("worktree ls-files thread panicked".into()))
+                }),
+            )
+        });
+
+        // Reap whichever children are still ours. A newer call may have
+        // already drained the slot and killed them — that's fine.
+        for mut c in std::mem::take(&mut *kill_slot.lock().unwrap()) {
             let _ = c.wait();
         }
-
         clear_worktree_slot_if_ours(&self.session, &kill_slot);
-        parse_result
+
+        // Surface the diff error first if both failed — the tracked diff is
+        // the primary signal; an ls-files failure on top is usually noise.
+        let result = parse_diff.and(parse_ls);
+
+        // Cache the successful result. We only cache if BOTH passes ran
+        // cleanly AND no FS events fired between the pre-scan flag clear
+        // and now — otherwise the accumulated Vec doesn't match the latest
+        // FS state and we'd serve stale data on the next toggle.
+        if result.is_ok() && !flags.worktree.load(Ordering::Relaxed) {
+            let mut guard = self.worktree_caches.lock().unwrap();
+            if let Some(entry) = guard.get_mut(path) {
+                entry.cache = Some(WorktreeCache {
+                    files: accumulator.into_inner().unwrap(),
+                    ignore_whitespace,
+                });
+            }
+        }
+
+        result
     }
 
     fn worktree_file_diff(
@@ -683,8 +797,34 @@ impl GitLayer for GitCli {
     }
 
     fn list_repo_files(&self, path: &Path) -> Result<Vec<String>, GitError> {
+        // Fast path: clone the cached Vec under the map lock and return.
+        // Same FS-watcher mechanism as worktree_files — any change in the
+        // repo (including .git/) flips the flag.
+        let cached: Option<Vec<String>> = {
+            let guard = self.worktree_caches.lock().unwrap();
+            guard.get(path).and_then(|entry| {
+                if entry.repo_files_invalid.load(Ordering::Relaxed) {
+                    return None;
+                }
+                entry.repo_files.clone()
+            })
+        };
+        if let Some(files) = cached {
+            return Ok(files);
+        }
+        // Cache miss: register/reuse the watcher and pre-clear the flag so
+        // events fired during the scan are observed at the end.
+        let flags = self.ensure_worktree_watcher(path);
+        flags.repo_files.store(false, Ordering::Relaxed);
         let stdout = self.run(path, &["ls-files", "-s", "-z"])?;
-        parse_ls_files_stage(&stdout)
+        let files = parse_ls_files_stage(&stdout)?;
+        if !flags.repo_files.load(Ordering::Relaxed) {
+            let mut guard = self.worktree_caches.lock().unwrap();
+            if let Some(entry) = guard.get_mut(path) {
+                entry.repo_files = Some(files.clone());
+            }
+        }
+        Ok(files)
     }
 
     fn blame_file(
@@ -864,9 +1004,71 @@ impl GitLayer for GitCli {
     }
 }
 
+/// Spawn a recursive filesystem watcher rooted at the repo. Each event
+/// flips *every* invalidation flag to `true` so the next cached call
+/// refuses the cached result and recomputes. We intentionally *don't* try
+/// to filter `.git/` traffic — index/HEAD/refs updates change what
+/// `git diff HEAD` (and `git ls-files`) would return, so they're load-
+/// bearing for cache correctness. Spurious busy events just cause the
+/// next call to recompute, which is what happened pre-cache anyway.
+fn spawn_worktree_watcher(
+    repo: &Path,
+    invalidation_flags: Vec<Arc<AtomicBool>>,
+) -> Result<RecommendedWatcher, notify::Error> {
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if res.is_ok() {
+            for flag in &invalidation_flags {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
+    })?;
+    watcher.watch(repo, RecursiveMode::Recursive)?;
+    Ok(watcher)
+}
+
+/// References to the invalidation flags for a single watched path. Both
+/// caches share the same watcher but each tracks its own staleness so a
+/// concurrent scan in one cache can pre-clear its flag without disturbing
+/// the other.
+struct WatcherFlags {
+    worktree: Arc<AtomicBool>,
+    repo_files: Arc<AtomicBool>,
+}
+
+impl GitCli {
+    /// Get-or-create the cache entry for `path` and return references to
+    /// its invalidation flags. Lazily spawns the FS watcher on first call;
+    /// subsequent calls reuse the existing one. The returned Arcs let the
+    /// scan body track "did anything change while we were scanning?"
+    /// without re-locking the map.
+    fn ensure_worktree_watcher(&self, path: &Path) -> WatcherFlags {
+        let mut guard = self.worktree_caches.lock().unwrap();
+        let entry = guard.entry(path.to_path_buf()).or_insert_with(|| {
+            let cache_invalid = Arc::new(AtomicBool::new(true));
+            let repo_files_invalid = Arc::new(AtomicBool::new(true));
+            let watcher = spawn_worktree_watcher(
+                path,
+                vec![cache_invalid.clone(), repo_files_invalid.clone()],
+            )
+            .ok();
+            WorktreeCacheEntry {
+                cache: None,
+                cache_invalid,
+                repo_files: None,
+                repo_files_invalid,
+                _watcher: watcher,
+            }
+        });
+        WatcherFlags {
+            worktree: entry.cache_invalid.clone(),
+            repo_files: entry.repo_files_invalid.clone(),
+        }
+    }
+}
+
 fn clear_worktree_slot_if_ours(
     session: &Mutex<Option<Session>>,
-    kill_slot: &Arc<Mutex<Option<Child>>>,
+    kill_slot: &Arc<Mutex<Vec<Child>>>,
 ) {
     let mut guard = session.lock().unwrap();
     if let Some(s) = guard.as_mut() {
