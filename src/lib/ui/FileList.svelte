@@ -2,6 +2,7 @@
   import { appState } from "$lib/store.svelte";
   import type { ChangedFile, FileStatus, RepoEntry } from "$lib/types";
   import { toggleFocus } from "$lib/focus";
+  import { clearRepoOverride, setRepoOverride } from "$lib/workspace";
   import { buildTree } from "./tree";
   import TreeNode from "./TreeNode.svelte";
 
@@ -100,6 +101,55 @@
         return "manual";
     }
   }
+
+  // Per-repo override panel state (§13.3 #9). Keyed by repo path so opening
+  // / closing other panels (or refresh) doesn't lose typed-but-not-applied
+  // input for a specific repo.
+  let overrideOpenFor = $state<string | null>(null);
+  let draftStart = $state<Record<string, string>>({});
+  let draftTarget = $state<Record<string, string>>({});
+
+  // Override-as-refs is meaningful only in branch compare mode. Worktree
+  // mode diffs against HEAD per repo, no refs to override.
+  const overrideAvailable = $derived(
+    appState.appMode === "compare" && appState.compareMode === "branch",
+  );
+
+  function effectiveRefsLabel(repo: RepoEntry): string {
+    if (repo.override) {
+      return `${repo.override.startBranch} → ${repo.override.targetBranch}`;
+    }
+    if (repo.kind === "submodule") return "follow gitlinks";
+    if (repo.kind === "manual") {
+      if (!appState.startBranch || !appState.targetBranch) return "—";
+      return `${appState.startBranch} → ${appState.targetBranch}`;
+    }
+    return "";
+  }
+
+  function toggleOverridePanel(repo: RepoEntry) {
+    if (overrideOpenFor === repo.path) {
+      overrideOpenFor = null;
+      return;
+    }
+    draftStart[repo.path] = repo.override?.startBranch ?? "";
+    draftTarget[repo.path] = repo.override?.targetBranch ?? "";
+    overrideOpenFor = repo.path;
+  }
+
+  function applyOverride(repo: RepoEntry, idx: number) {
+    const s = (draftStart[repo.path] ?? "").trim();
+    const t = (draftTarget[repo.path] ?? "").trim();
+    if (!s || !t) return;
+    setRepoOverride(idx, s, t);
+    overrideOpenFor = null;
+  }
+
+  function resetOverride(repo: RepoEntry, idx: number) {
+    draftStart[repo.path] = "";
+    draftTarget[repo.path] = "";
+    clearRepoOverride(idx);
+  }
 </script>
 
 <aside class="file-list">
@@ -126,6 +176,10 @@
 
     {#each groups as group (group.idx)}
       {#if showGroups}
+        {@const isOverrideOpen = overrideOpenFor === group.repo.path}
+        {@const hasOverride = !!group.repo.override}
+        {@const canOverride =
+          overrideAvailable && group.repo.kind !== "main"}
         <div
           class="group-header"
           class:collapsed={appState.collapsedRepos.has(group.idx)}
@@ -157,9 +211,65 @@
             <span class="kind-badge" data-kind={group.repo.kind}>
               {kindLabel(group.repo.kind)}
             </span>
+            {#if hasOverride}
+              <span class="override-dot" title="Branch override active">●</span>
+            {/if}
             <span class="group-count">{group.files.length}</span>
           </button>
+          {#if canOverride}
+            <button
+              type="button"
+              class="refs-btn"
+              class:active={isOverrideOpen}
+              title={group.repo.kind === "submodule"
+                ? "Compare different refs (default: follow main's gitlinks)"
+                : "Compare different refs (default: same names as main)"}
+              onclick={() => toggleOverridePanel(group.repo)}
+            >
+              <span class="refs-label">{effectiveRefsLabel(group.repo)}</span>
+              <span class="refs-caret">{isOverrideOpen ? "▾" : "▸"}</span>
+            </button>
+          {/if}
         </div>
+        {#if isOverrideOpen}
+          <div class="override-panel">
+            <div class="override-row">
+              <input
+                type="text"
+                placeholder="start (e.g. main)"
+                bind:value={draftStart[group.repo.path]}
+                onkeydown={(e) =>
+                  e.key === "Enter" && applyOverride(group.repo, group.idx)}
+              />
+              <span class="arrow">→</span>
+              <input
+                type="text"
+                placeholder="target (e.g. feature)"
+                bind:value={draftTarget[group.repo.path]}
+                onkeydown={(e) =>
+                  e.key === "Enter" && applyOverride(group.repo, group.idx)}
+              />
+            </div>
+            <div class="override-actions">
+              <button
+                type="button"
+                class="override-apply"
+                onclick={() => applyOverride(group.repo, group.idx)}
+              >
+                Apply
+              </button>
+              {#if hasOverride}
+                <button
+                  type="button"
+                  class="override-clear"
+                  onclick={() => resetOverride(group.repo, group.idx)}
+                >
+                  Reset
+                </button>
+              {/if}
+            </div>
+          </div>
+        {/if}
       {/if}
 
       {#if !showGroups || !appState.collapsedRepos.has(group.idx)}
@@ -380,6 +490,97 @@
     opacity: 0.55;
     font-weight: 400;
     font-size: 0.85em;
+  }
+  .group-header .override-dot {
+    color: var(--accent);
+    font-size: 0.75em;
+  }
+  .group-header .refs-btn {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.72em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: var(--mono);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 160px;
+  }
+  .group-header .refs-btn:hover {
+    background: var(--hover);
+    color: inherit;
+    border-color: var(--border);
+  }
+  .group-header .refs-btn.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .group-header .refs-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .group-header .refs-caret {
+    opacity: 0.6;
+    flex-shrink: 0;
+  }
+  .override-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 10px 8px;
+    background: var(--input-bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .override-panel .override-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .override-panel input {
+    flex: 1;
+    min-width: 0;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bar-bg);
+    color: inherit;
+    font-size: 0.82em;
+    font-family: var(--mono);
+  }
+  .override-panel .arrow {
+    opacity: 0.5;
+    font-size: 0.85em;
+  }
+  .override-actions {
+    display: flex;
+    gap: 4px;
+  }
+  .override-apply,
+  .override-clear {
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bar-bg);
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.78em;
+  }
+  .override-apply {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .override-clear {
+    color: var(--muted);
+  }
+  .override-clear:hover {
+    background: var(--hover);
   }
   .kind-badge {
     font-size: 0.7em;
