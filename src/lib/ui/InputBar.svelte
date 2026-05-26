@@ -1,76 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { open } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { appState } from "$lib/store.svelte";
-  import { addRecentRepo, listRefs, validateRepo } from "$lib/git";
   import { compare, setMode } from "$lib/compare";
   import { chooseTheme } from "$lib/theme";
   import type { ThemeChoice } from "$lib/types";
-  import { buildWorkspace } from "$lib/workspace";
+  import { loadMainRepo } from "$lib/workspace";
   import BranchModeFields from "./BranchModeFields.svelte";
   import WorkTreeFields from "./WorkTreeFields.svelte";
   import Dropdown from "./Dropdown.svelte";
-
-  let pathInput = $state(appState.repoPath);
-
-  async function loadRepo(path: string) {
-    appState.loadingRepo = true;
-    appState.error = null;
-    // Clear previous repo's compare state — branches/files no longer apply.
-    appState.files = [];
-    appState.selectedFile = null;
-    appState.startBranch = "";
-    appState.targetBranch = "";
-    // Blame-mode caches/file pin from the previous repo are also stale.
-    appState.repoFiles = [];
-    appState.blameTarget = null;
-    try {
-      await validateRepo(path);
-      appState.repoPath = path;
-      // Multi-root workspace (§13). Discover submodules from .gitmodules and
-      // restore any manual repos the user saved for this main. Failures inside
-      // buildWorkspace are non-fatal — falls back to [main only].
-      const manualPaths = appState.manualReposByMain[path] ?? [];
-      appState.repos = await buildWorkspace(path, manualPaths);
-      appState.activeRepoIdx = null;
-      appState.collapsedRepos = new Set();
-      const [branches, recentRepos] = await Promise.all([
-        listRefs(path),
-        addRecentRepo(path),
-      ]);
-      appState.branches = branches;
-      appState.recentRepos = recentRepos;
-      // Working tree mode has no inputs to fill in — load immediately so the
-      // user sees their uncommitted changes on repo open.
-      if (appState.compareMode === "worktree") {
-        void compare();
-      }
-    } catch (e) {
-      appState.error = String(e);
-      appState.branches = [];
-    } finally {
-      appState.loadingRepo = false;
-    }
-  }
-
-  async function browse() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Select Git repository",
-    });
-    if (typeof selected === "string") {
-      pathInput = selected;
-      await loadRepo(selected);
-    }
-  }
-
-  function onPathSubmit() {
-    if (pathInput && pathInput !== appState.repoPath) {
-      loadRepo(pathInput);
-    }
-  }
+  import RepoChip from "./RepoChip.svelte";
 
   // Direct mode-toggle buttons. Unlike Ctrl+Shift+W (which cycles), these
   // jump to a specific workspace. Entering blame carries selectedFile over
@@ -95,9 +34,7 @@
     getCurrentWindow()
       .onDragDropEvent((event) => {
         if (event.payload.type === "drop" && event.payload.paths.length > 0) {
-          const p = event.payload.paths[0];
-          pathInput = p;
-          loadRepo(p);
+          void loadMainRepo(event.payload.paths[0]);
         }
       })
       .then((u) => (unlisten = u));
@@ -106,6 +43,7 @@
 </script>
 
 <div class="mode-bar">
+  <RepoChip />
   <div class="mode-toggle" role="group" aria-label="Workspace mode">
     <button
       type="button"
@@ -138,21 +76,6 @@
 </div>
 
 <div class="bar">
-  <input
-    type="text"
-    class="path"
-    list="recent-repos"
-    placeholder="Repository path (drag a folder, or click Browse)"
-    bind:value={pathInput}
-    onchange={onPathSubmit}
-  />
-  <datalist id="recent-repos">
-    {#each appState.recentRepos as r (r)}
-      <option value={r}></option>
-    {/each}
-  </datalist>
-  <button onclick={browse}>Browse…</button>
-
   {#if appState.appMode === "compare"}
     {#if appState.compareMode === "branch"}
       <BranchModeFields />
@@ -222,10 +145,6 @@
     padding: 8px 10px;
     border-bottom: 1px solid var(--border);
     background: var(--bar-bg);
-  }
-  .path {
-    flex: 1 1 auto;
-    min-width: 200px;
   }
   .primary {
     background: var(--accent);

@@ -1,5 +1,13 @@
 import { appState } from "./store.svelte";
-import { listSubmodules, validateRepo } from "./git";
+import {
+  addManualRepo,
+  addRecentRepo,
+  listRefs,
+  listSubmodules,
+  removeManualRepo,
+  validateRepo,
+} from "./git";
+import { compare } from "./compare";
 import type { RepoEntry, RepoFile } from "./types";
 
 /**
@@ -87,5 +95,127 @@ export async function buildWorkspace(
 export function repoPathFor(target: RepoFile | null): string | null {
   if (!target) return null;
   return appState.repos[target.repoIdx]?.path ?? null;
+}
+
+/**
+ * Open `path` as the workspace main repo. Clears the previous workspace's
+ * compare / blame state, builds the new workspace (submodules + saved
+ * manual repos), and triggers an initial compare when worktree mode is
+ * active.
+ *
+ * Used by RepoChip popover (recents click, Browse, drag-drop) and by
+ * InputBar's window-level drag handler.
+ */
+export async function loadMainRepo(path: string): Promise<void> {
+  appState.loadingRepo = true;
+  appState.error = null;
+  // Clear previous repo's compare state — branches/files no longer apply.
+  appState.files = [];
+  appState.selectedFile = null;
+  appState.startBranch = "";
+  appState.targetBranch = "";
+  // Blame-mode caches/file pin from the previous repo are also stale.
+  appState.repoFiles = [];
+  appState.blameTarget = null;
+  try {
+    await validateRepo(path);
+    appState.repoPath = path;
+    const manualPaths = appState.manualReposByMain[path] ?? [];
+    appState.repos = await buildWorkspace(path, manualPaths);
+    appState.activeRepoIdx = null;
+    appState.collapsedRepos = new Set();
+    const [branches, recentRepos] = await Promise.all([
+      listRefs(path),
+      addRecentRepo(path),
+    ]);
+    appState.branches = branches;
+    appState.recentRepos = recentRepos;
+    // Working tree mode has no inputs to fill in — load immediately so the
+    // user sees their uncommitted changes on repo open.
+    if (appState.compareMode === "worktree") {
+      void compare();
+    }
+  } catch (e) {
+    appState.error = String(e);
+    appState.branches = [];
+  } finally {
+    appState.loadingRepo = false;
+  }
+}
+
+/**
+ * Add `path` as a manual repo for the current main and rebuild the
+ * workspace so the new repo's files surface immediately. No-op when no
+ * main is open, when the path is the main itself, or when it's already a
+ * workspace repo.
+ */
+export async function addManualRepoToWorkspace(path: string): Promise<void> {
+  const main = appState.repoPath;
+  if (!main) return;
+  if (path === main) return;
+  if (appState.repos.some((r) => r.path === path)) return;
+  try {
+    await validateRepo(path);
+  } catch (e) {
+    appState.error = `not a git repo: ${e}`;
+    return;
+  }
+  try {
+    const list = await addManualRepo(main, path);
+    appState.manualReposByMain = {
+      ...appState.manualReposByMain,
+      [main]: list,
+    };
+  } catch (e) {
+    appState.error = String(e);
+    return;
+  }
+  appState.repos = await buildWorkspace(
+    main,
+    appState.manualReposByMain[main] ?? [],
+  );
+  // Repopulate file lists (blame picker) and changed files (compare).
+  appState.repoFiles = [];
+  if (
+    appState.compareMode === "worktree" ||
+    (appState.startBranch && appState.targetBranch)
+  ) {
+    void compare({ silent: true });
+  }
+}
+
+/**
+ * Remove `path` from the manual-repo list for the current main and rebuild.
+ * Silently no-ops for non-manual entries (main + submodule must be removed
+ * via different mechanisms).
+ */
+export async function removeManualRepoFromWorkspace(
+  path: string,
+): Promise<void> {
+  const main = appState.repoPath;
+  if (!main) return;
+  const entry = appState.repos.find((r) => r.path === path);
+  if (!entry || entry.kind !== "manual") return;
+  try {
+    const list = await removeManualRepo(main, path);
+    const next = { ...appState.manualReposByMain };
+    if (list.length === 0) delete next[main];
+    else next[main] = list;
+    appState.manualReposByMain = next;
+  } catch (e) {
+    appState.error = String(e);
+    return;
+  }
+  appState.repos = await buildWorkspace(
+    main,
+    appState.manualReposByMain[main] ?? [],
+  );
+  appState.repoFiles = [];
+  if (
+    appState.compareMode === "worktree" ||
+    (appState.startBranch && appState.targetBranch)
+  ) {
+    void compare({ silent: true });
+  }
 }
 
