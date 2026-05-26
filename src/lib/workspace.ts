@@ -183,11 +183,16 @@ export async function resolveDiffRefsFor(
  * active.
  *
  * Used by RepoChip popover (recents click, Browse, drag-drop) and by
- * InputBar's window-level drag handler.
+ * InputBar's window-level drag handler. `opts.silent` swallows the error
+ * banner — used by the startup auto-restore so a stale recent entry
+ * (folder deleted, etc.) doesn't greet the user on launch.
  */
-export async function loadMainRepo(path: string): Promise<void> {
+export async function loadMainRepo(
+  path: string,
+  opts: { silent?: boolean } = {},
+): Promise<void> {
   appState.loadingRepo = true;
-  appState.error = null;
+  if (!opts.silent) appState.error = null;
   // Clear previous repo's compare state — branches/files no longer apply.
   appState.files = [];
   appState.selectedFile = null;
@@ -219,7 +224,11 @@ export async function loadMainRepo(path: string): Promise<void> {
       void compare();
     }
   } catch (e) {
-    appState.error = String(e);
+    if (opts.silent) {
+      console.warn("loadMainRepo failed:", e);
+    } else {
+      appState.error = String(e);
+    }
     appState.branches = [];
   } finally {
     appState.loadingRepo = false;

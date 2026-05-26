@@ -11,6 +11,7 @@
   import TitleBar from "$lib/ui/TitleBar.svelte";
   import { appState } from "$lib/store.svelte";
   import { loadState } from "$lib/git";
+  import { loadMainRepo } from "$lib/workspace";
   import { compare, cycleAppMode } from "$lib/compare";
   import { popHistory, redoHistory } from "$lib/history";
   import { exitFocus } from "$lib/focus";
@@ -37,6 +38,14 @@
     subscribeSystemTheme();
     applyFontSize();
     preheatHighlighter();
+
+    // Auto-restore the last opened main repo. Silent — if the folder was
+    // moved/deleted since last session, we don't want to greet the user
+    // with an error banner; they can pick a different repo from the chip.
+    const lastRepo = appState.recentRepos[0];
+    if (lastRepo) {
+      void loadMainRepo(lastRepo, { silent: true });
+    }
 
     pendingUpdate = await checkForUpdate();
     if (pendingUpdate) {
