@@ -199,11 +199,11 @@
     if (e.altKey) return;
 
     switch (e.key) {
-      case "j":
+      case "ArrowDown":
         moveSelection(1);
         e.preventDefault();
         break;
-      case "k":
+      case "ArrowUp":
         moveSelection(-1);
         e.preventDefault();
         break;
