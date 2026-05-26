@@ -139,6 +139,9 @@
             title="Show / hide this repo's files"
             onclick={() => toggleRepo(group.idx)}
           >
+            <span class="caret" aria-hidden="true">
+              {appState.collapsedRepos.has(group.idx) ? "▸" : "▾"}
+            </span>
             <span class="repo-name">{group.repo.displayName}</span>
             <span class="kind-badge" data-kind={group.repo.kind}>
               {kindLabel(group.repo.kind)}
@@ -355,6 +358,12 @@
   }
   .group-header .name-toggle:hover {
     background: var(--hover);
+  }
+  .group-header .caret {
+    width: 12px;
+    flex-shrink: 0;
+    opacity: 0.6;
+    font-size: 0.85em;
   }
   .group-header .repo-name {
     overflow: hidden;
