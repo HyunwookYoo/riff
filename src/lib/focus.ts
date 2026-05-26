@@ -1,5 +1,6 @@
 import { appState } from "./store.svelte";
 import { compare } from "./compare";
+import { snapshot } from "./history";
 
 /**
  * Enter Focus mode (§13.3 #15-19) on `repoIdx`. While focused, only that
@@ -19,6 +20,8 @@ export function enterFocus(repoIdx: number): void {
   if (repoIdx < 0 || repoIdx >= appState.repos.length) return;
   if (appState.activeRepoIdx === repoIdx) return;
   appState.activeRepoIdx = repoIdx;
+  // Manual Focus is fresh navigation — drop any redo path (browser-style).
+  appState.forwardHistory = [];
   // Refetch with the narrower scope. Selection will drop because compare()
   // clears appState.files at start.
   if (appState.repoPath) void compare({ silent: true });
@@ -31,6 +34,9 @@ export function enterFocus(repoIdx: number): void {
  */
 export function exitFocus(): void {
   if (appState.activeRepoIdx === null) return;
+  // Push the focused snapshot onto the forward stack so mouse-forward can
+  // re-enter Focus on the same repo.
+  appState.forwardHistory.push(snapshot());
   appState.activeRepoIdx = null;
   if (appState.repoPath) void compare({ silent: true });
 }

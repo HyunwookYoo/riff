@@ -48,7 +48,7 @@ export function pushAndDrillToCommit(sha: string, repoIdx?: number): void {
 }
 
 /** Snapshot the current workspace context for the forward (redo) stack. */
-function snapshot(): CompareCtx {
+export function snapshot(): CompareCtx {
   return {
     appMode: appState.appMode,
     compareMode: appState.compareMode,
