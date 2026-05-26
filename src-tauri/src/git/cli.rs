@@ -6,7 +6,10 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 use super::blame::{parse_porcelain, Blame};
-use super::{Branch, BranchKind, ChangedFile, DiffMode, FileDiff, FileStatus, GitError, GitLayer};
+use super::{
+    Branch, BranchKind, ChangedFile, DiffMode, FileDiff, FileStatus, GitError, GitLayer,
+    SubmoduleInfo,
+};
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
 const LARGE_FILE_BYTES: u64 = 1_000_000;
@@ -801,6 +804,64 @@ impl GitLayer for GitCli {
 
         parse_porcelain(&buf)
     }
+
+    fn list_submodules(&self, path: &Path) -> Result<Vec<SubmoduleInfo>, GitError> {
+        // No `.gitmodules` → no submodules. Skip even spawning git.
+        let gitmodules = path.join(".gitmodules");
+        if !gitmodules.exists() {
+            return Ok(Vec::new());
+        }
+        // `git config --get-regexp` exits 1 with empty stderr when there are
+        // no matches. Distinguish that from real errors by using `output()`
+        // directly instead of `self.run()`.
+        let out = git_command()
+            .arg("-C")
+            .arg(path)
+            .args([
+                "config",
+                "--file",
+                ".gitmodules",
+                "-z",
+                "--get-regexp",
+                r"^submodule\..*\.path$",
+            ])
+            .output()?;
+        if !out.status.success() {
+            // exit 1 + empty stderr = "no matching keys" — treat as empty.
+            if out.status.code() == Some(1) && out.stderr.is_empty() {
+                return Ok(Vec::new());
+            }
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            return Err(GitError::CommandFailed(stderr));
+        }
+        let entries = parse_gitmodules_paths(&out.stdout)?;
+        let mut result = Vec::with_capacity(entries.len());
+        for relpath in entries {
+            let absolute = path.join(&relpath);
+            // Initialized when the working tree has a `.git` entry — that's
+            // either a directory (older clones) or a gitfile (modern). Both
+            // satisfy `exists()`.
+            let initialized = absolute.join(".git").exists();
+            result.push(SubmoduleInfo {
+                path: relpath,
+                absolute_path: absolute.to_string_lossy().into_owned(),
+                initialized,
+            });
+        }
+        Ok(result)
+    }
+
+    fn submodule_sha_at(
+        &self,
+        path: &Path,
+        tree_ish: &str,
+        submodule_path: &str,
+    ) -> Result<Option<String>, GitError> {
+        let tree_ish = validate_ref(tree_ish)?;
+        validate_path(submodule_path)?;
+        let stdout = self.run(path, &["ls-tree", tree_ish, "--", submodule_path])?;
+        parse_gitlink_sha(&stdout)
+    }
 }
 
 fn clear_worktree_slot_if_ours(
@@ -939,6 +1000,52 @@ fn parse_ls_files_stage(bytes: &[u8]) -> Result<Vec<String>, GitError> {
     Ok(out)
 }
 
+/// Parse `git config -z --get-regexp ^submodule\..*\.path$` output. Each
+/// NUL-terminated record is `<key>\n<value>` — we want the values.
+fn parse_gitmodules_paths(bytes: &[u8]) -> Result<Vec<String>, GitError> {
+    let mut out = Vec::new();
+    for entry in bytes.split(|&b| b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let nl = entry
+            .iter()
+            .position(|&b| b == b'\n')
+            .ok_or_else(|| GitError::Parse("gitmodules entry missing newline".into()))?;
+        let value = &entry[nl + 1..];
+        if value.is_empty() {
+            continue;
+        }
+        out.push(bytes_to_string(value)?);
+    }
+    Ok(out)
+}
+
+/// Parse `git ls-tree <tree> -- <path>` output for a gitlink entry. Returns
+/// the commit SHA, or `None` when the path is not a gitlink at that tree
+/// (empty output, or some other object type).
+fn parse_gitlink_sha(bytes: &[u8]) -> Result<Option<String>, GitError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| GitError::Parse("ls-tree output not utf-8".into()))?;
+    let line = text.lines().next().unwrap_or("");
+    if line.is_empty() {
+        return Ok(None);
+    }
+    // Format: `<mode> SP <type> SP <sha>\t<path>`. Gitlink mode is 160000,
+    // type is `commit`. Anything else is not a submodule pointer.
+    let mut parts = line.splitn(3, ' ');
+    let mode = parts.next().unwrap_or("");
+    let ty = parts.next().unwrap_or("");
+    if mode != "160000" || ty != "commit" {
+        return Ok(None);
+    }
+    let rest = parts.next().unwrap_or("");
+    let tab = rest
+        .find('\t')
+        .ok_or_else(|| GitError::Parse("ls-tree gitlink: missing tab".into()))?;
+    Ok(Some(rest[..tab].to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1075,6 +1182,69 @@ mod tests {
         // No tab between meta and path — malformed.
         let input = b"100644 abc123 0 src/main.rs\0";
         assert!(parse_ls_files_stage(input).is_err());
+    }
+
+    #[test]
+    fn parse_gitmodules_paths_basic() {
+        // `git config -z --get-regexp` output: key\nvalue\0key\nvalue\0...
+        let input = b"submodule.vendor/sub.path\nvendor/sub\0submodule.shared.path\nshared/lib\0";
+        let out = parse_gitmodules_paths(input).unwrap();
+        assert_eq!(out, vec!["vendor/sub", "shared/lib"]);
+    }
+
+    #[test]
+    fn parse_gitmodules_paths_empty() {
+        assert!(parse_gitmodules_paths(b"").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_gitmodules_paths_path_with_spaces() {
+        let input = b"submodule.my name.path\npath with spaces/sub\0";
+        let out = parse_gitmodules_paths(input).unwrap();
+        assert_eq!(out, vec!["path with spaces/sub"]);
+    }
+
+    #[test]
+    fn parse_gitmodules_paths_rejects_missing_newline() {
+        // Entry without the `\n` separator between key and value — malformed.
+        let input = b"submodule.bad.pathvendor/sub\0";
+        assert!(parse_gitmodules_paths(input).is_err());
+    }
+
+    #[test]
+    fn parse_gitlink_sha_basic() {
+        let input = b"160000 commit a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0\tvendor/sub\n";
+        let out = parse_gitlink_sha(input).unwrap();
+        assert_eq!(
+            out.as_deref(),
+            Some("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0")
+        );
+    }
+
+    #[test]
+    fn parse_gitlink_sha_empty_means_none() {
+        // Path is not present at that tree — ls-tree produces no output.
+        assert!(parse_gitlink_sha(b"").unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_gitlink_sha_blob_means_none() {
+        // Path exists at the tree but as a regular file, not a gitlink.
+        let input = b"100644 blob abc123\tsrc/main.rs\n";
+        assert!(parse_gitlink_sha(input).unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_gitlink_sha_tree_means_none() {
+        // Path is a directory, not a gitlink.
+        let input = b"040000 tree abc123\tvendor\n";
+        assert!(parse_gitlink_sha(input).unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_gitlink_sha_rejects_missing_tab() {
+        let input = b"160000 commit abc123 vendor/sub\n";
+        assert!(parse_gitlink_sha(input).is_err());
     }
 
     #[test]

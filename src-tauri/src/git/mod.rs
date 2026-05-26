@@ -30,6 +30,18 @@ pub struct ChangedFile {
     pub status: FileStatus,
 }
 
+/// Submodule entry as declared in `.gitmodules`. `initialized` is true when
+/// the submodule's working tree has been checked out (i.e. `<repo>/<path>/.git`
+/// exists). Used by the multi-root workspace (§13) to populate the repo list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmoduleInfo {
+    /// Path relative to the main repo root, as written in `.gitmodules`.
+    pub path: String,
+    /// Absolute filesystem path of the submodule's working tree.
+    pub absolute_path: String,
+    pub initialized: bool,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum FileStatus {
@@ -133,4 +145,19 @@ pub trait GitLayer {
         rev: &str,
         use_contents: bool,
     ) -> Result<Blame, GitError>;
+    /// Read `.gitmodules` (if present) and return the declared submodules.
+    /// Empty list when there is no `.gitmodules` or it contains no
+    /// `submodule.<name>.path` entries. Used to auto-populate the multi-root
+    /// workspace (§13).
+    fn list_submodules(&self, path: &Path) -> Result<Vec<SubmoduleInfo>, GitError>;
+    /// Look up the gitlink commit SHA for `submodule_path` inside `tree_ish`
+    /// (a branch / tag / commit). Returns `None` when the path is not a
+    /// gitlink at that tree. Used to derive each submodule's old/new SHA
+    /// for branch compare (§13.3 #7, gitlink-follow).
+    fn submodule_sha_at(
+        &self,
+        path: &Path,
+        tree_ish: &str,
+        submodule_path: &str,
+    ) -> Result<Option<String>, GitError>;
 }

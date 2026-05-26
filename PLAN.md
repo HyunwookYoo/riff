@@ -127,7 +127,7 @@
 |---|---|
 | **v0.1.0** | 위 MVP scope |
 | **v0.2.x** | git blame + commit drill-in (§12), viewed/unviewed 체크박스 |
-| **v0.3.x** | 다중 탭, search across files |
+| **v0.3.x** | Multi-root workspace — submodule 및 수동 추가 repo 통합 (§13), search across files |
 | **v0.4.x** | 인라인 코멘트 + export |
 | **v1.0** | 안정화, 코드 서명 검토 |
 
@@ -243,6 +243,7 @@
 16. **Name** → Riff
 17. **MVP extras** → 파일내 검색 + 파일 트리 + 단축키
 18. **Blame** → v0.2 분리 (상세 §12)
+19. **Submodule / multi-repo** → v0.3 분리 (상세 §13). Unified multi-root + Focus 토글로 결정 (탭 안 / embed 안 모두 기각)
 
 ---
 
@@ -457,3 +458,425 @@ function commitColor(sha: string, isDark: boolean): string {
 | 4 | Commit drill-in: history stack + breadcrumb + Esc 핸들러 + view 트리거 wiring | 0.5~1일 |
 | 5 | Polish + README + 수동 테스트 | 0.5일 |
 | | **총** | **~3.5~4.5일** |
+
+---
+
+## 13. v0.3.x — Multi-root workspace (submodule + 수동 추가 repo) 상세 설계
+
+> grill-me 인터뷰(2026-05-26)를 통해 합의된 v0.3.x 핵심 기능 설계.
+> 동기: submodule을 쓰는 프로젝트에서 main repo 한 곳만 보면 PR 전체 변경점을 한번에 보기 어렵다.
+
+### 13.1 방향 비교 및 선택
+
+| 안 | 요약 | 평가 |
+|---|---|---|
+| 1. Embed | main이 submodule을 traverse하여 한 picker에 융합 | 모드 매트릭스 폭발 (main worktree + submodule branch 등 의미 모호). blame 개념과 잘 안 맞음. **기각** |
+| 2. Tabs | Fork/GitKraken식. repo마다 탭, 탭마다 독립 모드 | 멘탈 모델 단순. 하지만 "변경점 한번에"라는 원래 동기 미충족 — 탭을 일일이 돌아야 함. **기각** |
+| **3. Unified multi-root + Focus 토글** | VSCode/JetBrains식. 한 트리에 repo별 그룹, 한 repo 집중은 *필터*로 처리 | 두 안의 장점을 비용 1배에 흡수. user-config로 두 패러다임 모두 만드는 안도 검토했으나 dual-architecture 부담 대비 효용 낮음. **채택** |
+
+### 13.2 요구사항
+
+| # | 원본 요구 | 확정된 해석 |
+|---|---|---|
+| 1 | submodule까지 PR 변경점을 한번에 | Unified 파일 picker에 모든 repo 변경 노출. Submodule은 main의 gitlink old/new SHA를 따라 자동 비교 |
+| 2 | submodule 코드 탐색/blame | 단일 fuzzy picker에서 전 repo 파일 검색 → 클릭한 파일의 repo 컨텍스트로 blame 수행 |
+| 3 | 가끔은 한 repo에만 집중 | Focus 토글로 트리에서 한 repo만 펼침. 진짜 탭 UI 안 만듦 |
+| 4 | submodule 아닌 별개 repo도 같이 보고 싶음 | 수동 "Add repo" UI 제공 (Multi-root 일반화) |
+
+### 13.3 결정 사항
+
+#### A. Workspace 모델
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 1 | Workspace 단위 | `main repo + repos[]`. main이 트리거. |
+| 2 | Repo 발견 | (a) main 열면 `.gitmodules` 파싱 → 초기화된 submodule 자동 포함. (b) "Add repo" 버튼으로 수동 추가. |
+| 3 | 재귀 깊이 | 1단계 (submodule 내부의 .gitmodules는 무시) |
+| 4 | Repo kind | `"main" | "submodule" | "manual"`. submodule은 parent gitlink path 보관. |
+| 5 | Persistence | `PersistedState`에 `manualReposByMain: Record<mainPath, string[]>` 추가. submodule list는 매번 .gitmodules에서 다시 읽음 (자동) |
+
+#### B. Branch compare 시멘틱
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 6 | main의 start/target | InputBar의 기존 한 쌍 (변경 없음) |
+| 7 | Submodule 기본 | **gitlink-follow**. main의 start tree의 gitlink SHA → submodule의 start. target tree도 동일하게. `git diff <oldSha>..<newSha>` 가 그 repo의 변경. GitHub 웹 PR 의미와 일치 |
+| 8 | 수동 repo 기본 | 동명 branch (main이 dev→feature이면 그 repo도 dev→feature). 없으면 "diff 없음" |
+| 9 | Per-repo override | 가능. UI는 InputBar에 작은 "Per-repo overrides" disclosure (평소 숨김) |
+| 10 | Worktree mode | 트리비얼 — 각 repo가 자기 `git diff` (working tree vs HEAD). submodule도 자기 HEAD 기준 |
+| 11 | "submodule pointer만 바뀜" 표시 | 해당 repo 그룹 헤더에 `<oldSha> → <newSha>` 한 줄 표기. 내용 변경이 0이어도 그룹은 노출 |
+
+#### C. UI 표현
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 12 | 파일 picker | Repo별 collapsible 그룹 헤더 + 그룹 안에서는 기존 flat/tree 동작 그대로 |
+| 13 | 그룹 헤더 내용 | repo display name + kind 뱃지 + 파일 개수 + (submodule) `<oldSha>→<newSha>` + 수동 repo "×" 제거 버튼 |
+| 14 | j/k 이동 | 접힌 그룹은 건너뜀. 펼친 그룹 안에서 파일 단위 이동 |
+| 15 | Focus 토글 | repo 그룹 헤더 클릭 시 그 repo만 펼치고 나머지 collapse. 그룹 헤더 다시 클릭 또는 Esc로 해제 |
+| 16 | Focus 키바인드 | 추후 결정 (잠정 미정) — 일단 헤더 클릭만 |
+
+#### D. Drill-in과 Focus의 통합
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 17 | Drill-in 시 다른 repo | **자동 Focus** — drill 대상 repo만 노출. Esc/Back으로 multi-root 전체 복원 |
+| 18 | Drill-in 메커니즘 | Focus와 동일. drill-in은 "Focus + ref pair 교체 + history push" |
+| 19 | `CompareCtx` 확장 | `activeRepoIdx: number | null` 추가 (null = multi-root) |
+
+#### E. Blame 통합
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 20 | Blame 파일 picker | 단일 fuzzy picker, 전 repo 파일 union. repo 그룹 헤더 포함 (compare와 동형) |
+| 21 | Blame 실행 컨텍스트 | 클릭한 파일의 repo에서만 수행. commit panel, drill-in도 그 repo에 한정 |
+| 22 | C/C++ companion (`.h↔.cpp`) | **same-repo 조건 추가**. 다른 repo에 같은 basename이 있어도 cross-repo 자동 열기는 안 함 |
+| 23 | `blameFilePath` | 그대로 유지하되 의미상 "repo-qualified path" — `{ repoIdx, path }`로 확장 |
+
+### 13.4 모델 변화 요약
+
+**`types.ts`:**
+
+```ts
+export type RepoKind = "main" | "submodule" | "manual";
+
+export interface RepoEntry {
+  path: string;                    // 절대 경로
+  kind: RepoKind;
+  displayName: string;             // submodule은 main 기준 상대 경로, manual은 basename
+  parentGitlinkPath?: string;      // submodule인 경우 main 안에서의 경로
+  override?: {                     // per-repo branch override
+    startBranch: string;
+    targetBranch: string;
+  };
+}
+
+export interface ChangedFile {
+  path: string;
+  old_path: string | null;
+  status: FileStatus;
+  repoIdx: number;                 // ← 추가
+}
+
+export interface CompareCtx {
+  appMode: AppMode;
+  compareMode: CompareMode;
+  mode: DiffMode;
+  startBranch: string;
+  targetBranch: string;
+  selectedFilePath: string | null;
+  activeRepoIdx: number | null;    // ← 추가. null = multi-root
+}
+
+export interface PersistedState {
+  recent_repos: string[];
+  theme: ThemeChoice;
+  font_size: number;
+  compare_mode: CompareMode;
+  manual_repos_by_main: Record<string, string[]>;  // ← 추가
+}
+```
+
+**`store.svelte.ts`:**
+
+- `repoPath: string` → 유지 (main 의미). 새로 `repos: RepoEntry[]` 추가 (main이 `repos[0]`)
+- `activeRepoIdx: number | null` 추가 (Focus + drill-in 상태)
+- `repoFiles: string[]` → 제거, repo별 캐시로 대체 (`repoFilesByIdx: string[][]`)
+- `blameFilePath: string | null` → `blameTarget: { repoIdx: number; path: string } | null`
+
+### 13.5 UI mockup (compare 모드, branch sub-mode, multi-root)
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ [main repo path] [start: dev▼] [target: feature▼]  [+ Add repo]      │
+│ ▸ Per-repo overrides (1)                                             │
+├────────────────────────────┬─────────────────────────────────────────┤
+│ ▾ riff (main)         3   │                                         │
+│    src/lib/foo.ts          │                                         │
+│    src/lib/bar.ts          │                                         │
+│    README.md               │     CodeMirror MergeView                │
+│ ▾ vendor/sub (submodule) 2│                                         │
+│    a1b2c3 → d4e5f6        │                                         │
+│    lib/x.ts                │                                         │
+│    lib/y.ts                │                                         │
+│ ▾ shared-lib (manual)  1   ×                                        │
+│    (matching dev→feature) │                                         │
+│    src/index.ts            │                                         │
+└────────────────────────────┴─────────────────────────────────────────┘
+```
+
+Drill-in / Focus 진입 후 (vendor/sub의 commit 클릭):
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ ← Back │ Viewing d4e5f6 in vendor/sub (was: riff dev→feature)        │
+├────────────────────────────┬─────────────────────────────────────────┤
+│ ▾ vendor/sub          2   │                                         │
+│    lib/x.ts                │     diff                                │
+│    lib/y.ts                │                                         │
+│                            │                                         │
+│ (다른 repo는 숨김 — Focus)  │                                         │
+└────────────────────────────┴─────────────────────────────────────────┘
+Esc → multi-root 복원
+```
+
+### 13.6 Backend (`src-tauri/src/git/`)
+
+**`GitLayer` trait 확장:**
+
+```rust
+/// 한 repo에서 한 ref pair의 변경 파일 리스트. 기존 `diff_files`와 본질 동일.
+fn diff_files_in(
+    &self,
+    repo_path: &Path,
+    start: &str,
+    target: &str,
+    mode: DiffMode,
+    ignore_whitespace: bool,
+) -> Result<Vec<ChangedFile>, GitError>;
+
+/// 주어진 tree에서 한 submodule path의 gitlink SHA를 추출.
+/// 예: `git ls-tree <tree> <submodulePath>` → `160000 commit <sha> ...`
+fn submodule_sha_at(
+    &self,
+    main_repo: &Path,
+    tree_ish: &str,
+    submodule_path: &str,
+) -> Result<Option<String>, GitError>;
+
+/// `.gitmodules` 파싱 + 초기화 여부 확인.
+fn list_submodules(
+    &self,
+    main_repo: &Path,
+) -> Result<Vec<SubmoduleInfo>, GitError>;
+```
+
+```rust
+pub struct SubmoduleInfo {
+    pub path: String,              // main 기준 상대 경로
+    pub absolute_path: PathBuf,    // 실제 fs 위치 (초기화 안 됐으면 None)
+    pub initialized: bool,
+}
+```
+
+**기존 명령 확장:**
+
+- `diff_files` (Tauri command) → repo_path 인자 추가, 호출자(JS)가 repo별로 N번 호출. Rust 측은 별 변화 없음.
+- `worktree_files` → 동일하게 repo_path 인자만 받음.
+- `blame_file` → 이미 `path` 인자 받음. 변경 없음.
+
+**새 Tauri command:**
+
+```rust
+#[tauri::command]
+fn list_submodules(state: tauri::State<GitCli>, main_repo: String)
+    -> Result<Vec<SubmoduleInfo>, GitError>;
+
+#[tauri::command]
+fn submodule_sha_at(
+    state: tauri::State<GitCli>,
+    main_repo: String,
+    tree_ish: String,
+    submodule_path: String,
+) -> Result<Option<String>, GitError>;
+```
+
+**캐시/취소 정책:**
+
+- compare session id (기존 `compareSession`)을 그대로 사용. N repo 병렬 fetch를 같은 session으로 묶음.
+- repo별 `git diff` 자식 프로세스는 기존 kill_slot 패턴을 repo별로 확장 (`HashMap<repoIdx, ChildHandle>`).
+
+### 13.7 Frontend (`src/lib/`)
+
+**`compare.ts` 확장 — 핵심 의사 코드:**
+
+```ts
+async function compare(opts: CompareOptions = {}): Promise<void> {
+  const session = ++compareSession;
+  appState.files = [];
+
+  // 1. main 변경 fetch (gitlink 변화 포함)
+  await fetchRepoFiles(appState.repos[0], session, onFile);
+
+  // 2. 각 submodule: gitlink SHA 추출 → old..new diff
+  for (const repo of appState.repos.slice(1)) {
+    if (repo.kind === "submodule") {
+      const oldSha = await submoduleShaAt(mainPath, startBranch, repo.parentGitlinkPath!);
+      const newSha = await submoduleShaAt(mainPath, targetBranch, repo.parentGitlinkPath!);
+      // pointer-only 변화면 oldSha != newSha지만 내용 변경 없을 수 있음 — 그래도 UI에 그룹 노출
+      if (oldSha && newSha) {
+        await fetchRepoFilesAtRefs(repo, oldSha, newSha, session, onFile);
+      }
+    } else if (repo.kind === "manual") {
+      // 동명 branch 또는 override
+      const { start, target } = resolveRefs(repo, startBranch, targetBranch);
+      if (start && target) {
+        await fetchRepoFilesAtRefs(repo, start, target, session, onFile);
+      }
+    }
+  }
+}
+```
+
+**Focus 메커니즘:**
+
+```ts
+function enterFocus(repoIdx: number): void {
+  appState.activeRepoIdx = repoIdx;
+}
+
+function exitFocus(): void {
+  appState.activeRepoIdx = null;
+}
+
+// 파일 picker 렌더: activeRepoIdx != null이면 그 repo 그룹만 펼침 + 다른 그룹 숨김
+// drill-in: cycleAppMode / commit drill 헬퍼가 enterFocus(repoIdx) + history.push
+// Esc: history.pop 또는 exitFocus
+```
+
+**새 컴포넌트:**
+
+- `RepoGroupHeader.svelte` — collapsible 헤더. kind 뱃지 / 파일 카운트 / submodule SHA / 제거 버튼.
+- `AddRepoButton.svelte` — InputBar 안에 dialog open.
+- `PerRepoOverrides.svelte` — disclosure 안에 repo별 start/target 입력.
+
+**`InputBar.svelte` 변경:**
+
+- 기존 입력 그대로 + 오른쪽 "+ Add repo" 버튼
+- 그 아래 "▸ Per-repo overrides (N)" disclosure (override 있는 repo 수)
+
+**`FileList.svelte` 변경:**
+
+- 평면 `files`를 `repoIdx`로 group_by 한 뒤 RepoGroupHeader 단위로 렌더
+- j/k 이동은 펼친 그룹의 파일만 순회
+
+### 13.8 Drill-in 동작 (multi-root)
+
+```
+원래 multi-root 비교
+   ↓ vendor/sub의 commit d4e5f6 popover에서 "View commit →"
+
+CompareCtx push: { ...현재, activeRepoIdx: null }
+appState.activeRepoIdx = (vendor/sub의 idx)
+appState.startBranch  = "d4e5f6^"
+appState.targetBranch = "d4e5f6"
+→ compare() 호출 — Focus 상태라 그 repo만 fetch
+
+   ↓ Esc
+
+CompareCtx pop → 원래 ref pair + activeRepoIdx=null 복원
+→ compare() 재호출
+```
+
+- 다른 repo로 drill-in 중에 또 다른 repo의 commit으로 drill하는 건 같은 메커니즘 (history depth 증가)
+- Focus만 단독으로 진입한 경우(commit drill 없이 헤더 클릭)에는 history push 안 함 — 단순 토글
+
+### 13.9 작업 규모 예상
+
+| 단계 | 작업 | 예상 |
+|---|---|---|
+| 1 | Backend: `list_submodules` + `submodule_sha_at` + 단위 테스트 | 0.5일 |
+| 2 | 데이터 모델 마이그레이션 (`repos[]`, `ChangedFile.repoIdx`, `activeRepoIdx`, persistence 스키마 bump) | 1일 |
+| 3 | Discovery + 수동 "Add repo" UI + persistence wiring | 0.5~1일 |
+| 4 | `compare.ts` multi-repo fetch + gitlink-follow + 동명 branch 매칭 + per-repo override | 1~1.5일 |
+| 5 | 파일 picker repo 그룹 헤더 + j/k 이동 + collapsing | 0.5~1일 |
+| 6 | Focus 토글 + drill-in과 Focus 통합 + `CompareCtx.activeRepoIdx` | 0.5~1일 |
+| 7 | Blame 통합 picker + per-file repo 컨텍스트 + companion same-repo 조건 | 0.5일 |
+| 8 | Polish + README 업데이트 (multi-root 섹션 추가) + 수동 테스트 | 0.5일 |
+| | **총** | **~5~6일** |
+
+### 13.10 Skip / Edge cases
+
+- 초기화 안 된 submodule (`git submodule update` 안 함): 그룹 헤더에 "uninitialized" 뱃지, 파일 목록 비움. clickable but disabled.
+- 수동 추가한 repo가 git repo가 아님: Add 시 검증 실패 dialog.
+- 수동 repo의 동명 branch가 양쪽 다 없음: 그룹 헤더에 "no matching refs" + override 유도.
+- Submodule이 nested (.gitmodules 안에 또 .gitmodules): 1단계만 본다 — 깊은 케이스는 미지원, 필요시 v0.4 검토.
+- main이 detached HEAD인 경우: submodule 그룹은 gitlink-follow가 그대로 작동 (tree-ish는 ref 이름 아니어도 OK).
+- Per-repo override가 있는 repo는 그룹 헤더에 작은 아이콘으로 표시.
+
+### 13.12 Repo 경로 UI — Compact Repo Chip
+
+> 동기: multi-root가 들어오면 InputBar 상단의 큰 path input + Browse 버튼은 의미가 약해진다.
+> main repo는 한 번 정하면 잘 안 바뀌고, 나머지 repo는 자동(submodule) 또는 수동 다이얼로그로 추가되니까.
+
+#### 13.12.1 현재 → 제안
+
+**현재 (`InputBar.svelte`):**
+```
+[─────── path input (flex:1) ───────] [Browse…] [start] [target] [Compare]
+```
+
+**제안:**
+```
+mode-bar:    [Branch | Working Tree | Blame]   📁 riff ▾
+main-bar:    [start] [target] [Compare]
+```
+
+- `.path` text input과 Browse 버튼이 main-bar에서 사라짐 → branch/target/Compare만 남아 매우 가벼움
+- chip은 mode-bar의 오른쪽(또는 가운데)에 배치. 크기 ~120px 고정폭, main repo display name + ▾
+- chip hover 시 main repo 풀패스 tooltip
+- 드래그-드롭은 window 전체에서 그대로 작동 → main repo 교체
+
+#### 13.12.2 Popover 구성
+
+```
+┌────────────────────────────────────┐
+│ 🔍 [type to filter recents...]     │  ← 즉시 fuzzy 필터, Enter로 선택
+├────────────────────────────────────┤
+│ ◉ riff                C:\riff\riff │  ← 현재 main 강조
+│   migaloo            C:\dev\...    │
+│   sandbox            D:\repos\...  │
+│   ...                              │  ← recent_repos persist
+├────────────────────────────────────┤
+│ 📂 Browse folder…                  │  ← 기존 fs dialog
+├────────────────────────────────────┤
+│ Workspace repos:                   │
+│   vendor/sub  (submodule, auto)    │  ← .gitmodules로 자동 발견
+│   shared-lib  (manual)         [×] │  ← 제거 버튼
+│ + Add manual repo                  │  ← fs dialog → manual_repos_by_main에 push
+├────────────────────────────────────┤
+│ ▸ Per-repo overrides (1)           │  ← disclosure, 평소 닫힘
+└────────────────────────────────────┘
+```
+
+- "Workspace repos" 섹션은 §13.3(A,B,C)의 multi-root UI가 이 popover로 흡수된 결과
+- 원래 §13.7에서 InputBar에 두려던 "+ Add repo" 버튼과 "Per-repo overrides" disclosure는 모두 여기로 이동
+- popover는 click outside / Esc로 닫힘
+
+#### 13.12.3 동작
+
+- chip 클릭 → popover open. 검색 input에 자동 focus
+- recent 항목 클릭 → 즉시 main repo 전환 (현재 `loadRepo` 흐름 재사용)
+- 검색 입력 후 Enter → 첫 매칭 항목으로 전환. 매칭 없고 입력이 절대 경로면 그 경로로 시도 (현재 free-form 입력 기능 흡수)
+- "Browse folder…" → 기존 `@tauri-apps/plugin-dialog::open({directory:true})`
+- "Add manual repo" → 같은 dialog지만 결과를 `appState.repos[]`에 append + persist
+- 찾은 repo는 `addRecentRepo`로 자동 persist (현재 동작 그대로)
+
+#### 13.12.4 구현
+
+새 컴포넌트 `RepoChip.svelte`:
+- prop 없이 `appState`만 참조
+- 내부 상태: `open: boolean`, `filter: string`
+- 내부에 `Popover.svelte` (또는 기존 `Dropdown.svelte` 패턴 재사용 검토)
+
+`InputBar.svelte` 변경:
+- `.path` input + `<datalist>` + Browse 버튼 제거
+- mode-bar에 `<RepoChip />` 추가
+- onMount의 drag-drop 핸들러는 그대로 유지
+
+스타일:
+- chip은 `.mode-toggle` 버튼들과 시각적으로 같은 레벨 (높이/border-radius 일치)
+- 팝오버는 기존 `--input-bg` / `--border` 토큰 사용
+
+#### 13.12.5 작업 규모 (§13.9에 추가)
+
+| 단계 | 작업 | 예상 |
+|---|---|---|
+| 9 | RepoChip + popover (검색/recent/Browse/manual repos/overrides 통합) | 1일 |
+
+→ §13 총합: **~6~7일**
+
+- Focus 키바인드 (헤더 클릭 외) — 사용해 보고 결정
+- 수동 repo 제거 시 confirm dialog 필요 여부 — 단순 토글로 시작
+- Submodule pointer만 바뀐 그룹의 시각 처리 톤 — 디자인 단계에서 조정
+- `recent_repos` 와 `manual_repos_by_main`의 cleanup 정책 (오래된 main path 만료) — 일단 무한 보관

@@ -4,7 +4,10 @@ pub mod store;
 
 use std::path::Path;
 
-use git::{Blame, Branch, ChangedFile, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer};
+use git::{
+    Blame, Branch, ChangedFile, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer,
+    SubmoduleInfo,
+};
 use store::{PersistedState, StoreError};
 
 #[tauri::command]
@@ -150,6 +153,24 @@ fn blame_file(
 }
 
 #[tauri::command]
+fn list_submodules(
+    state: tauri::State<GitCli>,
+    path: String,
+) -> Result<Vec<SubmoduleInfo>, GitError> {
+    state.list_submodules(Path::new(&path))
+}
+
+#[tauri::command]
+fn submodule_sha_at(
+    state: tauri::State<GitCli>,
+    path: String,
+    tree_ish: String,
+    submodule_path: String,
+) -> Result<Option<String>, GitError> {
+    state.submodule_sha_at(Path::new(&path), &tree_ish, &submodule_path)
+}
+
+#[tauri::command]
 fn load_state(app: tauri::AppHandle) -> Result<PersistedState, StoreError> {
     store::load(&app)
 }
@@ -196,6 +217,8 @@ pub fn run() {
             blame_file,
             list_repo_files,
             read_repo_file,
+            list_submodules,
+            submodule_sha_at,
             load_state,
             add_recent_repo,
             remove_recent_repo,
