@@ -9,7 +9,7 @@ import {
   validateRepo,
 } from "./git";
 import { compare } from "./compare";
-import type { RepoEntry, RepoFile } from "./types";
+import type { Branch, RepoEntry, RepoFile } from "./types";
 
 /**
  * Last path component, OS-agnostic. Trims trailing slashes so paths like
@@ -86,6 +86,36 @@ export async function buildWorkspace(
   }
 
   return repos;
+}
+
+/**
+ * Lazy-load and cache `git for-each-ref` output for the repo at `idx`. Used
+ * by BranchPicker to populate the dropdown for non-main repos (main is
+ * mirrored into the cache at load time by loadMainRepo). Failures are
+ * non-fatal — returns an empty list so the picker can still accept
+ * free-text input.
+ */
+export async function loadBranchesFor(idx: number): Promise<Branch[]> {
+  if (appState.branchesByRepoIdx[idx]) {
+    return appState.branchesByRepoIdx[idx];
+  }
+  const repo = appState.repos[idx];
+  if (!repo) return [];
+  try {
+    const branches = await listRefs(repo.path);
+    appState.branchesByRepoIdx = {
+      ...appState.branchesByRepoIdx,
+      [idx]: branches,
+    };
+    return branches;
+  } catch (e) {
+    console.warn(`listRefs failed for ${repo.path}:`, e);
+    appState.branchesByRepoIdx = {
+      ...appState.branchesByRepoIdx,
+      [idx]: [],
+    };
+    return [];
+  }
 }
 
 /**
@@ -173,11 +203,15 @@ export async function loadMainRepo(path: string): Promise<void> {
     appState.repos = await buildWorkspace(path, manualPaths);
     appState.activeRepoIdx = null;
     appState.collapsedRepos = new Set();
+    appState.branchesByRepoIdx = {};
     const [branches, recentRepos] = await Promise.all([
       listRefs(path),
       addRecentRepo(path),
     ]);
     appState.branches = branches;
+    // Mirror main's branches into the per-repo cache so BranchPicker can
+    // pull from one source regardless of which repo is focused.
+    appState.branchesByRepoIdx = { 0: branches };
     appState.recentRepos = recentRepos;
     // Working tree mode has no inputs to fill in — load immediately so the
     // user sees their uncommitted changes on repo open.

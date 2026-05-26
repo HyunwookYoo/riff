@@ -1,10 +1,15 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { clearRepoOverride, setRepoOverride } from "$lib/workspace";
+  import {
+    clearRepoOverride,
+    loadBranchesFor,
+    setRepoOverride,
+  } from "$lib/workspace";
+  import BranchPicker from "./BranchPicker.svelte";
 
-  // When Focus targets a non-main repo, the toolbar inputs become an
+  // When Focus targets a non-main repo, the toolbar pickers become an
   // editor for *that* repo's per-repo override (§13.3 #9). Otherwise the
-  // inputs drive main's start/target as before.
+  // pickers drive main's start/target as before.
   const activeRepo = $derived.by(() => {
     const idx = appState.activeRepoIdx;
     if (idx === null) return null;
@@ -13,71 +18,85 @@
     return { idx, repo: r };
   });
 
-  // Draft inputs used only while editing a non-main repo. The current
-  // override (or "") is loaded into them whenever the active target
-  // changes; commit-on-blur / Enter pushes them through setRepoOverride.
-  let draftStart = $state("");
-  let draftTarget = $state("");
-  let activeKey = $state<string | null>(null);
-
-  $effect(() => {
-    const next = activeRepo;
-    const key = next ? next.repo.path : null;
-    if (key !== activeKey) {
-      activeKey = key;
-      draftStart = next?.repo.override?.startBranch ?? "";
-      draftTarget = next?.repo.override?.targetBranch ?? "";
-    }
+  // Branches for the picker. Main reads from appState.branches directly;
+  // non-main repos lazy-load on first focus and cache by idx.
+  const branchesForActive = $derived.by(() => {
+    if (!activeRepo) return appState.branches;
+    return appState.branchesByRepoIdx[activeRepo.idx] ?? [];
   });
 
-  // Placeholder text reflects the fall-through behavior so an empty input
-  // isn't mysterious — it shows what would happen if the user committed
-  // empty refs (which is rejected; see commitOverride).
-  function startPlaceholder(): string {
-    if (!activeRepo) return "start (branch / commit / tag)";
-    if (activeRepo.repo.kind === "submodule") return "start (follow gitlinks)";
-    return `start (default: ${appState.startBranch || "—"})`;
-  }
-  function targetPlaceholder(): string {
-    if (!activeRepo) return "target";
-    if (activeRepo.repo.kind === "submodule") return "target (follow gitlinks)";
-    return `target (default: ${appState.targetBranch || "—"})`;
-  }
+  // Trigger lazy-fetch whenever a non-main repo becomes active.
+  $effect(() => {
+    if (activeRepo) void loadBranchesFor(activeRepo.idx);
+  });
 
-  function commitOverride() {
-    if (!activeRepo) return;
-    const s = draftStart.trim();
-    const t = draftTarget.trim();
-    if (!s || !t) return;
-    setRepoOverride(activeRepo.idx, s, t);
+  function setStart(v: string) {
+    if (activeRepo) {
+      setRepoOverride(activeRepo.idx, v, activeRepo.repo.override?.targetBranch ?? "");
+    } else {
+      appState.startBranch = v;
+    }
+  }
+  function setTarget(v: string) {
+    if (activeRepo) {
+      setRepoOverride(activeRepo.idx, activeRepo.repo.override?.startBranch ?? "", v);
+    } else {
+      appState.targetBranch = v;
+    }
   }
 
   function resetActive() {
     if (!activeRepo) return;
-    draftStart = "";
-    draftTarget = "";
     clearRepoOverride(activeRepo.idx);
   }
+
+  // Picker value for the active context. For main, mirror appState directly;
+  // for non-main, prefer the saved override (committed value) so the trigger
+  // matches what compare actually runs with.
+  const startValue = $derived(
+    activeRepo
+      ? activeRepo.repo.override?.startBranch ?? ""
+      : appState.startBranch,
+  );
+  const targetValue = $derived(
+    activeRepo
+      ? activeRepo.repo.override?.targetBranch ?? ""
+      : appState.targetBranch,
+  );
+
+  const startPlaceholder = $derived(
+    activeRepo
+      ? activeRepo.repo.kind === "submodule"
+        ? "follow gitlinks"
+        : `default: ${appState.startBranch || "—"}`
+      : "start",
+  );
+  const targetPlaceholder = $derived(
+    activeRepo
+      ? activeRepo.repo.kind === "submodule"
+        ? "follow gitlinks"
+        : `default: ${appState.targetBranch || "—"}`
+      : "target",
+  );
 </script>
 
+<BranchPicker
+  value={startValue}
+  options={branchesForActive}
+  placeholder={startPlaceholder}
+  onchange={setStart}
+  title="Start ref (branch / commit / tag)"
+/>
+<span class="sep">→</span>
+<BranchPicker
+  value={targetValue}
+  options={branchesForActive}
+  placeholder={targetPlaceholder}
+  onchange={setTarget}
+  title="Target ref"
+/>
+
 {#if activeRepo}
-  <input
-    type="text"
-    class="ref"
-    placeholder={startPlaceholder()}
-    bind:value={draftStart}
-    onkeydown={(e) => e.key === "Enter" && commitOverride()}
-    onblur={commitOverride}
-  />
-  <span class="sep">→</span>
-  <input
-    type="text"
-    class="ref"
-    placeholder={targetPlaceholder()}
-    bind:value={draftTarget}
-    onkeydown={(e) => e.key === "Enter" && commitOverride()}
-    onblur={commitOverride}
-  />
   {#if activeRepo.repo.override}
     <button
       type="button"
@@ -89,27 +108,6 @@
     </button>
   {/if}
 {:else}
-  <input
-    type="text"
-    class="ref"
-    list="branch-list"
-    placeholder="start (branch / commit / tag)"
-    bind:value={appState.startBranch}
-  />
-  <span class="sep">→</span>
-  <input
-    type="text"
-    class="ref"
-    list="branch-list"
-    placeholder="target"
-    bind:value={appState.targetBranch}
-  />
-  <datalist id="branch-list">
-    {#each appState.branches as b (b.name + b.kind)}
-      <option value={b.name}>{b.kind}</option>
-    {/each}
-  </datalist>
-
   <select bind:value={appState.mode} title="Diff mode">
     <option value="three-dot">3-dot (...)</option>
     <option value="two-dot">2-dot (..)</option>
@@ -117,15 +115,6 @@
 {/if}
 
 <style>
-  .ref {
-    width: 180px;
-    font-size: 0.9em;
-    padding: 4px 8px;
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    background: var(--input-bg);
-    color: inherit;
-  }
   .sep {
     opacity: 0.6;
   }

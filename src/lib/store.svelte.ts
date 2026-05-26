@@ -62,6 +62,10 @@ class AppState {
   // Per-repo collapse state (§13.3 #14). repos[idx] collapsed if idx in set.
   // Files in collapsed repos are skipped by j/k navigation. Session-only.
   collapsedRepos = $state(new Set<number>());
+  // Lazy-loaded branch list per repo idx for the BranchPicker dropdown.
+  // Main is mirrored from `branches` (repos[0]) on load. Cleared on repo
+  // switch by InputBar.
+  branchesByRepoIdx = $state<Record<number, Branch[]>>({});
 }
 
 export const appState = new AppState();
