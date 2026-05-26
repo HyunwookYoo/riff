@@ -201,6 +201,11 @@ fn set_compare_mode(app: tauri::AppHandle, mode: String) -> Result<(), StoreErro
 }
 
 #[tauri::command]
+fn set_workspace_layout(app: tauri::AppHandle, layout: String) -> Result<(), StoreError> {
+    store::set_workspace_layout(&app, layout)
+}
+
+#[tauri::command]
 fn add_manual_repo(
     app: tauri::AppHandle,
     main_repo: String,
@@ -243,6 +248,7 @@ pub fn run() {
             set_theme,
             set_font_size,
             set_compare_mode,
+            set_workspace_layout,
             add_manual_repo,
             remove_manual_repo,
         ])

@@ -57,6 +57,19 @@ Windows 데스크톱용 경량 Git diff 뷰어. 두 ref(브랜치/태그/커밋)
 
 Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일이 속한 repo에서 blame이 수행되고, drill-in으로 들어간 커밋도 자동으로 해당 repo로 Focus됩니다 (`Esc` 로 원래 멀티 루트 뷰 복원).
 
+#### Tabs 레이아웃 (Fork식, 선택지)
+기본은 위에 설명한 **Unified** 레이아웃(그룹 헤더 + Focus)이지만, Fork/GitKraken 스타일 탭 UI가 익숙하다면 chip 팝오버 하단의 **Layout: Tabs** 를 선택할 수 있습니다.
+
+- 상단에 repo별 탭바가 나타나고, 한 번에 한 repo의 파일만 평면 리스트로 표시됩니다.
+- 탭마다 **refs는 독립** (§13 `override` 활용) — submodule 탭이 active일 때 상단 BranchPicker는 그 repo의 override를 편집합니다.
+- 탭 전환 시 **마지막 보던 파일과 스크롤 위치 복원** — 빠른 컨텍스트 스위치.
+- compareMode(Branch / Working Tree)는 글로벌입니다 — 한 번 정한 모드가 모든 탭에 일관 적용.
+- 탭 키바인드: **`Ctrl+Tab` / `Ctrl+Shift+Tab`** (다음/이전), **`Ctrl+1~9`** (직접 점프).
+- manual repo는 탭 우측 `×` 로 워크스페이스에서 제거. main과 submodule은 닫기 없음.
+- **모드 전환 시**: Unified→Tabs는 현재 선택 파일의 repo 탭이 활성화됩니다. Tabs→Unified는 Focus가 풀려 전체 multi-root 뷰로 돌아갑니다. selectedFile, drill-in 히스토리, blame 상태 모두 보존.
+
+설정은 글로벌이며 다음 실행에도 유지됩니다.
+
 ---
 
 ## 2. Branch 모드 — 두 ref 비교
@@ -176,6 +189,8 @@ Blame 팝오버 또는 커밋 패널에서 **View commit →** / **`→`** 를 �
 | `Ctrl+F` | 현재 파일에서 검색 |
 | `Ctrl+G` | 라인 번호로 점프 |
 | `F5` / `Ctrl+R` | Working Tree 새로고침 (Branch 모드에선 무동작) |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | (Tabs 레이아웃) 다음 / 이전 탭 |
+| `Ctrl+1` ~ `Ctrl+9` | (Tabs 레이아웃) 해당 인덱스 탭으로 직접 점프 |
 
 ### Blame 모드
 | 키 | 동작 |

@@ -10,6 +10,7 @@ import type {
   PersistedState,
   SubmoduleInfo,
   ThemeChoice,
+  WorkspaceLayout,
 } from "./types";
 
 export function validateRepo(path: string): Promise<void> {
@@ -38,6 +39,10 @@ export function setFontSize(size: number): Promise<void> {
 
 export function setCompareMode(mode: CompareMode): Promise<void> {
   return invoke("set_compare_mode", { mode });
+}
+
+export function setWorkspaceLayout(layout: WorkspaceLayout): Promise<void> {
+  return invoke("set_workspace_layout", { layout });
 }
 
 export function listRefs(path: string): Promise<Branch[]> {

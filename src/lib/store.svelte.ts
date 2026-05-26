@@ -9,7 +9,17 @@ import type {
   RepoFile,
   ThemeChoice,
   ViewMode,
+  WorkspaceLayout,
 } from "./types";
+
+/// Per-tab UI memory (§14.2, Step 7). When the user switches tabs, the
+/// previously active tab's selectedFile and CodeMirror scroll position are
+/// restored. `scrollPos` is the scroll offset in pixels for the DiffView
+/// scroller; undefined means "scroll to top" on restore.
+export interface TabMemoryEntry {
+  filePath: string | null;
+  scrollPos?: number;
+}
 
 class AppState {
   repoPath = $state("");
@@ -70,6 +80,14 @@ class AppState {
   // Main is mirrored from `branches` (repos[0]) on load. Cleared on repo
   // switch by InputBar.
   branchesByRepoIdx = $state<Record<number, Branch[]>>({});
+  // Workspace layout (§14). "unified" = §13 multi-root view; "tabs" = Fork-
+  // style tab bar. Mirrored from PersistedState.workspace_layout on load and
+  // written back via setWorkspaceLayout() in git.ts.
+  workspaceLayout = $state<WorkspaceLayout>("unified");
+  // Per-tab UI memory (§14.2). Keyed by repoIdx. Populated when the user
+  // selects a file or scrolls; consumed on tab switch to restore the prior
+  // view. Session-only — not persisted.
+  tabMemory = $state<Map<number, TabMemoryEntry>>(new Map());
 }
 
 export const appState = new AppState();

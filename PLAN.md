@@ -880,3 +880,134 @@ main-bar:    [start] [target] [Compare]
 - 수동 repo 제거 시 confirm dialog 필요 여부 — 단순 토글로 시작
 - Submodule pointer만 바뀐 그룹의 시각 처리 톤 — 디자인 단계에서 조정
 - `recent_repos` 와 `manual_repos_by_main`의 cleanup 정책 (오래된 main path 만료) — 일단 무한 보관
+
+---
+
+## 14. v0.4.x — Tab 레이아웃 (Fork식) 선택지 상세 설계
+
+> grill-me 인터뷰(2026-05-27)를 통해 합의된 v0.4.x 핵심 기능 설계.
+> 동기: Unified multi-root + Focus가 기본이지만, Fork식 탭 패러다임이 익숙한 유저에게 opt-in 선택지를 제공한다. §13.1에서 일단 기각했던 Tabs를 *대체*가 아닌 *추가 모드*로 부활.
+
+### 14.1 포지셔닝
+
+- **기본 모드는 그대로 Unified** (§13). 신규 사용자/대다수 케이스 변화 없음
+- Tab 모드는 **opt-in 글로벌 토글**. 한 번 켜면 모든 workspace에 적용
+- 동기 (b) compareMode 분리 + (c) 탭 간 빠른 컨텍스트 스위치. (a) 시선 분리, (d) 머슬 메모리는 부수효과
+- Dual-architecture가 아닌 *view 분기*. 같은 `repos[]` / 같은 fetch 로직 / 같은 history·blame 스택. UI 렌더와 일부 ctx 바인딩만 분기
+
+### 14.2 탭별 분리되는 상태 vs 글로벌 유지
+
+> **갱신 (2026-05-27)**: 초기 설계에서 compareMode를 탭별 분리하기로 했으나, 실제 사용 후 사용자가 글로벌 유지로 변경 요청. 정해진 모드가 탭 전환에도 일관되게 적용되는 쪽이 멘탈 모델 단순. (b) 동기 중 refs 독립은 §13의 `RepoEntry.override`로 이미 충족되고 있어 Tab 모드만의 가치는 (c)에 집중.
+
+| 상태 | 탭별 분리 | 근거 |
+|---|---|---|
+| refs (start/target) | ✅ | §13 `RepoEntry.override` 재활용 (Tab 모드 한정 아님). main은 `appState.startBranch/targetBranch` 유지 |
+| selectedFile | ✅ | (c) 핵심. 탭 전환 시 마지막 보던 파일 복원 |
+| scroll/cursor 위치 | ✅ | (c) 핵심. CodeMirror state 보존 |
+| compareMode | ❌ | 글로벌. 한 번 정한 mode가 모든 탭에 일관 적용 (사용자 요청) |
+| viewMode (side/unified) | ❌ | 거의 안 바뀜. 글로벌 |
+| mode (three/two-dot) | ❌ | 거의 안 바뀜. 글로벌 |
+| ignoreWhitespace | ❌ | 글로벌 유지 |
+| theme / fontSize | ❌ | 글로벌 |
+| history / forwardHistory | ❌ | 마우스 X1/X2 일관성. 탭 전환과 drill-in은 별개 |
+| blameTarget | ❌ | file-qualified로 이미 충분. blame 진입 시 해당 repo 탭으로 점프 |
+
+### 14.3 UI 결정
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 1 | 레이아웃 | 탭바를 상단에 가로 줄로 배치. FileList는 활성 탭의 파일만 평면 렌더. 그룹 헤더 숨김 |
+| 2 | main 위치 | 항상 맨 왼쪽 고정 |
+| 3 | 탭 순서 | workspace 순서 그대로 (main → submodule(.gitmodules 순서) → manual(add 순서)). 사용자 reorder 없음 |
+| 4 | 탭 닫기 | manual만 ×. submodule/main은 닫기 없음 (§13 그룹 헤더 ×와 동일) |
+| 5 | 빈 탭 (변경 0) | 표시함. 라벨 dim 톤. compareMode 전환 가능성 있어 접근 경로 유지 |
+| 6 | 탭 라벨 | `displayName + kind 뱃지 + 파일 수`. 활성 탭은 강조. compareMode 글로벌이라 per-탭 mode 인디케이터(`·w`) 없음. submodule `<oldSha>→<newSha>`는 라벨 밖(FileList 상단 또는 InputBar 옆 작은 영역) |
+| 7 | Focus 버튼 (`→`) | Tab 모드일 때 그룹 헤더 자체가 없어 자동으로 사라짐. Focus 개념 무효화 |
+| 8 | RepoChip | 그대로 유지 (repo 관리, browse, manual 추가) |
+
+### 14.4 InputBar 바인딩
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 9 | refs 바인딩 | 활성 탭의 refs (main → `appState.startBranch/targetBranch`, 그 외 → `repos[idx].override`) |
+| 10 | compareMode 토글 | 글로벌. 클릭 시 모든 탭에 동일 적용 |
+| 11 | 탭 전환 시 | InputBar의 BranchPicker 값이 즉시 활성 탭 refs로 갱신. compareMode는 글로벌이라 변하지 않음 |
+| 12 | main의 override 통일? | 안 함. main은 `appState.startBranch/targetBranch` 그대로 (surgical). 분기 한 줄로 처리 |
+
+### 14.5 토글 위치 / 영구화
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 13 | Scope | 글로벌. `PersistedState.workspace_layout: "unified" | "tabs"` 추가 (default `"unified"`) |
+| 14 | 토글 UI | RepoChip popover 하단 ("Layout: Unified / Tabs" 세그먼트). workspace 컨텍스트와 의미적으로 묶임 |
+| 15 | mid-session 전환 (U→T) | `selectedFile.repoIdx` 탭 활성화. selectedFile 없으면 main 탭 |
+| 16 | mid-session 전환 (T→U) | `activeRepoIdx = null` (multi-root 전체 보기). selectedFile 유지 |
+| 17 | history / blameTarget | 모드 전환 시 보존 |
+
+### 14.6 동작 디테일
+
+| # | 항목 | 결정 |
+|---|---|---|
+| 18 | Drill-in | 활성 탭 내부에서 수행. 글로벌 history에 push. 마우스 X1 → 같은 탭의 이전 ctx 복원. drill 대상이 다른 repo면 그 repo 탭으로 점프 + push |
+| 19 | Blame 진입 | 글로벌 blame 모드. 파일 클릭 시 `blameTarget.repoIdx` 탭 활성화 (compare 복귀 시) |
+| 20 | Fetch 전략 | **Eager**. Unified와 동일하게 모든 repo의 changed files를 미리 가져옴. 탭 전환 latency 0 보장 — (c) 동기 핵심 |
+| 21 | 키보드 | `Ctrl+Tab` / `Ctrl+Shift+Tab` 다음/이전 탭. `Ctrl+1..9` 직접 점프. Unified일 땐 비활성. 화살표(파일 이동)와 충돌 없음 |
+| 22 | activeRepoIdx 의미 | Tab 모드일 땐 항상 number (현재 탭). null로 떨어지지 않음. Unified일 땐 기존 의미(null=multi-root) 그대로 |
+
+### 14.7 모델 변화 요약
+
+**`types.ts`:**
+
+```ts
+export interface RepoEntry {
+  path: string;
+  kind: RepoKind;
+  displayName: string;
+  parentGitlinkPath?: string;
+  override?: { startBranch: string; targetBranch: string };
+}
+
+export interface PersistedState {
+  // ...기존 필드
+  workspace_layout: "unified" | "tabs";  // ← 추가 (default "unified")
+}
+```
+
+> Note: 초기 설계에는 `RepoEntry.compareMode?` 도 있었으나 §14.2 갱신으로 제거.
+
+**`store.svelte.ts` 신규 필드:**
+
+```ts
+workspaceLayout = $state<"unified" | "tabs">("unified");
+// 탭별 selectedFile/scroll 메모리. Map<repoIdx, {filePath, scrollPos}>
+tabMemory = $state<Map<number, { filePath: string; scrollPos?: number }>>(new Map());
+```
+
+`activeRepoIdx`는 재활용 (Tab 모드 = 항상 number, Unified 모드 = null|number 기존 의미).
+
+### 14.8 작업 단계 (Step 1~10)
+
+| Step | 작업 | 의존 | 예상 |
+|---|---|---|---|
+| 1 | PersistedState/store: `workspace_layout`, `RepoEntry.compareMode?`, `tabMemory` 추가 | — | 0.5일 |
+| 2 | RepoChip popover에 Layout 토글 (상태만 토글, 아직 UI 미반응) | 1 | 0.5일 |
+| 3 | `TabBar.svelte` 신규 — 활성 탭 강조, 클릭 → `activeRepoIdx` 갱신 | 1 | 0.5일 |
+| 4 | FileList 분기 — tabMode일 때 활성 탭 파일만 평면 렌더, 그룹 헤더/Focus 버튼 숨김 | 3 | 0.5일 |
+| 5 | InputBar/BranchModeFields 분기 — 활성 탭 refs + compareMode 바인딩, 탭 전환 시 자동 갱신 | 3 | 1일 |
+| 6 | compare.ts — 탭별 compareMode 라우팅 (eager fetch 유지, repo별 mode 적용) | 1 | 0.5일 |
+| 7 | selectedFile + scroll per-tab 메모리 — 탭 전환 시 복원 | 3,4 | 0.5일 |
+| 8 | 키보드 단축키 (Ctrl+Tab / Shift+Tab / 1~9) — Unified일 땐 비활성 | 3 | 0.5일 |
+| 9 | mid-session 전환 동작 (U→T: selectedFile 따라 / T→U: multi-root 풀기) | 2~7 | 0.5일 |
+| 10 | PLAN.md §14 finalize + README 업데이트 + manual 테스트 | 1~9 | 0.5일 |
+
+**총합: ~5일**
+
+### 14.9 Skip / Edge cases
+
+- 사용자 탭 reorder — 안 함 (workspace 정의 순서)
+- 탭 우클릭 메뉴 (rename, duplicate 등) — 안 함
+- 탭 모드에서 `submodule pointer만 바뀜` 표시 위치 — 라벨 부담 커서 FileList 상단으로 옮김. 구현 시 디자인 조정
+- main의 override 통일 — 보류. Surgical 분기로 충분
+- 탭 모드 + Focus 키바인드 — 키바인드 자체가 Unified 전용. 충돌 없음
+- 탭별 ignoreWhitespace — 글로벌 유지로 결정 (가치 낮음)
+- Compact 단축 표시 — kind 뱃지를 색만으로 처리하는 방안은 디자인 단계에서 검토

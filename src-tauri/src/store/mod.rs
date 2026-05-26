@@ -27,6 +27,11 @@ pub struct PersistedState {
     /// extra repos. Submodules are auto-discovered and not stored here.
     #[serde(default)]
     pub manual_repos_by_main: HashMap<String, Vec<String>>,
+    /// Workspace layout choice (§14.5 #13): "unified" (default) shows all
+    /// repos in one grouped picker; "tabs" shows one repo at a time via a
+    /// Fork-style tab bar. Global, applies to every workspace.
+    #[serde(default = "default_workspace_layout")]
+    pub workspace_layout: String,
 }
 
 fn default_theme() -> String {
@@ -41,6 +46,10 @@ fn default_compare_mode() -> String {
     "branch".into()
 }
 
+fn default_workspace_layout() -> String {
+    "unified".into()
+}
+
 impl Default for PersistedState {
     fn default() -> Self {
         Self {
@@ -49,6 +58,7 @@ impl Default for PersistedState {
             font_size: default_font_size(),
             compare_mode: default_compare_mode(),
             manual_repos_by_main: HashMap::new(),
+            workspace_layout: default_workspace_layout(),
         }
     }
 }
@@ -130,6 +140,12 @@ pub fn set_font_size(app: &AppHandle, size: u8) -> Result<(), StoreError> {
 pub fn set_compare_mode(app: &AppHandle, mode: String) -> Result<(), StoreError> {
     let mut state = load(app)?;
     state.compare_mode = mode;
+    save(app, &state)
+}
+
+pub fn set_workspace_layout(app: &AppHandle, layout: String) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    state.workspace_layout = layout;
     save(app, &state)
 }
 

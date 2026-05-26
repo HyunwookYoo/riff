@@ -163,6 +163,20 @@
       });
       setActiveDiffView(unifiedView);
     }
+
+    // §14.2 Step 7: restore the scroll position saved when the user last
+    // left this file's tab. Only applies when this file matches the tab's
+    // remembered file — switching to a different file resets to top.
+    const mem = appState.tabMemory.get(file.repoIdx ?? 0);
+    if (mem?.filePath === file.path && typeof mem.scrollPos === "number") {
+      const view = mergeView?.b ?? unifiedView;
+      if (view) {
+        const top = mem.scrollPos;
+        requestAnimationFrame(() => {
+          view.scrollDOM.scrollTop = top;
+        });
+      }
+    }
   }
 
   function teardown() {

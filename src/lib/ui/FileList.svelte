@@ -13,6 +13,11 @@
     repo: RepoEntry;
     files: ChangedFile[];
   }
+  // §14: in Tabs layout, only the active tab's files are shown and the group
+  // header / Focus button are suppressed. activeRepoIdx falls back to 0 until
+  // Step 9 wires the mid-session transition.
+  const isTabMode = $derived(appState.workspaceLayout === "tabs");
+  const activeTabIdx = $derived(appState.activeRepoIdx ?? 0);
   const groups = $derived.by((): Group[] => {
     const buckets = new Map<number, ChangedFile[]>();
     for (const f of appState.files) {
@@ -25,11 +30,13 @@
       bucket.push(f);
     }
     // Iterate repos in their workspace order so the layout is stable.
-    // When Focus is active (§13.3 #15), only the active repo's group is
-    // emitted — the others are hidden until Esc / header re-click.
+    // Unified + Focus: emit only the active repo's group when activeRepoIdx
+    // is non-null. Tabs: always emit only the active tab.
     const out: Group[] = [];
     for (let i = 0; i < appState.repos.length; i++) {
-      if (
+      if (isTabMode) {
+        if (i !== activeTabIdx) continue;
+      } else if (
         appState.activeRepoIdx !== null &&
         appState.activeRepoIdx !== i
       ) {
@@ -39,7 +46,10 @@
     }
     return out;
   });
-  const showGroups = $derived(appState.repos.length > 1);
+  // Group header is shown only in Unified multi-root view. In Tab mode the
+  // active repo is conveyed by the tab bar above, so the header would be
+  // redundant noise.
+  const showGroups = $derived(!isTabMode && appState.repos.length > 1);
 
   // Tree-mode local state. Directory collapses are keyed by `<repoIdx>:<path>`
   // so the same path in two repos doesn't share a collapse state.
@@ -100,12 +110,24 @@
         return "manual";
     }
   }
+
+  // Header count: in Tab mode the user is looking at one repo, so show that
+  // repo's file count rather than the workspace-wide total. Empty-state check
+  // mirrors the same scope.
+  const visibleFileCount = $derived.by<number>(() => {
+    if (!isTabMode) return appState.files.length;
+    let n = 0;
+    for (const f of appState.files) {
+      if ((f.repoIdx ?? 0) === activeTabIdx) n++;
+    }
+    return n;
+  });
 </script>
 
 <aside class="file-list">
   <header>
     <span>Files</span>
-    <span class="count">{appState.files.length}</span>
+    <span class="count">{visibleFileCount}</span>
     {#if appState.loadingFiles && appState.files.length > 0}
       <span class="scanning">Scanning…</span>
     {/if}
@@ -120,7 +142,7 @@
   </header>
 
   <div class="scroll">
-    {#if appState.files.length === 0 && !appState.loadingFiles}
+    {#if visibleFileCount === 0 && !appState.loadingFiles}
       <div class="empty">No changed files.</div>
     {/if}
 

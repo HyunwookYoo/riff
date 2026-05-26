@@ -6,7 +6,8 @@
     loadMainRepo,
     removeManualRepoFromWorkspace,
   } from "$lib/workspace";
-  import type { RepoEntry } from "$lib/types";
+  import { setWorkspaceLayout } from "$lib/git";
+  import type { RepoEntry, WorkspaceLayout } from "$lib/types";
 
   let open_ = $state(false);
   let filter = $state("");
@@ -114,6 +115,29 @@
         return "submodule";
       case "manual":
         return "manual";
+    }
+  }
+
+  // §14 Step 2: pick a layout. Step 9 wires the mid-session transition
+  // (§14.5 #15-16): Unified → Tabs activates the tab containing the currently
+  // selected file (or main when nothing is selected). Tabs → Unified releases
+  // Focus so the user sees the full multi-root view again. selectedFile,
+  // history, blame state are preserved either direction.
+  async function pickLayout(layout: WorkspaceLayout) {
+    if (appState.workspaceLayout === layout) return;
+    if (layout === "tabs") {
+      appState.activeRepoIdx =
+        appState.repos.length === 0
+          ? null
+          : (appState.selectedFile?.repoIdx ?? 0);
+    } else {
+      appState.activeRepoIdx = null;
+    }
+    appState.workspaceLayout = layout;
+    try {
+      await setWorkspaceLayout(layout);
+    } catch {
+      // Persistence failure is non-fatal — state stays for this session.
     }
   }
 </script>
@@ -229,6 +253,30 @@
           {/if}
         </div>
       {/if}
+
+      <div class="section">
+        <div class="section-title">Layout</div>
+        <div class="layout-toggle" role="group" aria-label="Workspace layout">
+          <button
+            type="button"
+            class="seg"
+            class:active={appState.workspaceLayout === "unified"}
+            onclick={() => void pickLayout("unified")}
+            title="All repos in one grouped list with Focus toggle"
+          >
+            Unified
+          </button>
+          <button
+            type="button"
+            class="seg"
+            class:active={appState.workspaceLayout === "tabs"}
+            onclick={() => void pickLayout("tabs")}
+            title="Fork-style tab bar — one repo at a time"
+          >
+            Tabs
+          </button>
+        </div>
+      </div>
     </div>
   {/if}
 </div>
@@ -430,5 +478,33 @@
   .override-dot {
     color: var(--accent);
     font-size: 0.7em;
+  }
+  .layout-toggle {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 0 4px;
+  }
+  .layout-toggle .seg {
+    flex: 1;
+    background: transparent;
+    color: inherit;
+    border: none;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 0.85em;
+  }
+  .layout-toggle .seg:hover {
+    background: var(--hover);
+  }
+  .layout-toggle .seg.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .layout-toggle .seg + .seg {
+    border-left: 1px solid var(--border);
   }
 </style>

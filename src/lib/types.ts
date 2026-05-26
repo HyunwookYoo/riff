@@ -51,6 +51,11 @@ export type ThemeChoice = "system" | "light" | "dark";
 
 export type CompareMode = "branch" | "worktree";
 
+/// Workspace layout choice (§14). "unified" is the §13 multi-root view with
+/// repo group headers + Focus toggle; "tabs" is the opt-in Fork-style tab
+/// bar where one repo is visible at a time.
+export type WorkspaceLayout = "unified" | "tabs";
+
 /// Top-level workspace mode. `compare` covers branch + worktree diff (the
 /// sub-mode is `CompareMode`); `blame` is the standalone blame workspace.
 /// Session-only — never persisted.
@@ -64,6 +69,8 @@ export interface PersistedState {
   /// Per-main-repo list of manually added extra repos (§13.3 #5).
   /// Submodules are not stored here — they're rediscovered from .gitmodules.
   manual_repos_by_main: Record<string, string[]>;
+  /// Workspace layout (§14.5 #13). Global. Defaults to "unified".
+  workspace_layout: WorkspaceLayout;
 }
 
 /// A repo-qualified file path. Used by the unified blame picker

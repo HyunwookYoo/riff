@@ -8,6 +8,7 @@
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
+  import TabBar from "$lib/ui/TabBar.svelte";
   import TitleBar from "$lib/ui/TitleBar.svelte";
   import { appState } from "$lib/store.svelte";
   import { loadState } from "$lib/git";
@@ -15,6 +16,7 @@
   import { compare, cycleAppMode } from "$lib/compare";
   import { popHistory, redoHistory } from "$lib/history";
   import { exitFocus } from "$lib/focus";
+  import { cycleTab, selectTab } from "$lib/tabs";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
   import { adjustFontSize, applyFontSize, resetFontSize } from "$lib/font";
   import { getActiveDiffView } from "$lib/diff/activeView";
@@ -31,6 +33,7 @@
       appState.fontSize = s.font_size;
       appState.compareMode = s.compare_mode;
       appState.manualReposByMain = s.manual_repos_by_main ?? {};
+      appState.workspaceLayout = s.workspace_layout ?? "unified";
     } catch {
       // First-run / corrupt state: keep defaults silently.
     }
@@ -59,19 +62,36 @@
   // Auto-refresh on window focus when viewing the working tree: the user
   // probably just came back from editing files in another window. Silent so a
   // transient git error doesn't flash an error banner.
+  //
+  // Only refresh when the window was actually blurred for a meaningful time.
+  // WebView2 on Windows emits blur/focus *pairs* during window drag/resize —
+  // they flip in well under 100ms — and we don't want a real worktree scan
+  // running for those. A 500ms threshold cleanly separates real Alt-Tab/click-
+  // -away switches (typically 500ms+) from drag-induced noise.
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    let blurredAt = 0;
+    const MIN_BLUR_MS = 500;
     getCurrentWindow()
       .onFocusChanged(({ payload: focused }) => {
-        if (
-          focused &&
-          appState.compareMode === "worktree" &&
-          appState.repoPath &&
-          !appState.loadingFiles &&
-          !appState.loadingRepo
-        ) {
-          void compare({ silent: true });
+        if (!focused) {
+          if (blurredAt === 0) blurredAt = Date.now();
+          return;
         }
+        if (blurredAt === 0) return;
+        const duration = Date.now() - blurredAt;
+        blurredAt = 0;
+        if (duration < MIN_BLUR_MS) return;
+        if (
+          appState.appMode !== "compare" ||
+          appState.compareMode !== "worktree" ||
+          !appState.repoPath ||
+          appState.loadingFiles ||
+          appState.loadingRepo
+        ) {
+          return;
+        }
+        void compare({ silent: true });
       })
       .then((u) => (unlisten = u));
     return () => unlisten?.();
@@ -123,6 +143,32 @@
       cycleAppMode();
       e.preventDefault();
       return;
+    }
+
+    // §14.6 #21: Tab navigation — Ctrl+Tab next, Ctrl+Shift+Tab previous,
+    // Ctrl+1..9 jump to that tab. Active only in Tabs layout while comparing.
+    // Fires before the form-control yield so users can switch tabs while
+    // focus is on a BranchPicker input. preventDefault is required to stop
+    // WebView2's default Ctrl+Tab behavior.
+    if (
+      appState.workspaceLayout === "tabs" &&
+      appState.appMode === "compare" &&
+      appState.repos.length > 0 &&
+      (e.ctrlKey || e.metaKey)
+    ) {
+      if (e.key === "Tab") {
+        cycleTab(e.shiftKey ? -1 : 1);
+        e.preventDefault();
+        return;
+      }
+      if (!e.shiftKey && e.key >= "1" && e.key <= "9") {
+        const idx = Number(e.key) - 1;
+        if (idx < appState.repos.length) {
+          selectTab(idx);
+          e.preventDefault();
+          return;
+        }
+      }
     }
 
     // Always yield to form controls so typing in path/branch inputs is untouched.
@@ -263,6 +309,9 @@
         Later
       </button>
     </div>
+  {/if}
+  {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
+    <TabBar />
   {/if}
   <div class="body">
     {#if appState.appMode === "blame"}
