@@ -35,12 +35,23 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
     if (!opts.silent) appState.error = "no repository selected";
     return;
   }
-  if (
-    appState.compareMode === "branch" &&
-    (!appState.startBranch || !appState.targetBranch)
-  ) {
-    if (!opts.silent) appState.error = "start and target are required";
-    return;
+  if (appState.compareMode === "branch") {
+    // Branch mode needs refs from *somewhere*. When focused on a non-main
+    // repo with its own override, that repo's refs are enough — main's
+    // start/target may legitimately be blank. Otherwise main must be filled.
+    const focusedRepo =
+      appState.activeRepoIdx !== null
+        ? appState.repos[appState.activeRepoIdx]
+        : null;
+    const focusedHasOwnRefs =
+      focusedRepo && focusedRepo.kind !== "main" && !!focusedRepo.override;
+    if (
+      !focusedHasOwnRefs &&
+      (!appState.startBranch || !appState.targetBranch)
+    ) {
+      if (!opts.silent) appState.error = "start and target are required";
+      return;
+    }
   }
   const session = ++compareSession;
   // Worktree refreshes preserve the user's current selection if it survives;

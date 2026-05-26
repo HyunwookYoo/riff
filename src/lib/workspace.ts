@@ -5,6 +5,7 @@ import {
   listRefs,
   listSubmodules,
   removeManualRepo,
+  submoduleShaAt,
   validateRepo,
 } from "./git";
 import { compare } from "./compare";
@@ -95,6 +96,54 @@ export async function buildWorkspace(
 export function repoPathFor(target: RepoFile | null): string | null {
   if (!target) return null;
   return appState.repos[target.repoIdx]?.path ?? null;
+}
+
+/**
+ * Resolve the (repo path, start ref, target ref) tuple to use when
+ * fetching a single file's diff from `repos[idx]`. Mirrors the per-kind
+ * rules in compare()'s fetchRepoChanges so DiffView opens the right file
+ * with the same refs that compare() listed it under.
+ *
+ * Returns null when the refs can't be resolved (missing inputs, missing
+ * gitlink, etc.) — caller should treat that as "no diff available".
+ */
+export async function resolveDiffRefsFor(
+  idx: number,
+): Promise<{ path: string; start: string; target: string } | null> {
+  const repo = appState.repos[idx];
+  if (!repo) return null;
+  if (repo.kind === "main") {
+    if (!appState.startBranch || !appState.targetBranch) return null;
+    return {
+      path: repo.path,
+      start: appState.startBranch,
+      target: appState.targetBranch,
+    };
+  }
+  if (repo.override) {
+    const { startBranch, targetBranch } = repo.override;
+    if (!startBranch || !targetBranch) return null;
+    return { path: repo.path, start: startBranch, target: targetBranch };
+  }
+  if (repo.kind === "submodule") {
+    if (!repo.parentGitlinkPath) return null;
+    if (!appState.startBranch || !appState.targetBranch) return null;
+    const mainPath = appState.repos[0]?.path;
+    if (!mainPath) return null;
+    const [oldSha, newSha] = await Promise.all([
+      submoduleShaAt(mainPath, appState.startBranch, repo.parentGitlinkPath),
+      submoduleShaAt(mainPath, appState.targetBranch, repo.parentGitlinkPath),
+    ]);
+    if (!oldSha || !newSha) return null;
+    return { path: repo.path, start: oldSha, target: newSha };
+  }
+  // manual + no override: match main's branch names
+  if (!appState.startBranch || !appState.targetBranch) return null;
+  return {
+    path: repo.path,
+    start: appState.startBranch,
+    target: appState.targetBranch,
+  };
 }
 
 /**
@@ -220,10 +269,21 @@ export function clearRepoOverride(idx: number): void {
 
 function triggerCompareIfReady(): void {
   if (!appState.repoPath) return;
-  if (
-    appState.compareMode === "worktree" ||
-    (appState.startBranch && appState.targetBranch)
-  ) {
+  if (appState.compareMode === "worktree") {
+    void compare({ silent: true });
+    return;
+  }
+  // Active repo with its own override needs no main refs (§13.3 #9 — let
+  // submodule-only comparisons work without the user first filling main).
+  const idx = appState.activeRepoIdx;
+  if (idx !== null) {
+    const r = appState.repos[idx];
+    if (r && r.kind !== "main" && r.override) {
+      void compare({ silent: true });
+      return;
+    }
+  }
+  if (appState.startBranch && appState.targetBranch) {
     void compare({ silent: true });
   }
 }

@@ -6,6 +6,7 @@
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
   import { fileDiff, worktreeFileDiff } from "$lib/git";
+  import { resolveDiffRefsFor } from "$lib/workspace";
   import type { ChangedFile, FileDiff } from "$lib/types";
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
@@ -63,21 +64,32 @@
     const file = appState.selectedFile;
     if (!file || !appState.repoPath) return;
 
+    // Multi-root (§13): the selected file's repo dictates which path and
+    // which refs to feed file_diff. compare() already resolved this when
+    // listing the file; mirror the rules here so the right diff opens.
+    const repoIdx = file.repoIdx ?? 0;
+    const repoPath = appState.repos[repoIdx]?.path ?? appState.repoPath;
+
     pending = true;
     try {
       if (appState.compareMode === "worktree") {
         diff = await worktreeFileDiff(
-          appState.repoPath,
+          repoPath,
           file.path,
           file.old_path,
           file.status,
           force,
         );
       } else {
+        const refs = await resolveDiffRefsFor(repoIdx);
+        if (!refs) {
+          loadError = "no refs to compare for this file";
+          return;
+        }
         diff = await fileDiff(
-          appState.repoPath,
-          appState.startBranch,
-          appState.targetBranch,
+          refs.path,
+          refs.start,
+          refs.target,
           appState.mode,
           file.path,
           file.old_path,
