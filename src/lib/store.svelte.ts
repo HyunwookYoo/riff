@@ -53,6 +53,10 @@ class AppState {
   // Drill-in history stack. Each entry is the compare context the user can
   // return to. Session-only.
   history = $state<CompareCtx[]>([]);
+  // Forward (redo) stack for drill-in. Populated by `popHistory` so the
+  // user can mouse-forward back into the drilled view. Cleared whenever
+  // a fresh drill is pushed (browser semantics).
+  forwardHistory = $state<CompareCtx[]>([]);
   // Focus state (§13.3 #15, drill-in #17). null = multi-root view (all repos
   // visible), number = focused on repos[activeRepoIdx]. Session-only.
   activeRepoIdx = $state<number | null>(null);

@@ -12,7 +12,7 @@
   import { appState } from "$lib/store.svelte";
   import { loadState } from "$lib/git";
   import { compare, cycleAppMode } from "$lib/compare";
-  import { popHistory } from "$lib/history";
+  import { popHistory, redoHistory } from "$lib/history";
   import { exitFocus } from "$lib/focus";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
   import { adjustFontSize, applyFontSize, resetFontSize } from "$lib/font";
@@ -209,9 +209,30 @@
       }
     }
   }
+
+  // Mouse X1 / X2 buttons (commonly labeled Back / Forward on browsers and
+  // gaming mice) act as drill-in back / forward. Fired on `mousedown` so
+  // they win over WebView2's default browser-back behavior — without
+  // preventDefault, Edge WebView2 may reload the dev server route.
+  function onMouseDown(e: MouseEvent) {
+    if (e.button === 3) {
+      if (appState.history.length > 0) {
+        popHistory();
+        e.preventDefault();
+      } else if (appState.activeRepoIdx !== null) {
+        exitFocus();
+        e.preventDefault();
+      }
+    } else if (e.button === 4) {
+      if (appState.forwardHistory.length > 0) {
+        redoHistory();
+        e.preventDefault();
+      }
+    }
+  }
 </script>
 
-<svelte:window onkeydown={onKeyDown} />
+<svelte:window onkeydown={onKeyDown} onmousedown={onMouseDown} />
 
 <div class="app">
   <TitleBar />
