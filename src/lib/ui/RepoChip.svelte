@@ -3,8 +3,10 @@
   import { appState } from "$lib/store.svelte";
   import {
     addManualRepoToWorkspace,
+    clearRepoOverride,
     loadMainRepo,
     removeManualRepoFromWorkspace,
+    setRepoOverride,
   } from "$lib/workspace";
   import type { RepoEntry } from "$lib/types";
 
@@ -116,6 +118,38 @@
         return "manual";
     }
   }
+
+  // Per-repo override (§13.3 #9). Track expansion + draft input per repo
+  // path so opening/closing the popover doesn't lose typed-but-not-applied
+  // text. Keyed by path so reordering repos[] doesn't shuffle drafts.
+  let openOverrideFor = $state<string | null>(null);
+  let draftStart = $state<Record<string, string>>({});
+  let draftTarget = $state<Record<string, string>>({});
+
+  function toggleOverride(repo: RepoEntry) {
+    if (openOverrideFor === repo.path) {
+      openOverrideFor = null;
+      return;
+    }
+    // Seed draft inputs from the current override (or empty).
+    draftStart[repo.path] = repo.override?.startBranch ?? "";
+    draftTarget[repo.path] = repo.override?.targetBranch ?? "";
+    openOverrideFor = repo.path;
+  }
+
+  function applyOverride(repo: RepoEntry, idx: number) {
+    const s = (draftStart[repo.path] ?? "").trim();
+    const t = (draftTarget[repo.path] ?? "").trim();
+    if (!s || !t) return;
+    setRepoOverride(idx, s, t);
+    openOverrideFor = null;
+  }
+
+  function resetOverride(repo: RepoEntry, idx: number) {
+    draftStart[repo.path] = "";
+    draftTarget[repo.path] = "";
+    clearRepoOverride(idx);
+  }
 </script>
 
 <div class="chip-wrap" bind:this={chipEl}>
@@ -197,12 +231,31 @@
           <div class="section-title">Workspace repos</div>
           <ul class="repos">
             {#each appState.repos as r, i (r.path)}
+              {@const overrideOpen = openOverrideFor === r.path}
+              {@const hasOverride = !!r.override}
               <li>
-                <span class="repo-row">
+                <div class="repo-row">
                   <span class="repo-name" title={r.path}>{r.displayName}</span>
                   <span class="repo-kind" data-kind={r.kind}>
                     {kindLabel(r.kind)}
                   </span>
+                  {#if hasOverride}
+                    <span class="override-dot" title="Branch override active"
+                      >●</span
+                    >
+                  {/if}
+                  {#if r.kind !== "main"}
+                    <button
+                      type="button"
+                      class="override-toggle"
+                      title={r.kind === "submodule"
+                        ? "Override branches (default: gitlink-follow main's start/target)"
+                        : "Override branches (default: same as main)"}
+                      onclick={() => toggleOverride(r)}
+                    >
+                      {overrideOpen ? "▾" : "▸"} refs
+                    </button>
+                  {/if}
                   {#if r.kind === "manual"}
                     <button
                       type="button"
@@ -213,7 +266,52 @@
                       ×
                     </button>
                   {/if}
-                </span>
+                </div>
+                {#if overrideOpen && r.kind !== "main"}
+                  <div class="override-panel">
+                    <input
+                      type="text"
+                      placeholder="start (e.g. main)"
+                      bind:value={draftStart[r.path]}
+                      onkeydown={(e) =>
+                        e.key === "Enter" && applyOverride(r, i)}
+                    />
+                    <input
+                      type="text"
+                      placeholder="target (e.g. feature)"
+                      bind:value={draftTarget[r.path]}
+                      onkeydown={(e) =>
+                        e.key === "Enter" && applyOverride(r, i)}
+                    />
+                    <div class="override-actions">
+                      <button
+                        type="button"
+                        class="override-apply"
+                        onclick={() => applyOverride(r, i)}
+                      >
+                        Apply
+                      </button>
+                      {#if hasOverride}
+                        <button
+                          type="button"
+                          class="override-clear"
+                          onclick={() => resetOverride(r, i)}
+                        >
+                          Reset to default
+                        </button>
+                      {/if}
+                    </div>
+                    <div class="override-hint">
+                      {#if r.kind === "submodule"}
+                        Default: follow main's gitlink SHAs. Override uses
+                        the typed refs inside this submodule directly.
+                      {:else}
+                        Default: match main's branch names. Override uses
+                        the typed refs in this repo.
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
               </li>
             {/each}
           </ul>
@@ -421,5 +519,72 @@
   .repos .remove:hover {
     background: var(--error-bg);
     color: var(--error-fg);
+  }
+  .override-dot {
+    color: var(--accent);
+    font-size: 0.7em;
+  }
+  .override-toggle {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.75em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: var(--mono);
+  }
+  .override-toggle:hover {
+    background: var(--hover);
+    color: inherit;
+  }
+  .override-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 10px 8px;
+    background: var(--input-bg);
+    border-top: 1px solid var(--border);
+  }
+  .override-panel input {
+    width: 100%;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bar-bg);
+    color: inherit;
+    font-size: 0.85em;
+    font-family: var(--mono);
+  }
+  .override-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .override-apply,
+  .override-clear {
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bar-bg);
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.8em;
+  }
+  .override-apply {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .override-clear {
+    color: var(--muted);
+  }
+  .override-clear:hover {
+    background: var(--hover);
+  }
+  .override-hint {
+    font-size: 0.72em;
+    opacity: 0.6;
+    line-height: 1.3;
   }
 </style>

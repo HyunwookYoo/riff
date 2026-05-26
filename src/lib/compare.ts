@@ -167,14 +167,29 @@ async function fetchRepoChanges(
     return;
   }
   if (repo.kind === "submodule") {
+    // Per-repo override (§13.3 #9) wins over gitlink-follow when set. Useful
+    // when the user wants to compare two branches *inside* the submodule
+    // independently of where main's gitlinks point.
+    if (repo.override) {
+      const { startBranch, targetBranch } = repo.override;
+      if (!startBranch || !targetBranch) return;
+      await diffFiles(
+        repo.path,
+        startBranch,
+        targetBranch,
+        appState.mode,
+        appState.ignoreWhitespace,
+        onFile,
+      );
+      return;
+    }
     if (!repo.parentGitlinkPath) return;
     const [oldSha, newSha] = await Promise.all([
       submoduleShaAt(mainPath, appState.startBranch, repo.parentGitlinkPath),
       submoduleShaAt(mainPath, appState.targetBranch, repo.parentGitlinkPath),
     ]);
     // Both sides must resolve to a gitlink commit. Newly-added or removed
-    // submodules (one side null) are skipped for now — Step 4 handles only
-    // the common case. §13.10 edge cases tracks this.
+    // submodules (one side null) are skipped for now — §13.10 tracks this.
     if (!oldSha || !newSha || oldSha === newSha) return;
     await diffFiles(
       repo.path,

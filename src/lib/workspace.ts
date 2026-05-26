@@ -185,6 +185,50 @@ export async function addManualRepoToWorkspace(path: string): Promise<void> {
 }
 
 /**
+ * Set / clear a per-repo branch override (§13.3 #9). Main repo is excluded
+ * — its refs come from InputBar. Triggers a silent compare so the new refs
+ * apply immediately.
+ *
+ * Session-only: overrides are not persisted across app restarts. (§13.11
+ * tracks whether to persist this; for now the chip popover discloses the
+ * setting on every load.)
+ */
+export function setRepoOverride(
+  idx: number,
+  startBranch: string,
+  targetBranch: string,
+): void {
+  const repo = appState.repos[idx];
+  if (!repo || repo.kind === "main") return;
+  const next = [...appState.repos];
+  next[idx] = {
+    ...repo,
+    override: { startBranch, targetBranch },
+  };
+  appState.repos = next;
+  triggerCompareIfReady();
+}
+
+export function clearRepoOverride(idx: number): void {
+  const repo = appState.repos[idx];
+  if (!repo || !repo.override) return;
+  const next = [...appState.repos];
+  next[idx] = { ...repo, override: undefined };
+  appState.repos = next;
+  triggerCompareIfReady();
+}
+
+function triggerCompareIfReady(): void {
+  if (!appState.repoPath) return;
+  if (
+    appState.compareMode === "worktree" ||
+    (appState.startBranch && appState.targetBranch)
+  ) {
+    void compare({ silent: true });
+  }
+}
+
+/**
  * Remove `path` from the manual-repo list for the current main and rebuild.
  * Silently no-ops for non-manual entries (main + submodule must be removed
  * via different mechanisms).
