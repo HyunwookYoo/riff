@@ -30,15 +30,32 @@ Windows 데스크톱용 경량 Git diff 뷰어. 두 ref(브랜치/태그/커밋)
 
 ## 1. 시작하기
 
-### 저장소 열기
-세 가지 방법:
-- 경로 입력란에 폴더 경로 입력 후 Enter
-- **Browse…** 버튼으로 폴더 선택
-- 폴더를 창에 **드래그 앤 드롭**
-
-최근에 연 저장소는 입력란 자동완성에 남습니다.
+### 저장소 열기 (Repo chip)
+좌측 상단 모드 토글 옆 **📁 chip** 클릭으로 팝오버가 열립니다:
+- 최근에 연 저장소 검색 (위쪽 입력란에 타이핑) → Enter 또는 클릭으로 전환
+- **📂 Browse folder…** — 폴더 선택 다이얼로그
+- 폴더를 창에 **드래그 앤 드롭** 해도 됩니다 (chip 없이 즉시 로드)
 
 저장소를 열면 Working Tree 모드에서는 바로 변경 파일이 로드되고, Branch 모드에서는 ref 자동완성 목록(로컬/리모트/태그)을 채웁니다.
+
+### 멀티 루트 워크스페이스 (submodule + 수동 추가 repo)
+저장소가 submodule을 포함하면 `.gitmodules` 가 자동으로 읽혀 워크스페이스에 추가됩니다. chip의 "+N" 뱃지로 추가 repo 개수가 표시되고, 팝오버의 **Workspace repos** 섹션에서 전체 목록을 확인할 수 있습니다.
+
+- **+ Add manual repo** — submodule이 아닌 관련 repo(공유 라이브러리 등)를 워크스페이스에 추가. main repo 단위로 저장되어 다음 실행에서도 복원됩니다.
+- 수동 추가 항목은 `×` 버튼으로 제거할 수 있습니다.
+
+#### 멀티 루트에서의 비교 의미
+| Repo 종류 | Branch 모드 | Working Tree 모드 |
+|---|---|---|
+| **main** | 사용자가 입력한 start/target 그대로 | `git diff HEAD` |
+| **submodule** | main의 start/target gitlink SHA를 따라 `<oldSha>..<newSha>` 비교 (GitHub PR과 동일 의미) | submodule 자체의 `git diff HEAD` |
+| **manual** | main과 같은 이름의 branch를 자동 매칭. 없으면 빈 결과 | 해당 repo의 `git diff HEAD` |
+
+파일 리스트와 blame 피커는 모두 **repo별 collapsible 그룹 헤더**로 묶여 표시됩니다. 그룹 헤더의:
+- **caret(▾/▸)** 클릭 → 그 그룹만 접고 펴기 (`j`/`k` 이동에서 접힌 그룹은 건너뜀)
+- **이름 부분** 클릭 → **Focus 모드** 진입. 그 repo만 보이게 되고, `Esc` 또는 같은 헤더 재클릭으로 해제.
+
+Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일이 속한 repo에서 blame이 수행되고, drill-in으로 들어간 커밋도 자동으로 해당 repo로 Focus됩니다 (`Esc` 로 원래 멀티 루트 뷰 복원).
 
 ---
 
@@ -149,7 +166,7 @@ Blame 팝오버 또는 커밋 패널에서 **View commit →** / **`→`** 를 �
 |---|---|
 | `Ctrl+Shift+W` | 워크스페이스 순환 전환 (Branch → Working Tree → Blame → Branch …) |
 | `Ctrl` + `+` / `-` / `0` | 에디터 폰트 크기 증가 / 감소 / 기본값 복귀 |
-| `Esc` | drill-in 히스토리 pop (검색 패널이 열려있으면 그걸 먼저 닫음) |
+| `Esc` | drill-in 히스토리 pop → Focus 모드 해제 → 검색 패널 닫기 순으로 처리 |
 
 ### Compare 모드 (Branch / Working Tree)
 | 키 | 동작 |
