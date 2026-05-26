@@ -1,8 +1,13 @@
 import { appState } from "./store.svelte";
-import { diffFiles, setCompareMode, worktreeFiles } from "./git";
+import {
+  diffFiles,
+  setCompareMode,
+  submoduleShaAt,
+  worktreeFiles,
+} from "./git";
 import { detectLanguage } from "./diff/lang";
 import { preloadLanguages } from "./diff/shiki";
-import type { ChangedFile, CompareMode } from "./types";
+import type { ChangedFile, CompareMode, RepoEntry } from "./types";
 
 // Monotonic id so a stale stream from a cancelled compare can't poison the
 // newer one's state. The Rust side also kills its previous child, but events
@@ -39,27 +44,32 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
   }
   const session = ++compareSession;
   // Worktree refreshes preserve the user's current selection if it survives;
-  // branch compares (different ref pair) reset to the first file.
+  // branch compares (different ref pair) reset to the first file. With
+  // multi-root, the previous repoIdx matters too — same path in two repos
+  // shouldn't false-match.
   const previousPath =
     opts.preservePath !== undefined
       ? opts.preservePath
       : appState.compareMode === "worktree"
         ? (appState.selectedFile?.path ?? null)
         : null;
+  const previousRepoIdx = appState.selectedFile?.repoIdx ?? null;
 
   appState.loadingFiles = true;
   appState.error = null;
   appState.files = [];
   appState.selectedFile = null;
 
-  const onFile = (file: ChangedFile) => {
+  const makeOnFile = (repoIdx: number) => (file: ChangedFile) => {
     if (session !== compareSession) return;
-    // Backend doesn't know about workspace structure — tag with the main
-    // repo index (§13). Multi-repo fetch in Step 4 will override per call.
-    file.repoIdx = 0;
+    file.repoIdx = repoIdx;
     appState.files.push(file);
     if (previousPath) {
-      if (file.path === previousPath && !appState.selectedFile) {
+      if (
+        file.path === previousPath &&
+        file.repoIdx === previousRepoIdx &&
+        !appState.selectedFile
+      ) {
         appState.selectedFile = file;
       }
     } else if (!appState.selectedFile) {
@@ -68,18 +78,27 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
     void preloadLanguages([detectLanguage(file.path)]);
   };
 
+  // repos[] is the source of truth. Fall back to [main only] when it hasn't
+  // been built yet (defensive; loadRepo always populates it).
+  const repos: RepoEntry[] =
+    appState.repos.length > 0
+      ? appState.repos
+      : [{ path: appState.repoPath, kind: "main", displayName: "" }];
+  const mainPath = repos[0].path;
+
   try {
-    if (appState.compareMode === "worktree") {
-      await worktreeFiles(appState.repoPath, appState.ignoreWhitespace, onFile);
-    } else {
-      await diffFiles(
-        appState.repoPath,
-        appState.startBranch,
-        appState.targetBranch,
-        appState.mode,
-        appState.ignoreWhitespace,
-        onFile,
-      );
+    for (let i = 0; i < repos.length; i++) {
+      if (session !== compareSession) break;
+      const repo = repos[i];
+      try {
+        await fetchRepoChanges(repo, mainPath, makeOnFile(i));
+      } catch (e) {
+        // One repo failing shouldn't kill the whole compare. Submodule pointer
+        // missing, override refs invalid, manual repo's branches don't
+        // exist — all common and recoverable. Log; user sees that repo's
+        // group is empty.
+        console.warn(`compare: repo ${repo.path} failed:`, e);
+      }
     }
     // Previous selection didn't survive the refresh — fall back to first file.
     if (
@@ -105,6 +124,76 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
       appState.loadingFiles = false;
     }
   }
+}
+
+/**
+ * Fetch one repo's changed files for the current compare mode/refs and feed
+ * them to `onFile`. Implements the per-kind resolution rules (§13.3 #7-#10):
+ *
+ * - main: refs from appState directly
+ * - submodule (branch mode): derive old/new SHAs via submoduleShaAt from
+ *   main's start/target gitlinks (gitlink-follow)
+ * - submodule (worktree mode): plain `git diff HEAD` inside the submodule
+ * - manual: override refs if set, else same names as main
+ */
+async function fetchRepoChanges(
+  repo: RepoEntry,
+  mainPath: string,
+  onFile: (file: ChangedFile) => void,
+): Promise<void> {
+  if (appState.compareMode === "worktree") {
+    await worktreeFiles(repo.path, appState.ignoreWhitespace, onFile);
+    return;
+  }
+  // Branch mode below.
+  if (repo.kind === "main") {
+    await diffFiles(
+      repo.path,
+      appState.startBranch,
+      appState.targetBranch,
+      appState.mode,
+      appState.ignoreWhitespace,
+      onFile,
+    );
+    return;
+  }
+  if (repo.kind === "submodule") {
+    if (!repo.parentGitlinkPath) return;
+    const [oldSha, newSha] = await Promise.all([
+      submoduleShaAt(mainPath, appState.startBranch, repo.parentGitlinkPath),
+      submoduleShaAt(mainPath, appState.targetBranch, repo.parentGitlinkPath),
+    ]);
+    // Both sides must resolve to a gitlink commit. Newly-added or removed
+    // submodules (one side null) are skipped for now — Step 4 handles only
+    // the common case. §13.10 edge cases tracks this.
+    if (!oldSha || !newSha || oldSha === newSha) return;
+    await diffFiles(
+      repo.path,
+      oldSha,
+      newSha,
+      appState.mode,
+      appState.ignoreWhitespace,
+      onFile,
+    );
+    return;
+  }
+  if (repo.kind === "manual") {
+    const start = repo.override?.startBranch ?? appState.startBranch;
+    const target = repo.override?.targetBranch ?? appState.targetBranch;
+    if (!start || !target) return;
+    await diffFiles(
+      repo.path,
+      start,
+      target,
+      appState.mode,
+      appState.ignoreWhitespace,
+      onFile,
+    );
+    return;
+  }
+  // Exhaustive: unreachable for known RepoKind values.
+  const _exhaustive: never = repo.kind;
+  void _exhaustive;
 }
 
 export function setMode(m: CompareMode): void {
