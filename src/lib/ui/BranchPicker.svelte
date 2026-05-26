@@ -200,8 +200,13 @@
     justify-content: space-between;
     gap: 6px;
     width: 180px;
+    /* Pin geometry so the trigger height never depends on which font /
+     * style the label is rendering. Padding contributes via border-box. */
+    box-sizing: border-box;
+    height: 28px;
     font-size: 0.9em;
-    padding: 4px 8px;
+    line-height: 1;
+    padding: 0 8px;
     border-radius: 4px;
     border: 1px solid var(--border);
     background: var(--input-bg);
@@ -221,8 +226,10 @@
     flex: 1;
   }
   .label.empty {
+    /* Visually distinct from a selected value (muted + italic) but keeps
+     * the mono font so the trigger height doesn't shift between states. */
     color: var(--muted);
-    font-family: inherit;
+    font-style: italic;
   }
   .caret {
     font-size: 0.7em;
