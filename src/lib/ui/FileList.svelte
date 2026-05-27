@@ -168,9 +168,6 @@
             <span class="kind-badge" data-kind={group.repo.kind}>
               {kindLabel(group.repo.kind)}
             </span>
-            {#if group.repo.override}
-              <span class="override-dot" title="Branch override active">●</span>
-            {/if}
             <span class="group-count">{group.files.length}</span>
           </button>
           <button
@@ -186,6 +183,17 @@
             {isFocused ? "←" : "→"}
           </button>
         </div>
+        {#if group.repo.kind !== "main" && group.repo.override}
+          <div
+            class="group-refs"
+            class:focused={isFocused}
+            title={`${group.repo.override.startBranch} → ${group.repo.override.targetBranch}`}
+          >
+            <span class="ref">{group.repo.override.startBranch}</span>
+            <span class="arrow" aria-hidden="true">→</span>
+            <span class="ref">{group.repo.override.targetBranch}</span>
+          </div>
+        {/if}
       {/if}
 
       {#if !showGroups || !appState.collapsedRepos.has(group.idx)}
@@ -399,9 +407,33 @@
     font-weight: 400;
     font-size: 0.85em;
   }
-  .group-header .override-dot {
-    color: var(--accent);
-    font-size: 0.75em;
+  .group-refs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px 4px 28px;
+    background: var(--bar-bg);
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.72em;
+    user-select: none;
+    overflow: hidden;
+    cursor: help;
+  }
+  .group-refs.focused {
+    background: var(--accent-soft);
+  }
+  .group-refs .ref {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+  .group-refs .arrow {
+    flex-shrink: 0;
+    opacity: 0.6;
   }
   .group-header .enter-btn {
     border: none;
