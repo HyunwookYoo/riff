@@ -2,15 +2,61 @@ import { appState } from "./store.svelte";
 import { compare } from "./compare";
 import type { CompareCtx } from "./types";
 
+/** Capture overrides currently set on non-main repos. Round-tripped via
+ * CompareCtx so back/forward navigation preserves them across drill-in. */
+function captureOverrides(): Record<
+  number,
+  { startBranch: string; targetBranch: string }
+> {
+  const out: Record<number, { startBranch: string; targetBranch: string }> = {};
+  for (let i = 0; i < appState.repos.length; i++) {
+    const r = appState.repos[i];
+    if (r.kind !== "main" && r.override) {
+      out[i] = { ...r.override };
+    }
+  }
+  return out;
+}
+
+/** Force repos[].override to match the ctx snapshot exactly: set the ones
+ * in `desired`, clear any non-main override not in `desired`. */
+function restoreOverrides(
+  desired: Record<number, { startBranch: string; targetBranch: string }>,
+): void {
+  let mutated = false;
+  const next = appState.repos.map((r, i) => {
+    if (r.kind === "main") return r;
+    const want = desired[i];
+    if (want) {
+      if (
+        !r.override ||
+        r.override.startBranch !== want.startBranch ||
+        r.override.targetBranch !== want.targetBranch
+      ) {
+        mutated = true;
+        return { ...r, override: { ...want } };
+      }
+      return r;
+    }
+    if (r.override) {
+      mutated = true;
+      return { ...r, override: undefined };
+    }
+    return r;
+  });
+  if (mutated) appState.repos = next;
+}
+
 /**
  * Push the current compare context onto the history stack and drill into a
  * single commit. Implemented as a `<sha>^..<sha>` two-dot branch compare so
  * the existing FileList/DiffView pipeline renders the change set unchanged.
  *
  * For multi-root drill-in (§13.8): pass the originating file's `repoIdx` so
- * the drilled view is automatically focused on that repo — the other repos'
- * refs wouldn't resolve `<sha>^` anyway. Omit `repoIdx` for single-repo
- * drill-in (current behavior).
+ * the drilled view is automatically focused on that repo. When that repo is
+ * a non-main one, the drill sets that repo's per-repo override (rather than
+ * mutating main's refs) — gitlink-follow would otherwise try to resolve the
+ * submodule's SHA inside main's history and fail.
  */
 export function pushAndDrillToCommit(sha: string, repoIdx?: number): void {
   const ctx: CompareCtx = {
@@ -21,6 +67,7 @@ export function pushAndDrillToCommit(sha: string, repoIdx?: number): void {
     targetBranch: appState.targetBranch,
     selectedFilePath: appState.selectedFile?.path ?? null,
     activeRepoIdx: appState.activeRepoIdx,
+    overrides: captureOverrides(),
   };
   appState.history.push(ctx);
   // Fresh drill invalidates any forward stack — matches browser back/forward
@@ -31,18 +78,36 @@ export function pushAndDrillToCommit(sha: string, repoIdx?: number): void {
   appState.appMode = "compare";
   appState.compareMode = "branch";
   appState.mode = "two-dot";
-  appState.startBranch = `${sha}^`;
-  appState.targetBranch = sha;
   appState.selectedFile = null;
-  // Multi-root: focus on the originating repo so compare() only fetches
-  // changes from that repo (§13.8). For single-repo this stays null.
-  if (
+
+  const isMultiRootIdx =
     repoIdx !== undefined &&
     repoIdx >= 0 &&
     repoIdx < appState.repos.length &&
-    appState.repos.length > 1
-  ) {
-    appState.activeRepoIdx = repoIdx;
+    appState.repos.length > 1;
+  const targetRepo = isMultiRootIdx ? appState.repos[repoIdx!] : null;
+  const isNonMainDrill = targetRepo !== null && targetRepo.kind !== "main";
+
+  if (isNonMainDrill) {
+    // Set the override on the target repo so fetchRepoChanges hits the
+    // override branch (direct `git diff <sha>^ <sha>` inside that repo).
+    // Without this, submodules would fall through to gitlink-follow which
+    // tries to resolve the SHA in main's history and gets null.
+    const next = [...appState.repos];
+    next[repoIdx!] = {
+      ...targetRepo!,
+      override: { startBranch: `${sha}^`, targetBranch: sha },
+    };
+    appState.repos = next;
+    appState.activeRepoIdx = repoIdx!;
+    // Main refs stay untouched — they're irrelevant for a focused non-main
+    // drill (focusedHasOwnRefs check uses repo.override).
+  } else {
+    appState.startBranch = `${sha}^`;
+    appState.targetBranch = sha;
+    if (isMultiRootIdx) {
+      appState.activeRepoIdx = repoIdx!;
+    }
   }
   void compare();
 }
@@ -57,6 +122,7 @@ export function snapshot(): CompareCtx {
     targetBranch: appState.targetBranch,
     selectedFilePath: appState.selectedFile?.path ?? null,
     activeRepoIdx: appState.activeRepoIdx,
+    overrides: captureOverrides(),
   };
 }
 
@@ -68,6 +134,10 @@ function applyCtx(ctx: CompareCtx): void {
   appState.targetBranch = ctx.targetBranch;
   appState.activeRepoIdx = ctx.activeRepoIdx;
   appState.selectedFile = null;
+  // Reconcile non-main overrides with the ctx snapshot. Drill-in's temporary
+  // override gets cleared on Back; Forward to a drilled ctx re-applies it.
+  // Fall back to {} for ctx values saved before the field existed.
+  restoreOverrides(ctx.overrides ?? {});
   // Compare-side rehydration: reload the file list. Blame-side state lives
   // in `appState.blameTarget` and survives the drill round-trip on its own.
   if (ctx.appMode === "compare") {

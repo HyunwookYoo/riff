@@ -357,6 +357,21 @@ export function clearRepoOverride(idx: number): void {
   const next = [...appState.repos];
   next[idx] = { ...repo, override: undefined };
   appState.repos = next;
+  // When branch mode + main has no refs, triggerCompareIfReady bails and
+  // compare() would early-return without touching appState.files. Prune this
+  // repo's stale entries synchronously so the UI matches the cleared override.
+  if (
+    appState.compareMode === "branch" &&
+    (!appState.startBranch || !appState.targetBranch)
+  ) {
+    appState.files = appState.files.filter((f) => (f.repoIdx ?? 0) !== idx);
+    if (
+      appState.selectedFile &&
+      (appState.selectedFile.repoIdx ?? 0) === idx
+    ) {
+      appState.selectedFile = null;
+    }
+  }
   triggerCompareIfReady();
 }
 

@@ -141,4 +141,9 @@ export interface CompareCtx {
   targetBranch: string;
   selectedFilePath: string | null;
   activeRepoIdx: number | null;
+  /// Snapshot of non-main repos' overrides at this ctx, keyed by repoIdx.
+  /// Missing key = no override at that idx. Lets drill-in/back/forward
+  /// preserve overrides correctly when drilling into a submodule commit
+  /// sets a temporary override on that repo.
+  overrides: Record<number, { startBranch: string; targetBranch: string }>;
 }
