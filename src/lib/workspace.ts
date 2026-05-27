@@ -10,6 +10,7 @@ import {
   validateRepo,
 } from "./git";
 import { compare } from "./compare";
+import { clearBlameCache } from "./blameCache";
 import type { Branch, RepoEntry, RepoFile } from "./types";
 
 /**
@@ -242,6 +243,7 @@ export async function loadMainRepo(
   // Blame-mode caches/file pin from the previous repo are also stale.
   appState.repoFiles = [];
   appState.blameTarget = null;
+  clearBlameCache();
   try {
     await validateRepo(path);
     appState.repoPath = path;

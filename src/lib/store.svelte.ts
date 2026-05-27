@@ -88,6 +88,10 @@ class AppState {
   // selects a file or scrolls; consumed on tab switch to restore the prior
   // view. Session-only — not persisted.
   tabMemory = $state<Map<number, TabMemoryEntry>>(new Map());
+  // Width (px) of blame view's left picker panel. Mirrored from
+  // PersistedState.blame_picker_width on load; written back (debounced) on
+  // drag-handle release.
+  blamePickerWidth = $state<number>(300);
 }
 
 export const appState = new AppState();

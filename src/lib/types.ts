@@ -71,6 +71,9 @@ export interface PersistedState {
   manual_repos_by_main: Record<string, string[]>;
   /// Workspace layout (§14.5 #13). Global. Defaults to "unified".
   workspace_layout: WorkspaceLayout;
+  /// Width (px) of the blame view's left file-picker. Clamped 200-600 on
+  /// the backend; defaults to 300 for new installs.
+  blame_picker_width: number;
 }
 
 /// A repo-qualified file path. Used by the unified blame picker

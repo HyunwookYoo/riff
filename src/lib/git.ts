@@ -45,6 +45,10 @@ export function setWorkspaceLayout(layout: WorkspaceLayout): Promise<void> {
   return invoke("set_workspace_layout", { layout });
 }
 
+export function setBlamePickerWidth(width: number): Promise<void> {
+  return invoke("set_blame_picker_width", { width });
+}
+
 export function listRefs(path: string): Promise<Branch[]> {
   return invoke("list_refs", { path });
 }

@@ -34,6 +34,7 @@
       appState.compareMode = s.compare_mode;
       appState.manualReposByMain = s.manual_repos_by_main ?? {};
       appState.workspaceLayout = s.workspace_layout ?? "unified";
+      appState.blamePickerWidth = s.blame_picker_width ?? 300;
     } catch {
       // First-run / corrupt state: keep defaults silently.
     }

@@ -16,7 +16,13 @@
   import { EditorState, type Extension, type Range } from "@codemirror/state";
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
-  import { blameFile, listRepoFiles, readRepoFile } from "$lib/git";
+  import {
+    blameFile,
+    listRepoFiles,
+    readRepoFile,
+    setBlamePickerWidth,
+  } from "$lib/git";
+  import { getBlameCache, setBlameCache } from "$lib/blameCache";
   import { pushAndDrillToCommit } from "$lib/history";
   import { repoPathFor } from "$lib/workspace";
   import type { Blame, BlameCommit, RepoFile } from "$lib/types";
@@ -82,30 +88,147 @@
   });
 
   type FuzzyRow = { repoIdx: number; path: string; html: string };
+  type SearchItem = {
+    repoIdx: number;
+    path: string;
+    basename: string;
+    /** basename with separators stripped + lowercased, for tier-1 contiguous
+     * substring search. */
+    basenameNorm: string;
+    /** normToOrig[i] = original basename index of basenameNorm[i]. */
+    normToOrig: number[];
+  };
+  // Separators we strip when normalizing so "LuaModel" / "lua_model" /
+  // "lua-model" / "lua.model" all collapse to the same key. Keeps alphanumerics
+  // and any non-ASCII char (Korean/CJK file names stay searchable).
+  const SEPARATOR_RE = /[_\-.\s/]/;
+  function normalize(s: string): { normalized: string; map: number[] } {
+    let normalized = "";
+    const map: number[] = [];
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (SEPARATOR_RE.test(c)) continue;
+      normalized += c.toLowerCase();
+      map.push(i);
+    }
+    return { normalized, map };
+  }
+  const searchItems = $derived.by<SearchItem[]>(() =>
+    appState.repoFiles.map((f) => {
+      const basename = f.path.slice(f.path.lastIndexOf("/") + 1);
+      const { normalized, map } = normalize(basename);
+      return {
+        repoIdx: f.repoIdx,
+        path: f.path,
+        basename,
+        basenameNorm: normalized,
+        normToOrig: map,
+      };
+    })
+  );
+
+  /** Tier 1: case- and separator-insensitive contiguous substring match on
+   * basename. "LuaModel" matches LuaModel.cs / lua_model.lua / LuaModelLoader.kt
+   * but NOT LuaScriptModelLoader.cs. Returns up to MAX_FUZZY_ROWS, sorted by
+   * match position then basename length so prefix matches and shorter names
+   * rank first. */
+  function tier1Matches(qNorm: string): FuzzyRow[] {
+    if (!qNorm) return [];
+    const scored: Array<{ row: FuzzyRow; pos: number; len: number }> = [];
+    for (const item of searchItems) {
+      const idx = item.basenameNorm.indexOf(qNorm);
+      if (idx < 0) continue;
+      const matched = new Set<number>();
+      for (let k = 0; k < qNorm.length; k++) {
+        matched.add(item.normToOrig[idx + k]);
+      }
+      let basenameHtml = "";
+      let inMark = false;
+      for (let i = 0; i < item.basename.length; i++) {
+        const isMatched = matched.has(i);
+        if (isMatched && !inMark) {
+          basenameHtml += "<mark>";
+          inMark = true;
+        } else if (!isMatched && inMark) {
+          basenameHtml += "</mark>";
+          inMark = false;
+        }
+        basenameHtml += escapeHtml(item.basename[i]);
+      }
+      if (inMark) basenameHtml += "</mark>";
+      const folder = item.path.slice(
+        0,
+        item.path.length - item.basename.length,
+      );
+      scored.push({
+        row: {
+          repoIdx: item.repoIdx,
+          path: item.path,
+          html: escapeHtml(truncateFolder(folder)) + basenameHtml,
+        },
+        pos: idx,
+        len: item.basename.length,
+      });
+    }
+    scored.sort((a, b) => a.pos - b.pos || a.len - b.len);
+    return scored.slice(0, MAX_FUZZY_ROWS).map((s) => s.row);
+  }
+
   const fuzzyResults = $derived.by<FuzzyRow[]>(() => {
     const q = query.trim();
     if (!q) return [];
-    // Pull more than we'll show — the basename filter below may drop a
-    // chunk of folder-only hits, and we still want to fill MAX_FUZZY_ROWS.
-    // The `key` form lets us recover repoIdx from the matched object.
-    const raw = fuzzysort.go(q, appState.repoFiles, {
-      key: "path",
-      limit: MAX_FUZZY_ROWS * 4,
+    // Path-scoped queries (containing `/`) match against the full path so the
+    // user can target by folder. Bare queries use a two-tier strategy:
+    //   Tier 1: normalized contiguous substring on basename (precise).
+    //   Tier 2: fuzzysort fallback only when tier 1 returns nothing, so
+    //   typos like "luamdel" still find something.
+    if (q.includes("/")) {
+      const raw = fuzzysort.go(q, searchItems, {
+        key: "path",
+        limit: MAX_FUZZY_ROWS,
+      });
+      return raw.map((r) => ({
+        repoIdx: r.obj.repoIdx,
+        path: r.obj.path,
+        html: r.highlight("<mark>", "</mark>"),
+      }));
+    }
+    const qNorm = normalize(q).normalized;
+    const tier1 = tier1Matches(qNorm);
+    if (tier1.length > 0) return tier1;
+    const raw = fuzzysort.go(q, searchItems, {
+      key: "basename",
+      limit: MAX_FUZZY_ROWS,
     });
-    // Keep only matches that touch the file's basename. Without this, a
-    // query like "src/lib" matches every file under src/lib (chars all in
-    // the directory portion) and dumps the whole folder into the panel —
-    // not what the user wants.
-    const onlyBasenameHits = raw.filter((r) => {
-      const basenameStart = r.target.lastIndexOf("/") + 1;
-      return r.indexes.some((i) => i >= basenameStart);
+    return raw.map((r) => {
+      const folder = r.obj.path.slice(
+        0,
+        r.obj.path.length - r.obj.basename.length,
+      );
+      return {
+        repoIdx: r.obj.repoIdx,
+        path: r.obj.path,
+        html: escapeHtml(truncateFolder(folder)) + r.highlight("<mark>", "</mark>"),
+      };
     });
-    return onlyBasenameHits.slice(0, MAX_FUZZY_ROWS).map((r) => ({
-      repoIdx: r.obj.repoIdx,
-      path: r.obj.path,
-      html: r.highlight("<mark>", "</mark>"),
-    }));
   });
+
+  function escapeHtml(s: string): string {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  /** Trim folder prefix to its last segment when the path is deeper than two
+   * levels: "src/lib/ui/" → "…/ui/", "src/" → "src/", "" → "". Keeps narrow
+   * picker columns readable; full path remains in the title tooltip. */
+  function truncateFolder(folder: string): string {
+    if (!folder) return "";
+    const parts = folder.split("/").filter((p) => p.length > 0);
+    if (parts.length <= 1) return folder;
+    return "…/" + parts[parts.length - 1] + "/";
+  }
 
   /** Set of expanded directory paths, keyed `<repoIdx>:<dirPath>` so the same
    * path in different repos has independent collapse state. Initial expansion
@@ -342,6 +465,19 @@
     blameData = null;
     blameError = null;
     selectedCommitSha = null;
+
+    // LRU cache: drill-in round-trips and short blame-mode tab navigation
+    // shouldn't pay the readRepoFile + blameFile cost twice for the same file.
+    const cached = getBlameCache(target.repoIdx, target.path);
+    if (cached) {
+      fileText = cached.fileText;
+      blameData = cached.blame;
+      blameLoading = false;
+      await tick();
+      await mountEditor(target.path, cached.fileText);
+      return;
+    }
+
     blameLoading = true;
 
     const repoPath = repoPathFor(target);
@@ -370,6 +506,7 @@
     fileText = text;
     blameData = blame;
     blameLoading = false;
+    setBlameCache(target.repoIdx, target.path, { fileText: text, blame });
     await tick();
     await mountEditor(target.path, text);
   }
@@ -835,9 +972,43 @@
     void blameError;
     if (activeTooltipDom) paintTooltipDom(activeTooltipDom, activeTooltipLine);
   });
+
+  // Drag-resize the left picker. Bounds match the backend clamp so the
+  // visual stop and the persisted value agree.
+  const PICKER_MIN = 200;
+  const PICKER_MAX = 600;
+  let blameViewEl: HTMLDivElement;
+  let dragging = $state(false);
+  function onResizeStart(e: PointerEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragging = true;
+    const rect = blameViewEl.getBoundingClientRect();
+    const onMove = (ev: PointerEvent) => {
+      const next = Math.round(ev.clientX - rect.left);
+      appState.blamePickerWidth = Math.min(
+        PICKER_MAX,
+        Math.max(PICKER_MIN, next),
+      );
+    };
+    const onUp = () => {
+      dragging = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      // Persist final value; backend re-clamps defensively.
+      setBlamePickerWidth(appState.blamePickerWidth).catch(() => {});
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
 </script>
 
-<div class="blame-view">
+<div
+  class="blame-view"
+  class:resizing={dragging}
+  bind:this={blameViewEl}
+  style="--picker-width: {appState.blamePickerWidth}px;"
+>
   <aside class="picker">
     <header class="picker-header">
       <input
@@ -921,6 +1092,13 @@
         </ul>
       {/if}
     </div>
+    <div
+      class="picker-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize file list"
+      onpointerdown={onResizeStart}
+    ></div>
   </aside>
 
   <main class="editor-pane">
@@ -1043,11 +1221,42 @@
   .blame-view {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: 300px 1fr 300px;
+    /* Picker width is user-resizable; the drag handle is absolutely positioned
+     * inside .picker (see .picker-resizer below). */
+    grid-template-columns: var(--picker-width, 300px) 1fr 300px;
     min-height: 0;
     min-width: 0;
   }
+  .blame-view.resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+  .picker-resizer {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 7px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 5;
+    background: transparent;
+  }
+  .picker-resizer::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 3px;
+    width: 1px;
+    height: 100%;
+    background: transparent;
+    transition: background 0.1s ease;
+  }
+  .picker-resizer:hover::after,
+  .blame-view.resizing .picker-resizer::after {
+    background: var(--accent, #4a9eff);
+  }
   .picker {
+    position: relative;
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--border);

@@ -32,7 +32,15 @@ pub struct PersistedState {
     /// Fork-style tab bar. Global, applies to every workspace.
     #[serde(default = "default_workspace_layout")]
     pub workspace_layout: String,
+    /// Width (px) of the blame view's left file-picker panel. User-resizable
+    /// via drag handle, clamped at write time to [MIN_PICKER_WIDTH,
+    /// MAX_PICKER_WIDTH].
+    #[serde(default = "default_blame_picker_width")]
+    pub blame_picker_width: u32,
 }
+
+const MIN_PICKER_WIDTH: u32 = 200;
+const MAX_PICKER_WIDTH: u32 = 600;
 
 fn default_theme() -> String {
     "system".into()
@@ -50,6 +58,10 @@ fn default_workspace_layout() -> String {
     "unified".into()
 }
 
+fn default_blame_picker_width() -> u32 {
+    300
+}
+
 impl Default for PersistedState {
     fn default() -> Self {
         Self {
@@ -59,6 +71,7 @@ impl Default for PersistedState {
             compare_mode: default_compare_mode(),
             manual_repos_by_main: HashMap::new(),
             workspace_layout: default_workspace_layout(),
+            blame_picker_width: default_blame_picker_width(),
         }
     }
 }
@@ -146,6 +159,12 @@ pub fn set_compare_mode(app: &AppHandle, mode: String) -> Result<(), StoreError>
 pub fn set_workspace_layout(app: &AppHandle, layout: String) -> Result<(), StoreError> {
     let mut state = load(app)?;
     state.workspace_layout = layout;
+    save(app, &state)
+}
+
+pub fn set_blame_picker_width(app: &AppHandle, width: u32) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    state.blame_picker_width = width.clamp(MIN_PICKER_WIDTH, MAX_PICKER_WIDTH);
     save(app, &state)
 }
 

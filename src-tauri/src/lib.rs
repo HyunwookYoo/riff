@@ -206,6 +206,11 @@ fn set_workspace_layout(app: tauri::AppHandle, layout: String) -> Result<(), Sto
 }
 
 #[tauri::command]
+fn set_blame_picker_width(app: tauri::AppHandle, width: u32) -> Result<(), StoreError> {
+    store::set_blame_picker_width(&app, width)
+}
+
+#[tauri::command]
 fn add_manual_repo(
     app: tauri::AppHandle,
     main_repo: String,
@@ -249,6 +254,7 @@ pub fn run() {
             set_font_size,
             set_compare_mode,
             set_workspace_layout,
+            set_blame_picker_width,
             add_manual_repo,
             remove_manual_repo,
         ])
