@@ -23,6 +23,10 @@
   let loadError = $state<string | null>(null);
   let detectedLang = $state<string | null>(null);
   let langOverride = $state<string | null>(null);
+  // Monotonic guard for double-buffered loads: a newer load() bumps this so a
+  // slower in-flight fetch/highlight from an older call can't mount over it
+  // (rapid j/k, worktree-refresh swap, theme/mode changes).
+  let loadSession = 0;
 
   const langOptions = $derived([
     {
@@ -58,11 +62,15 @@
   });
 
   async function load(force: boolean) {
-    teardown();
-    diff = null;
-    loadError = null;
+    const session = ++loadSession;
     const file = appState.selectedFile;
-    if (!file || !appState.repoPath) return;
+    if (!file || !appState.repoPath) {
+      teardown();
+      diff = null;
+      loadError = null;
+      pending = false;
+      return;
+    }
 
     // Multi-root (§13): the selected file's repo dictates which path and
     // which refs to feed file_diff. compare() already resolved this when
@@ -70,10 +78,22 @@
     const repoIdx = file.repoIdx ?? 0;
     const repoPath = appState.repos[repoIdx]?.path ?? appState.repoPath;
 
-    pending = true;
+    // Double-buffer: if an editor is already on screen, keep it visible and
+    // fetch the new diff in the background (no "Loading diff…" flash). Only
+    // surface the loading state when there's nothing to keep showing.
+    const hadEditor = !!(mergeView || unifiedView);
+    if (!hadEditor) {
+      teardown();
+      diff = null;
+      pending = true;
+    }
+    loadError = null;
+
+    let next: FileDiff | null = null;
+    let nextErr: string | null = null;
     try {
       if (appState.compareMode === "worktree") {
-        diff = await worktreeFileDiff(
+        next = await worktreeFileDiff(
           repoPath,
           file.path,
           file.old_path,
@@ -83,31 +103,51 @@
       } else {
         const refs = await resolveDiffRefsFor(repoIdx);
         if (!refs) {
-          loadError = "no refs to compare for this file";
-          return;
+          nextErr = "no refs to compare for this file";
+        } else {
+          next = await fileDiff(
+            refs.path,
+            refs.start,
+            refs.target,
+            appState.mode,
+            file.path,
+            file.old_path,
+            force,
+          );
         }
-        diff = await fileDiff(
-          refs.path,
-          refs.start,
-          refs.target,
-          appState.mode,
-          file.path,
-          file.old_path,
-          force,
-        );
       }
     } catch (e) {
-      loadError = String(e);
-    } finally {
-      pending = false;
+      nextErr = String(e);
     }
 
-    if (diff?.kind === "text") {
-      await mount(file, diff.old_content, diff.new_content);
+    // A newer load() started while we awaited — drop this stale result so it
+    // can't clobber the newer one's editor.
+    if (session !== loadSession) return;
+
+    pending = false;
+    loadError = nextErr;
+
+    if (next?.kind === "text") {
+      // mount() prepares highlighting first, then tears down the old editor
+      // and constructs the new one — keeping the previous diff on screen until
+      // the last moment. `diff` is set now so the toolbar (lang dropdown)
+      // tracks the new file; the host DOM is still the old editor until swap.
+      diff = next;
+      await mount(file, next.old_content, next.new_content, session);
+    } else {
+      // Non-text (binary / too-large), error, or nothing: drop the old editor
+      // and show the state message.
+      teardown();
+      diff = next;
     }
   }
 
-  async function mount(file: ChangedFile, oldText: string, newText: string) {
+  async function mount(
+    file: ChangedFile,
+    oldText: string,
+    newText: string,
+    session: number,
+  ) {
     if (!host) return;
     detectedLang = detectLanguage(file.path);
     const effectiveLang = langOverride ?? detectedLang;
@@ -116,6 +156,12 @@
       shikiExtension(oldText, effectiveLang, dark),
       shikiExtension(newText, effectiveLang, dark),
     ]);
+    // Superseded during async highlight prep — leave the current editor be;
+    // the newer load() owns the next swap.
+    if (session !== loadSession) return;
+    // Tear down the previous editor only now that the replacement's
+    // highlighting is ready, so the swap is synchronous and flash-free.
+    teardown();
 
     const baseExts: Extension[] = [
       // readOnly (vs. just editable=false) hides the Replace fields in the

@@ -68,10 +68,21 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
         : null;
   const previousRepoIdx = appState.selectedFile?.repoIdx ?? null;
 
+  // Worktree refreshes (focus auto-refresh, F5) re-scan the *same* ref pair —
+  // HEAD vs working tree. Blanking the file list + diff pane for the scan
+  // duration just to repaint the same content is jarring, so keep the current
+  // snapshot on screen and swap it in one shot at the end. Branch compares
+  // change refs, so the old diff is meaningless — clear upfront and stream.
+  const keepStale = appState.compareMode === "worktree";
+  // Fresh scan buffer for the keepStale swap-at-end path.
+  const incoming: ChangedFile[] = [];
+
   appState.loadingFiles = true;
   appState.error = null;
-  appState.files = [];
-  appState.selectedFile = null;
+  if (!keepStale) {
+    appState.files = [];
+    appState.selectedFile = null;
+  }
 
   // Paths of submodule gitlinks inside main. When main lists a changed
   // file at one of these paths it's actually the submodule-pointer bump
@@ -123,6 +134,13 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
     if (session !== compareSession) return;
     if (repoIdx === 0 && submoduleGitlinkPaths.has(file.path)) return;
     file.repoIdx = repoIdx;
+    if (keepStale) {
+      // Collect silently; the old snapshot stays on screen until the swap at
+      // the end. No reactive writes to files/selectedFile during the scan.
+      incoming.push(file);
+      pendingLangs.add(detectLanguage(file.path));
+      return;
+    }
     buffer.push(file);
     // Selection updates immediately so a previously-viewed file is reopened
     // as soon as it arrives — DiffView reads selectedFile directly and
@@ -173,17 +191,39 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
         console.warn(`compare: repo ${repo.path} failed:`, e);
       }
     }
-    // Final flush so anything queued in the last frame lands before we
-    // judge "did the previous selection survive?".
-    flushBuffer();
-    // Previous selection didn't survive the refresh — fall back to first file.
-    if (
-      session === compareSession &&
-      previousPath &&
-      !appState.selectedFile &&
-      appState.files.length > 0
-    ) {
-      appState.selectedFile = appState.files[0];
+    if (keepStale) {
+      // Swap the stale snapshot for the fresh scan in one shot. Re-selecting
+      // a *new* object for the same path (rather than keeping the old one)
+      // forces DiffView to reload the file's fresh content; the double-buffer
+      // there makes that swap flicker-free.
+      if (session === compareSession) {
+        appState.files = incoming;
+        const prev = previousPath
+          ? incoming.find(
+              (f) =>
+                f.path === previousPath &&
+                (f.repoIdx ?? 0) === (previousRepoIdx ?? 0),
+            )
+          : undefined;
+        appState.selectedFile = prev ?? incoming[0] ?? null;
+        if (pendingLangs.size > 0) {
+          void preloadLanguages([...pendingLangs]);
+          pendingLangs.clear();
+        }
+      }
+    } else {
+      // Final flush so anything queued in the last frame lands before we
+      // judge "did the previous selection survive?".
+      flushBuffer();
+      // Previous selection didn't survive the refresh — fall back to first file.
+      if (
+        session === compareSession &&
+        previousPath &&
+        !appState.selectedFile &&
+        appState.files.length > 0
+      ) {
+        appState.selectedFile = appState.files[0];
+      }
     }
   } catch (e) {
     if (session === compareSession) {
