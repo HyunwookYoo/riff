@@ -37,6 +37,11 @@ pub struct PersistedState {
     /// MAX_PICKER_WIDTH].
     #[serde(default = "default_blame_picker_width")]
     pub blame_picker_width: u32,
+    /// File list rendering mode (§ working-tree UX): "tree" (default) nests
+    /// files by directory; "flat" lists full paths. Global. Validated to one
+    /// of those two at write time.
+    #[serde(default = "default_file_view_mode")]
+    pub file_view_mode: String,
 }
 
 const MIN_PICKER_WIDTH: u32 = 200;
@@ -62,6 +67,10 @@ fn default_blame_picker_width() -> u32 {
     300
 }
 
+fn default_file_view_mode() -> String {
+    "tree".into()
+}
+
 impl Default for PersistedState {
     fn default() -> Self {
         Self {
@@ -72,6 +81,7 @@ impl Default for PersistedState {
             manual_repos_by_main: HashMap::new(),
             workspace_layout: default_workspace_layout(),
             blame_picker_width: default_blame_picker_width(),
+            file_view_mode: default_file_view_mode(),
         }
     }
 }
@@ -165,6 +175,17 @@ pub fn set_workspace_layout(app: &AppHandle, layout: String) -> Result<(), Store
 pub fn set_blame_picker_width(app: &AppHandle, width: u32) -> Result<(), StoreError> {
     let mut state = load(app)?;
     state.blame_picker_width = width.clamp(MIN_PICKER_WIDTH, MAX_PICKER_WIDTH);
+    save(app, &state)
+}
+
+pub fn set_file_view_mode(app: &AppHandle, mode: String) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    // Validate: ignore anything that isn't a known mode so a malformed call
+    // can't poison the stored state.
+    state.file_view_mode = match mode.as_str() {
+        "flat" => "flat".into(),
+        _ => "tree".into(),
+    };
     save(app, &state)
 }
 

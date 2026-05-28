@@ -35,6 +35,7 @@
       appState.manualReposByMain = s.manual_repos_by_main ?? {};
       appState.workspaceLayout = s.workspace_layout ?? "unified";
       appState.blamePickerWidth = s.blame_picker_width ?? 300;
+      appState.fileViewMode = s.file_view_mode ?? "tree";
     } catch {
       // First-run / corrupt state: keep defaults silently.
     }

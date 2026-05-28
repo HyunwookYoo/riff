@@ -5,6 +5,7 @@ import type {
   CompareCtx,
   CompareMode,
   DiffMode,
+  FileViewMode,
   RepoEntry,
   RepoFile,
   ThemeChoice,
@@ -44,7 +45,9 @@ class AppState {
   theme = $state<ThemeChoice>("system");
   effectiveTheme = $state<"light" | "dark">("light");
   fontSize = $state<number>(13);
-  fileViewMode = $state<"flat" | "tree">("flat");
+  // Global, persisted (PersistedState.file_view_mode). Mirrored on load;
+  // written back via setFileViewMode() in git.ts when toggled.
+  fileViewMode = $state<FileViewMode>("tree");
   ignoreWhitespace = $state(false);
   availableUpdate = $state<{ version: string; notes: string | null } | null>(
     null,

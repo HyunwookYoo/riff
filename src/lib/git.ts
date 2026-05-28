@@ -7,6 +7,7 @@ import type {
   DiffMode,
   FileDiff,
   FileStatus,
+  FileViewMode,
   PersistedState,
   SubmoduleInfo,
   ThemeChoice,
@@ -47,6 +48,10 @@ export function setWorkspaceLayout(layout: WorkspaceLayout): Promise<void> {
 
 export function setBlamePickerWidth(width: number): Promise<void> {
   return invoke("set_blame_picker_width", { width });
+}
+
+export function setFileViewMode(mode: FileViewMode): Promise<void> {
+  return invoke("set_file_view_mode", { mode });
 }
 
 export function listRefs(path: string): Promise<Branch[]> {

@@ -56,6 +56,10 @@ export type CompareMode = "branch" | "worktree";
 /// bar where one repo is visible at a time.
 export type WorkspaceLayout = "unified" | "tabs";
 
+/// File list rendering: "flat" lists full paths; "tree" nests by directory.
+/// Global, persisted. Defaults to "tree".
+export type FileViewMode = "flat" | "tree";
+
 /// Top-level workspace mode. `compare` covers branch + worktree diff (the
 /// sub-mode is `CompareMode`); `blame` is the standalone blame workspace.
 /// Session-only — never persisted.
@@ -74,6 +78,8 @@ export interface PersistedState {
   /// Width (px) of the blame view's left file-picker. Clamped 200-600 on
   /// the backend; defaults to 300 for new installs.
   blame_picker_width: number;
+  /// File list rendering mode (flat vs tree). Global. Defaults to "tree".
+  file_view_mode: FileViewMode;
 }
 
 /// A repo-qualified file path. Used by the unified blame picker

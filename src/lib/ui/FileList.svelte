@@ -2,6 +2,7 @@
   import { appState } from "$lib/store.svelte";
   import type { ChangedFile, FileStatus, RepoEntry } from "$lib/types";
   import { toggleFocus } from "$lib/focus";
+  import { setFileViewMode } from "$lib/git";
   import { buildTree } from "./tree";
   import TreeNode from "./TreeNode.svelte";
 
@@ -91,7 +92,9 @@
   }
 
   function toggleViewMode() {
-    appState.fileViewMode = appState.fileViewMode === "flat" ? "tree" : "flat";
+    const next = appState.fileViewMode === "flat" ? "tree" : "flat";
+    appState.fileViewMode = next;
+    void setFileViewMode(next);
   }
 
   function isSelected(f: ChangedFile): boolean {
@@ -134,10 +137,12 @@
     <button
       type="button"
       class="view-toggle"
-      title="Toggle flat/tree view"
+      title={appState.fileViewMode === "flat"
+        ? "Switch to tree view"
+        : "Switch to flat view"}
       onclick={toggleViewMode}
     >
-      {appState.fileViewMode === "flat" ? "Tree" : "Flat"}
+      {appState.fileViewMode === "flat" ? "To Tree" : "To Flat"}
     </button>
   </header>
 
