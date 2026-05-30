@@ -356,6 +356,9 @@
   .body {
     display: grid;
     grid-template-columns: 300px 1fr;
+    /* Bound the single row to the container height (not auto-grow to the file
+       list's content), so each column can scroll internally. */
+    grid-template-rows: minmax(0, 1fr);
     flex: 1;
     min-height: 0;
   }

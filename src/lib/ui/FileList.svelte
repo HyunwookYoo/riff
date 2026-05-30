@@ -238,6 +238,7 @@
     display: flex;
     flex-direction: column;
     height: 100%;
+    min-height: 0;
     border-right: 1px solid var(--border);
     background: var(--sidebar-bg);
     min-width: 0;
@@ -291,6 +292,9 @@
   .scroll {
     overflow-y: auto;
     flex: 1;
+    /* Allow the flex child to shrink below its content height so overflow
+       scrolling actually engages instead of expanding the column. */
+    min-height: 0;
   }
   .empty {
     padding: 12px 10px;
