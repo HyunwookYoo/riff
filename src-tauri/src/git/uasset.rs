@@ -345,4 +345,130 @@ mod tests {
         eprintln!("filtered {} -> {} bytes", raw.len(), filtered.len());
         assert!(filtered.contains("Exports"));
     }
+
+    #[test]
+    fn is_uasset_path_matches_uasset_and_umap() {
+        assert!(is_uasset_path("Foo.uasset"));
+        assert!(is_uasset_path("Foo.umap"));
+        assert!(is_uasset_path("deep/dir/Bar.UASSET")); // case-insensitive
+        assert!(is_uasset_path(r"win\style\Level.Umap"));
+        assert!(!is_uasset_path("Foo.uexp"));
+        assert!(!is_uasset_path("notes.txt"));
+        assert!(!is_uasset_path("uasset")); // extension-less, not a match
+    }
+
+    #[test]
+    fn sibling_uexp_swaps_final_extension() {
+        assert_eq!(sibling_uexp("Foo.uasset").as_deref(), Some("Foo.uexp"));
+        assert_eq!(sibling_uexp("a/b/Level.umap").as_deref(), Some("a/b/Level.uexp"));
+        // only the final extension is replaced
+        assert_eq!(sibling_uexp("a.b.uasset").as_deref(), Some("a.b.uexp"));
+        // no extension -> no sibling
+        assert_eq!(sibling_uexp("noext"), None);
+    }
+
+    #[test]
+    fn safe_stem_sanitizes_and_falls_back() {
+        assert_eq!(safe_stem("dir/My_Asset.uasset"), "My_Asset");
+        assert_eq!(safe_stem(r"C:\x\Weapon-01.umap"), "Weapon-01");
+        // drops spaces / punctuation / non-ascii
+        assert_eq!(safe_stem("My Asset!.uasset"), "MyAsset");
+        // an all-garbage stem falls back to a constant
+        assert_eq!(safe_stem("???.uasset"), "asset");
+    }
+
+    #[test]
+    fn looks_like_lfs_pointer_detects_spec_header() {
+        assert!(looks_like_lfs_pointer(
+            b"version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 12\n"
+        ));
+        assert!(!looks_like_lfs_pointer(b"\x00\x01\x02 real binary asset"));
+        assert!(!looks_like_lfs_pointer(b""));
+    }
+
+    #[test]
+    fn filter_volatile_keeps_only_exports_and_imports() {
+        let raw = r#"{
+            "$type": "UAssetAPI.UAsset, UAssetAPI",
+            "NameMap": ["A", "B"],
+            "PackageGuid": "{F1F9-...}",
+            "Exports": [],
+            "Imports": []
+        }"#;
+        let out = filter_volatile(raw).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("Exports"));
+        assert!(obj.contains_key("Imports"));
+        // every other root-level key is dropped
+        assert_eq!(obj.len(), 2);
+    }
+
+    #[test]
+    fn filter_volatile_strips_noise_at_every_depth() {
+        let raw = r#"{
+          "Exports": [
+            {
+              "$type": "UAssetAPI.ExportTypes.NormalExport, UAssetAPI",
+              "ObjectName": "Script",
+              "SerialOffset": 1382,
+              "SerialSize": 41,
+              "OuterIndex": 0,
+              "ObjectFlags": "RF_Public",
+              "PackageGuid": "{0000}",
+              "Data": [
+                {
+                  "$type": "UAssetAPI.PropertyTypes.Objects.ObjectPropertyData, UAssetAPI",
+                  "Name": "AssetImportData",
+                  "ArrayIndex": 0,
+                  "PropertyGuid": null,
+                  "Value": 1
+                }
+              ]
+            }
+          ],
+          "Imports": []
+        }"#;
+        let out = filter_volatile(raw).unwrap();
+        // content-bearing fields survive...
+        assert!(out.contains("\"ObjectName\""));
+        assert!(out.contains("Script"));
+        assert!(out.contains("\"Value\""));
+        // ...while serialization noise is gone at both export and property depth
+        for noise in [
+            "$type",
+            "SerialOffset",
+            "SerialSize",
+            "OuterIndex",
+            "ObjectFlags",
+            "PackageGuid",
+            "ArrayIndex",
+            "PropertyGuid",
+        ] {
+            assert!(!out.contains(noise), "noise key `{noise}` should be stripped");
+        }
+    }
+
+    #[test]
+    fn filter_volatile_is_deterministic() {
+        // serde_json's default key-ordered Map makes the same content serialize
+        // byte-identically, which is what keeps derived diffs stable.
+        let raw = r#"{"Imports":[],"Exports":[{"ObjectName":"Z","Data":[]}]}"#;
+        assert_eq!(filter_volatile(raw).unwrap(), filter_volatile(raw).unwrap());
+    }
+
+    #[test]
+    fn filter_volatile_passes_through_non_object_root() {
+        // A non-object root isn't the expected package summary; it's cleaned in
+        // place (noise stripped) and passed through rather than reduced to {}.
+        let raw = r#"[{"$type":"X","keep":1}]"#;
+        let out = filter_volatile(raw).unwrap();
+        assert!(out.contains("keep"));
+        assert!(!out.contains("$type"));
+    }
+
+    #[test]
+    fn filter_volatile_rejects_malformed_json() {
+        assert!(filter_volatile("{ not valid json").is_err());
+    }
 }
