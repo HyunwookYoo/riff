@@ -33,11 +33,19 @@ export type FileDiff =
       new_content: string;
       old_size: number;
       new_size: number;
+      /// Present when the text is a derived view (e.g. an Unreal asset parsed
+      /// to JSON) rather than raw bytes. Drives the "derived" badge.
+      derived_label?: string | null;
+      /// Engine version actually used to derive an Unreal asset view.
+      ue_version?: string | null;
     }
   | {
       kind: "binary";
       old_size: number;
       new_size: number;
+      /// Optional reason shown with the binary view (e.g. why an Unreal asset
+      /// couldn't be parsed).
+      note?: string | null;
     }
   | {
       kind: "too-large";
@@ -80,6 +88,12 @@ export interface PersistedState {
   blame_picker_width: number;
   /// File list rendering mode (flat vs tree). Global. Defaults to "tree".
   file_view_mode: FileViewMode;
+  /// Master toggle for deriving Unreal asset (.uasset/.umap) previews.
+  parse_unreal_assets: boolean;
+  /// Absolute path to UAssetGUI.exe (global). null/empty disables previews.
+  uassetgui_path: string | null;
+  /// Per-main-repo Unreal Engine version string (e.g. "5.3"), keyed by repo path.
+  ue_version_by_repo: Record<string, string>;
 }
 
 /// A repo-qualified file path. Used by the unified blame picker

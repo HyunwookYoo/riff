@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use super::blame::{parse_porcelain, Blame};
+use super::uasset;
 use super::{
     Branch, BranchKind, ChangedFile, DiffMode, FileDiff, FileStatus, GitError, GitLayer,
     SubmoduleInfo,
@@ -317,6 +318,25 @@ fn is_binary(bytes: &[u8]) -> bool {
     head.contains(&0)
 }
 
+/// Fetch a blob's working-tree-smudged content for `spec` (`<ref>:<path>`),
+/// resolving Git LFS pointers to real bytes via `git cat-file --filters`.
+/// Unreal `.uasset` files are typically LFS-tracked, so the plain
+/// `cat-file --batch` blob is just the pointer text. Returns `None` when the
+/// object is missing or the command fails.
+fn cat_file_filtered(repo: &Path, spec: &str) -> Option<Vec<u8>> {
+    let output = git_command()
+        .arg("-C")
+        .arg(repo)
+        .args(["cat-file", "--filters", spec])
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(output.stdout)
+}
+
 /// Ensure the cached session targets `path`. Drops the previous session
 /// (which terminates its child processes) before spawning a new one.
 fn ensure_session(
@@ -483,6 +503,7 @@ impl GitLayer for GitCli {
         file_path: &str,
         old_path: Option<&str>,
         force: bool,
+        uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError> {
         let start = validate_ref(start)?;
         let target = validate_ref(target)?;
@@ -514,11 +535,21 @@ impl GitLayer for GitCli {
             BatchResponse::Missing => None,
         };
 
+        // Unreal asset preview bypasses the raw too-large gate (the .uasset
+        // header is small; bulk lives in .uexp) but keeps its own safety cap.
+        let derive_uasset = uasset_cfg.enabled && uasset::is_uasset_path(file_path);
         let max_side = old_size.unwrap_or(0).max(new_size.unwrap_or(0));
-        if !force && max_side > LARGE_FILE_BYTES {
+        if !force && !derive_uasset && max_side > LARGE_FILE_BYTES {
             return Ok(FileDiff::TooLarge {
                 old_size: old_size.unwrap_or(0),
                 new_size: new_size.unwrap_or(0),
+            });
+        }
+        if derive_uasset && !force && max_side > uasset::UASSET_MAX_BYTES {
+            return Ok(FileDiff::Binary {
+                old_size: old_size.unwrap_or(0),
+                new_size: new_size.unwrap_or(0),
+                note: Some("Unreal asset header too large to preview.".to_string()),
             });
         }
 
@@ -539,10 +570,32 @@ impl GitLayer for GitCli {
             Vec::new()
         };
 
+        if derive_uasset {
+            // Re-fetch through the smudge filter so LFS-tracked assets resolve
+            // to real bytes (the batch blobs above are LFS pointers).
+            let old_asset = cat_file_filtered(path, &old_spec).unwrap_or_default();
+            let new_asset = cat_file_filtered(path, &new_spec).unwrap_or_default();
+            let old_uexp = uasset::sibling_uexp(old_target)
+                .and_then(|sp| cat_file_filtered(path, &format!("{old_ref}:{sp}")));
+            let new_uexp = uasset::sibling_uexp(file_path)
+                .and_then(|sp| cat_file_filtered(path, &format!("{new_ref}:{sp}")));
+            return Ok(uasset::derive_filediff(
+                uasset_cfg,
+                file_path,
+                &old_asset,
+                old_uexp.as_deref(),
+                &new_asset,
+                new_uexp.as_deref(),
+                old_size.unwrap_or(0),
+                new_size.unwrap_or(0),
+            ));
+        }
+
         if is_binary(&old_bytes) || is_binary(&new_bytes) {
             return Ok(FileDiff::Binary {
                 old_size: old_size.unwrap_or(0),
                 new_size: new_size.unwrap_or(0),
+                note: None,
             });
         }
 
@@ -551,6 +604,8 @@ impl GitLayer for GitCli {
             new_content: String::from_utf8_lossy(&new_bytes).into_owned(),
             old_size: old_size.unwrap_or(0),
             new_size: new_size.unwrap_or(0),
+            derived_label: None,
+            ue_version: None,
         })
     }
 
@@ -720,6 +775,7 @@ impl GitLayer for GitCli {
         old_path: Option<&str>,
         status: FileStatus,
         force: bool,
+        uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError> {
         validate_path(file_path)?;
         if let Some(p) = old_path {
@@ -755,11 +811,19 @@ impl GitLayer for GitCli {
             None
         };
 
+        let derive_uasset = uasset_cfg.enabled && uasset::is_uasset_path(file_path);
         let max_side = old_size.unwrap_or(0).max(new_size.unwrap_or(0));
-        if !force && max_side > LARGE_FILE_BYTES {
+        if !force && !derive_uasset && max_side > LARGE_FILE_BYTES {
             return Ok(FileDiff::TooLarge {
                 old_size: old_size.unwrap_or(0),
                 new_size: new_size.unwrap_or(0),
+            });
+        }
+        if derive_uasset && !force && max_side > uasset::UASSET_MAX_BYTES {
+            return Ok(FileDiff::Binary {
+                old_size: old_size.unwrap_or(0),
+                new_size: new_size.unwrap_or(0),
+                note: Some("Unreal asset header too large to preview.".to_string()),
             });
         }
 
@@ -781,10 +845,35 @@ impl GitLayer for GitCli {
             Vec::new()
         };
 
+        if derive_uasset {
+            // Old side from HEAD through the smudge filter (LFS → real bytes);
+            // new side is the working-tree file, already smudged on disk.
+            let old_asset = if needs_head {
+                cat_file_filtered(path, &head_spec).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let old_uexp = uasset::sibling_uexp(head_target)
+                .and_then(|sp| cat_file_filtered(path, &format!("HEAD:{sp}")));
+            let new_uexp =
+                uasset::sibling_uexp(file_path).and_then(|sp| fs::read(path.join(sp)).ok());
+            return Ok(uasset::derive_filediff(
+                uasset_cfg,
+                file_path,
+                &old_asset,
+                old_uexp.as_deref(),
+                &new_bytes,
+                new_uexp.as_deref(),
+                old_size.unwrap_or(0),
+                new_size.unwrap_or(0),
+            ));
+        }
+
         if is_binary(&old_bytes) || is_binary(&new_bytes) {
             return Ok(FileDiff::Binary {
                 old_size: old_size.unwrap_or(0),
                 new_size: new_size.unwrap_or(0),
+                note: None,
             });
         }
 
@@ -793,6 +882,8 @@ impl GitLayer for GitCli {
             new_content: String::from_utf8_lossy(&new_bytes).into_owned(),
             old_size: old_size.unwrap_or(0),
             new_size: new_size.unwrap_or(0),
+            derived_label: None,
+            ue_version: None,
         })
     }
 

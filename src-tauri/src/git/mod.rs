@@ -1,6 +1,7 @@
 pub mod blame;
 pub mod cli;
 pub mod error;
+pub mod uasset;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -69,10 +70,22 @@ pub enum FileDiff {
         new_content: String,
         old_size: u64,
         new_size: u64,
+        /// Set when the text is a *derived* view (e.g. an Unreal asset parsed
+        /// to JSON) rather than the raw file bytes. The frontend shows a badge.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        derived_label: Option<String>,
+        /// Engine version used to derive an Unreal asset view, echoed back so
+        /// the UI's version dropdown reflects what was actually used.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ue_version: Option<String>,
     },
     Binary {
         old_size: u64,
         new_size: u64,
+        /// Optional reason shown alongside the binary view — e.g. why an
+        /// Unreal asset couldn't be parsed into a property diff.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
     },
     TooLarge {
         old_size: u64,
@@ -105,6 +118,7 @@ pub trait GitLayer {
         file_path: &str,
         old_path: Option<&str>,
         force: bool,
+        uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError>;
     /// Stream the working tree changes vs HEAD: tracked diff via
     /// `git diff HEAD --name-status -z --find-renames` plus untracked files
@@ -128,6 +142,7 @@ pub trait GitLayer {
         old_path: Option<&str>,
         status: FileStatus,
         force: bool,
+        uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to

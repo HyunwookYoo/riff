@@ -20,3 +20,8 @@ Desktop.ini
 # Signing keys — NEVER commit
 *.key
 *tauri-signing-private*
+
+# Bundled UAssetGUI binary (large; fetched/built at release time, see
+# src-tauri/resources/uassetgui/README.md). The folder + placeholder stay.
+src-tauri/resources/uassetgui/*.exe
+src-tauri/resources/uassetgui/UAssetGUI-LICENSE.txt

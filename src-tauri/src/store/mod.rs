@@ -42,6 +42,19 @@ pub struct PersistedState {
     /// of those two at write time.
     #[serde(default = "default_file_view_mode")]
     pub file_view_mode: String,
+    /// Master toggle for deriving Unreal asset (.uasset/.umap) property
+    /// previews. Defaults on.
+    #[serde(default = "default_true")]
+    pub parse_unreal_assets: bool,
+    /// Absolute path to `UAssetGUI.exe`, used to derive Unreal asset previews.
+    /// Global (one tool install per machine). Empty/absent disables previews.
+    #[serde(default)]
+    pub uassetgui_path: Option<String>,
+    /// Per-main-repo Unreal Engine version string (e.g. "5.3") passed to
+    /// UAssetGUI. Keyed by repo path. A repo's assets are usually one engine
+    /// version, so this is stored per-repo rather than globally.
+    #[serde(default)]
+    pub ue_version_by_repo: HashMap<String, String>,
 }
 
 const MIN_PICKER_WIDTH: u32 = 200;
@@ -71,6 +84,10 @@ fn default_file_view_mode() -> String {
     "tree".into()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for PersistedState {
     fn default() -> Self {
         Self {
@@ -82,6 +99,9 @@ impl Default for PersistedState {
             workspace_layout: default_workspace_layout(),
             blame_picker_width: default_blame_picker_width(),
             file_view_mode: default_file_view_mode(),
+            parse_unreal_assets: default_true(),
+            uassetgui_path: None,
+            ue_version_by_repo: HashMap::new(),
         }
     }
 }
@@ -186,6 +206,33 @@ pub fn set_file_view_mode(app: &AppHandle, mode: String) -> Result<(), StoreErro
         "flat" => "flat".into(),
         _ => "tree".into(),
     };
+    save(app, &state)
+}
+
+pub fn set_parse_unreal_assets(app: &AppHandle, enabled: bool) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    state.parse_unreal_assets = enabled;
+    save(app, &state)
+}
+
+pub fn set_uassetgui_path(app: &AppHandle, path: Option<String>) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    // Normalize empty to None so the frontend can clear it.
+    state.uassetgui_path = path.filter(|p| !p.trim().is_empty());
+    save(app, &state)
+}
+
+pub fn set_ue_version_for_repo(
+    app: &AppHandle,
+    repo: String,
+    version: String,
+) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    if version.trim().is_empty() {
+        state.ue_version_by_repo.remove(&repo);
+    } else {
+        state.ue_version_by_repo.insert(repo, version);
+    }
     save(app, &state)
 }
 

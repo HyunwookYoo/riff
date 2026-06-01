@@ -95,6 +95,12 @@ class AppState {
   // PersistedState.blame_picker_width on load; written back (debounced) on
   // drag-handle release.
   blamePickerWidth = $state<number>(300);
+  // Unreal asset preview (§ uasset). Master toggle, global UAssetGUI.exe path,
+  // and per-repo UE version map. Mirrored from PersistedState on load; written
+  // back via git.ts setters.
+  parseUnrealAssets = $state<boolean>(true);
+  uassetguiPath = $state<string | null>(null);
+  ueVersionByRepo = $state<Record<string, string>>({});
 }
 
 export const appState = new AppState();

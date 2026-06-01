@@ -10,6 +10,7 @@
   import WorkTreeFields from "./WorkTreeFields.svelte";
   import Dropdown from "./Dropdown.svelte";
   import RepoChip from "./RepoChip.svelte";
+  import UnrealSettings from "./UnrealSettings.svelte";
 
   // Direct mode-toggle buttons. Unlike Ctrl+Shift+W (which cycles), these
   // jump to a specific workspace. Entering blame carries selectedFile over
@@ -101,6 +102,8 @@
     ]}
     onchange={(v) => chooseTheme(v as ThemeChoice)}
   />
+
+  <UnrealSettings />
 
   {#if appState.appMode === "compare"}
     <button

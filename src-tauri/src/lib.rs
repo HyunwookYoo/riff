@@ -9,6 +9,7 @@ use git::{
     SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
+use tauri::Manager;
 
 #[tauri::command]
 fn validate_repo(state: tauri::State<GitCli>, path: String) -> Result<(), GitError> {
@@ -46,6 +47,7 @@ fn diff_files(
 
 #[tauri::command]
 fn file_diff(
+    app: tauri::AppHandle,
     state: tauri::State<GitCli>,
     path: String,
     start: String,
@@ -54,7 +56,9 @@ fn file_diff(
     file_path: String,
     old_path: Option<String>,
     force: bool,
+    ue_version: Option<String>,
 ) -> Result<FileDiff, GitError> {
+    let cfg = uasset_config(&app, ue_version);
     state.file_diff(
         Path::new(&path),
         &start,
@@ -63,7 +67,41 @@ fn file_diff(
         &file_path,
         old_path.as_deref(),
         force,
+        &cfg,
     )
+}
+
+/// Assemble the Unreal-asset derive config from persisted settings plus the
+/// frontend's per-repo engine-version choice. Falls back to a recent default
+/// version when none is provided.
+fn uasset_config(app: &tauri::AppHandle, ue_version: Option<String>) -> git::uasset::Config {
+    let state = store::load(app).unwrap_or_default();
+    // A user-set path wins (power users / custom installs); otherwise use the
+    // self-contained UAssetGUI bundled with the app so end users need zero
+    // setup.
+    let uassetgui_path = state
+        .uassetgui_path
+        .or_else(|| bundled_uassetgui_path(app));
+    git::uasset::Config {
+        enabled: state.parse_unreal_assets,
+        uassetgui_path,
+        engine_version: ue_version
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "5.5".to_string()),
+    }
+}
+
+/// Path to the UAssetGUI executable bundled as a Tauri resource, if present.
+/// Bundled via `bundle.resources` (see tauri.conf.json) and produced by the
+/// release CI. Absent in plain `tauri dev` builds — there the settings
+/// override is used instead.
+fn bundled_uassetgui_path(app: &tauri::AppHandle) -> Option<String> {
+    let dir = app.path().resource_dir().ok()?;
+    let exe = dir
+        .join("resources")
+        .join("uassetgui")
+        .join("UAssetGUI.exe");
+    exe.is_file().then(|| exe.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -82,19 +120,23 @@ fn worktree_files(
 
 #[tauri::command]
 fn worktree_file_diff(
+    app: tauri::AppHandle,
     state: tauri::State<GitCli>,
     path: String,
     file_path: String,
     old_path: Option<String>,
     status: FileStatus,
     force: bool,
+    ue_version: Option<String>,
 ) -> Result<FileDiff, GitError> {
+    let cfg = uasset_config(&app, ue_version);
     state.worktree_file_diff(
         Path::new(&path),
         &file_path,
         old_path.as_deref(),
         status,
         force,
+        &cfg,
     )
 }
 
@@ -216,6 +258,25 @@ fn set_file_view_mode(app: tauri::AppHandle, mode: String) -> Result<(), StoreEr
 }
 
 #[tauri::command]
+fn set_parse_unreal_assets(app: tauri::AppHandle, enabled: bool) -> Result<(), StoreError> {
+    store::set_parse_unreal_assets(&app, enabled)
+}
+
+#[tauri::command]
+fn set_uassetgui_path(app: tauri::AppHandle, path: Option<String>) -> Result<(), StoreError> {
+    store::set_uassetgui_path(&app, path)
+}
+
+#[tauri::command]
+fn set_ue_version_for_repo(
+    app: tauri::AppHandle,
+    repo: String,
+    version: String,
+) -> Result<(), StoreError> {
+    store::set_ue_version_for_repo(&app, repo, version)
+}
+
+#[tauri::command]
 fn add_manual_repo(
     app: tauri::AppHandle,
     main_repo: String,
@@ -261,6 +322,9 @@ pub fn run() {
             set_workspace_layout,
             set_blame_picker_width,
             set_file_view_mode,
+            set_parse_unreal_assets,
+            set_uassetgui_path,
+            set_ue_version_for_repo,
             add_manual_repo,
             remove_manual_repo,
         ])

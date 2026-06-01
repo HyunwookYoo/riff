@@ -28,6 +28,31 @@ jobs:
 
       - run: npm ci
 
+      # Build a self-contained, single-file UAssetGUI so end users can preview
+      # Unreal .uasset/.umap diffs with zero setup. It's bundled via tauri
+      # resources (see src-tauri/resources/uassetgui). UAssetAPI is a git
+      # submodule, so --recurse-submodules is required. The project targets
+      # net8.0-windows (UAssetGUI v1.1.0, pinned below for reproducibility).
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build self-contained UAssetGUI
+        shell: pwsh
+        env:
+          UASSETGUI_REF: v1.1.0
+        run: |
+          git clone --depth 1 --recurse-submodules --branch $env:UASSETGUI_REF https://github.com/atenfyr/UAssetGUI.git "$env:RUNNER_TEMP\uassetgui-src"
+          dotnet publish "$env:RUNNER_TEMP\uassetgui-src\UAssetGUI\UAssetGUI.csproj" `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o "$env:RUNNER_TEMP\uassetgui-out"
+          New-Item -ItemType Directory -Force -Path src-tauri\resources\uassetgui | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\uassetgui-out\UAssetGUI.exe" src-tauri\resources\uassetgui\UAssetGUI.exe -Force
+          if (Test-Path "$env:RUNNER_TEMP\uassetgui-src\LICENSE") {
+            Copy-Item "$env:RUNNER_TEMP\uassetgui-src\LICENSE" src-tauri\resources\uassetgui\UAssetGUI-LICENSE.txt -Force
+          }
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

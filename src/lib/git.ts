@@ -54,6 +54,21 @@ export function setFileViewMode(mode: FileViewMode): Promise<void> {
   return invoke("set_file_view_mode", { mode });
 }
 
+export function setParseUnrealAssets(enabled: boolean): Promise<void> {
+  return invoke("set_parse_unreal_assets", { enabled });
+}
+
+export function setUassetguiPath(path: string | null): Promise<void> {
+  return invoke("set_uassetgui_path", { path });
+}
+
+export function setUeVersionForRepo(
+  repo: string,
+  version: string,
+): Promise<void> {
+  return invoke("set_ue_version_for_repo", { repo, version });
+}
+
 export function listRefs(path: string): Promise<Branch[]> {
   return invoke("list_refs", { path });
 }
@@ -91,6 +106,7 @@ export function fileDiff(
   filePath: string,
   oldPath: string | null,
   force: boolean,
+  ueVersion: string | null = null,
 ): Promise<FileDiff> {
   return invoke("file_diff", {
     path,
@@ -100,6 +116,7 @@ export function fileDiff(
     filePath,
     oldPath,
     force,
+    ueVersion,
   });
 }
 
@@ -127,6 +144,7 @@ export function worktreeFileDiff(
   oldPath: string | null,
   status: FileStatus,
   force: boolean,
+  ueVersion: string | null = null,
 ): Promise<FileDiff> {
   return invoke("worktree_file_diff", {
     path,
@@ -134,6 +152,7 @@ export function worktreeFileDiff(
     oldPath,
     status,
     force,
+    ueVersion,
   });
 }
 

@@ -36,6 +36,9 @@
       appState.workspaceLayout = s.workspace_layout ?? "unified";
       appState.blamePickerWidth = s.blame_picker_width ?? 300;
       appState.fileViewMode = s.file_view_mode ?? "tree";
+      appState.parseUnrealAssets = s.parse_unreal_assets ?? true;
+      appState.uassetguiPath = s.uassetgui_path ?? null;
+      appState.ueVersionByRepo = s.ue_version_by_repo ?? {};
     } catch {
       // First-run / corrupt state: keep defaults silently.
     }

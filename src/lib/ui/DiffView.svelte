@@ -5,7 +5,7 @@
   import { MergeView, unifiedMergeView } from "@codemirror/merge";
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
-  import { fileDiff, worktreeFileDiff } from "$lib/git";
+  import { fileDiff, setUeVersionForRepo, worktreeFileDiff } from "$lib/git";
   import { resolveDiffRefsFor } from "$lib/workspace";
   import type { ChangedFile, FileDiff } from "$lib/types";
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
@@ -36,6 +36,36 @@
     ...supportedLanguages.map((l) => ({ value: l, label: l })),
   ]);
 
+  // Unreal asset (.uasset/.umap) preview. The engine version is resolved
+  // per-repo from the persisted map; the dropdown lets the user correct it
+  // live (UAssetGUI can't auto-detect), persisting the choice for that repo.
+  const UE_VERSIONS = [
+    "4.25", "4.26", "4.27",
+    "5.0", "5.1", "5.2", "5.3", "5.4", "5.5", "5.6", "5.7",
+  ];
+  const DEFAULT_UE_VERSION = "5.5";
+  const ueVersionOptions = UE_VERSIONS.map((v) => ({ value: v, label: v }));
+
+  const selectedRepoPath = $derived(
+    appState.repos[appState.selectedFile?.repoIdx ?? 0]?.path ??
+      appState.repoPath,
+  );
+  const ueVersion = $derived(
+    appState.ueVersionByRepo[selectedRepoPath] ?? DEFAULT_UE_VERSION,
+  );
+  // True once a derived (parsed-to-JSON) Unreal asset view has loaded.
+  const isDerived = $derived(
+    diff?.kind === "text" && !!diff.derived_label,
+  );
+
+  function changeUeVersion(v: string) {
+    const repo = selectedRepoPath;
+    if (!repo) return;
+    appState.ueVersionByRepo = { ...appState.ueVersionByRepo, [repo]: v };
+    void setUeVersionForRepo(repo, v);
+    // The reload effect observes ueVersionByRepo and re-derives.
+  }
+
   // Reset override whenever the selected file or compare context changes.
   $effect(() => {
     void appState.selectedFile;
@@ -53,11 +83,13 @@
     const theme = appState.effectiveTheme;
     const ov = langOverride;
     const cm = appState.compareMode;
+    const uv = ueVersion;
     void file;
     void mode;
     void theme;
     void ov;
     void cm;
+    void uv;
     load(false);
   });
 
@@ -99,6 +131,7 @@
           file.old_path,
           file.status,
           force,
+          ueVersion,
         );
       } else {
         const refs = await resolveDiffRefsFor(repoIdx);
@@ -113,6 +146,7 @@
             file.path,
             file.old_path,
             force,
+            ueVersion,
           );
         }
       }
@@ -149,7 +183,9 @@
     session: number,
   ) {
     if (!host) return;
-    detectedLang = detectLanguage(file.path);
+    // Derived Unreal asset views are JSON regardless of the .uasset extension.
+    const derived = diff?.kind === "text" && !!diff.derived_label;
+    detectedLang = derived ? "json" : detectLanguage(file.path);
     const effectiveLang = langOverride ?? detectedLang;
     const dark = isDarkMode();
     const [oldExt, newExt] = await Promise.all([
@@ -250,6 +286,17 @@
 <div class="diffview">
   <div class="toolbar">
     <div class="meta">
+      {#if isDerived}
+        <span class="derived-badge" title="Showing a parsed property view, not raw bytes">
+          {diff?.kind === "text" ? diff.derived_label : ""}
+        </span>
+        <Dropdown
+          title="Unreal Engine version (UAssetGUI can't auto-detect)"
+          value={ueVersion}
+          options={ueVersionOptions}
+          onchange={changeUeVersion}
+        />
+      {/if}
       {#if diff?.kind === "text"}
         <Dropdown
           title="Override language"
@@ -303,6 +350,9 @@
   {:else if diff.kind === "binary"}
     <div class="state muted">
       Binary file ({fmt(diff.old_size)} → {fmt(diff.new_size)}). Diff not shown.
+      {#if diff.note}
+        <div class="binary-note">{diff.note}</div>
+      {/if}
     </div>
   {:else if diff.kind === "too-large"}
     <div class="state muted">
@@ -334,8 +384,24 @@
   .meta {
     display: flex;
     gap: 10px;
+    align-items: center;
     opacity: 0.75;
     font-family: var(--mono);
+  }
+  .derived-badge {
+    padding: 1px 7px;
+    border-radius: 3px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.8em;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .binary-note {
+    margin-top: 6px;
+    font-size: 0.9em;
+    opacity: 0.85;
+    max-width: 48ch;
   }
   .modes {
     display: flex;
