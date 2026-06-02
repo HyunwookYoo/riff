@@ -26,6 +26,15 @@ export interface ChangedFile {
 
 export type DiffMode = "three-dot" | "two-dot";
 
+/// A changed range in UTF-16 offsets, computed by the backend and injected
+/// into `@codemirror/merge` via `diffConfig.override`. Mirrors Rust `Change`.
+export interface DiffChange {
+  from_a: number;
+  to_a: number;
+  from_b: number;
+  to_b: number;
+}
+
 export type FileDiff =
   | {
       kind: "text";
@@ -33,6 +42,9 @@ export type FileDiff =
       new_content: string;
       old_size: number;
       new_size: number;
+      /// Precomputed diff. `old_content`/`new_content` are EOL-normalized to
+      /// match these offsets.
+      changes: DiffChange[];
       /// Present when the text is a derived view (e.g. an Unreal asset parsed
       /// to JSON) rather than raw bytes. Drives the "derived" badge.
       derived_label?: string | null;

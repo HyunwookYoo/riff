@@ -2,7 +2,7 @@
   import { onDestroy } from "svelte";
   import { EditorView, keymap, lineNumbers } from "@codemirror/view";
   import { EditorState, type Extension } from "@codemirror/state";
-  import { MergeView, unifiedMergeView } from "@codemirror/merge";
+  import { MergeView, unifiedMergeView, Change } from "@codemirror/merge";
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
   import { fileDiff, setUeVersionForRepo, worktreeFileDiff } from "$lib/git";
@@ -11,6 +11,7 @@
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
   import { fullLineChangePlugin } from "$lib/diff/fullLine";
+  import { toCMChanges } from "$lib/diff/changes";
   import { setActiveDiffView } from "$lib/diff/activeView";
   import { adjustFontSize, resetFontSize } from "$lib/font";
   import Dropdown from "./Dropdown.svelte";
@@ -213,6 +214,18 @@
       fullLineChangePlugin,
     ];
 
+    // Inject the backend's diff so the editor renders it verbatim instead of
+    // recomputing one — CodeMirror's default scanLimit bails on large, densely
+    // changed files and floods the whole file as changed. Editors are readOnly,
+    // so override is only ever called once with the full docs.
+    // Real Change instances (not plain objects): the merge addon's toChunks
+    // calls change.offset(). Fresh array per call — makePresentable mutates it.
+    const changes =
+      diff?.kind === "text"
+        ? toCMChanges(diff.changes, (a, b, c, d) => new Change(a, b, c, d))
+        : [];
+    const diffConfig = { override: () => changes.slice() };
+
     if (appState.viewMode === "side-by-side") {
       mergeView = new MergeView({
         a: {
@@ -225,6 +238,7 @@
         },
         parent: host,
         collapseUnchanged: { margin: 3, minSize: 4 },
+        diffConfig,
       });
       setActiveDiffView(mergeView.b);
     } else {
@@ -238,6 +252,7 @@
               original: oldText,
               mergeControls: false,
               collapseUnchanged: { margin: 3, minSize: 4 },
+              diffConfig,
             }),
           ],
         }),

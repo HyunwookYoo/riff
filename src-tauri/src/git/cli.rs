@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use super::blame::{parse_porcelain, Blame};
+use super::diff;
 use super::uasset;
 use super::{
     Branch, BranchKind, ChangedFile, DiffMode, FileDiff, FileStatus, GitError, GitLayer,
@@ -599,13 +600,17 @@ impl GitLayer for GitCli {
             });
         }
 
+        let old_content = diff::normalize_eol(&String::from_utf8_lossy(&old_bytes));
+        let new_content = diff::normalize_eol(&String::from_utf8_lossy(&new_bytes));
+        let changes = diff::compute_changes(&old_content, &new_content);
         Ok(FileDiff::Text {
-            old_content: String::from_utf8_lossy(&old_bytes).into_owned(),
-            new_content: String::from_utf8_lossy(&new_bytes).into_owned(),
+            old_content,
+            new_content,
             old_size: old_size.unwrap_or(0),
             new_size: new_size.unwrap_or(0),
             derived_label: None,
             ue_version: None,
+            changes,
         })
     }
 
@@ -877,13 +882,17 @@ impl GitLayer for GitCli {
             });
         }
 
+        let old_content = diff::normalize_eol(&String::from_utf8_lossy(&old_bytes));
+        let new_content = diff::normalize_eol(&String::from_utf8_lossy(&new_bytes));
+        let changes = diff::compute_changes(&old_content, &new_content);
         Ok(FileDiff::Text {
-            old_content: String::from_utf8_lossy(&old_bytes).into_owned(),
-            new_content: String::from_utf8_lossy(&new_bytes).into_owned(),
+            old_content,
+            new_content,
             old_size: old_size.unwrap_or(0),
             new_size: new_size.unwrap_or(0),
             derived_label: None,
             ue_version: None,
+            changes,
         })
     }
 

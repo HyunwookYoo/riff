@@ -157,13 +157,17 @@ pub fn derive_filediff(
         }
     };
 
+    let old_content = super::diff::normalize_eol(&old_json);
+    let new_content = super::diff::normalize_eol(&new_json);
+    let changes = super::diff::compute_changes(&old_content, &new_content);
     FileDiff::Text {
-        old_content: old_json,
-        new_content: new_json,
+        old_content,
+        new_content,
         old_size,
         new_size,
         derived_label: Some(format!("Property view · UE {}", cfg.engine_version)),
         ue_version: Some(cfg.engine_version.clone()),
+        changes,
     }
 }
 

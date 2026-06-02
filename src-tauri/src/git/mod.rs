@@ -1,5 +1,6 @@
 pub mod blame;
 pub mod cli;
+pub mod diff;
 pub mod error;
 pub mod uasset;
 
@@ -8,6 +9,7 @@ use std::path::Path;
 
 pub use blame::{Blame, BlameCommit};
 pub use cli::GitCli;
+pub use diff::Change;
 pub use error::GitError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +72,11 @@ pub enum FileDiff {
         new_content: String,
         old_size: u64,
         new_size: u64,
+        /// Precomputed diff (UTF-16 offsets) injected into the editor so it
+        /// renders our diff instead of recomputing one. `old_content` /
+        /// `new_content` are already EOL-normalized to match these offsets.
+        #[serde(default)]
+        changes: Vec<Change>,
         /// Set when the text is a *derived* view (e.g. an Unreal asset parsed
         /// to JSON) rather than the raw file bytes. The frontend shows a badge.
         #[serde(default, skip_serializing_if = "Option::is_none")]
