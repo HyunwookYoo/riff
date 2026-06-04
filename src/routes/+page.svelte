@@ -11,7 +11,7 @@
   import TabBar from "$lib/ui/TabBar.svelte";
   import TitleBar from "$lib/ui/TitleBar.svelte";
   import { appState } from "$lib/store.svelte";
-  import { loadState } from "$lib/git";
+  import { loadState, setBlamePickerWidth } from "$lib/git";
   import { loadMainRepo } from "$lib/workspace";
   import { compare, cycleAppMode } from "$lib/compare";
   import { popHistory, redoHistory } from "$lib/history";
@@ -24,6 +24,35 @@
   import { checkForUpdate } from "$lib/updater";
 
   let pendingUpdate: Awaited<ReturnType<typeof checkForUpdate>> = null;
+
+  // Drag-resize the compare file picker, mirroring BlameView. Shares the same
+  // persisted width (`blamePickerWidth`) so the sidebar stays a consistent
+  // width across blame / branch / worktree modes. Bounds match the backend clamp.
+  const PICKER_MIN = 200;
+  const PICKER_MAX = 600;
+  let bodyEl: HTMLDivElement;
+  let resizing = $state(false);
+  function onResizeStart(e: PointerEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    resizing = true;
+    const rect = bodyEl.getBoundingClientRect();
+    const onMove = (ev: PointerEvent) => {
+      const next = Math.round(ev.clientX - rect.left);
+      appState.blamePickerWidth = Math.min(
+        PICKER_MAX,
+        Math.max(PICKER_MIN, next),
+      );
+    };
+    const onUp = () => {
+      resizing = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      setBlamePickerWidth(appState.blamePickerWidth).catch(() => {});
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
 
   onMount(async () => {
     try {
@@ -318,11 +347,23 @@
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />
   {/if}
-  <div class="body">
+  <div
+    class="body"
+    class:resizing
+    bind:this={bodyEl}
+    style="--picker-width: {appState.blamePickerWidth}px;"
+  >
     {#if appState.appMode === "blame"}
       <BlameView />
     {:else}
       <FileList />
+      <div
+        class="picker-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize file list"
+        onpointerdown={onResizeStart}
+      ></div>
       <main class="diff">
         {#if appState.selectedFile}
           <header>
@@ -357,13 +398,45 @@
     overflow: hidden;
   }
   .body {
+    position: relative;
     display: grid;
-    grid-template-columns: 300px 1fr;
+    /* File picker column is user-resizable; the drag handle is absolutely
+       positioned at the column boundary (see .picker-resizer). */
+    grid-template-columns: var(--picker-width, 300px) 1fr;
     /* Bound the single row to the container height (not auto-grow to the file
        list's content), so each column can scroll internally. */
     grid-template-rows: minmax(0, 1fr);
     flex: 1;
     min-height: 0;
+  }
+  .body.resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+  .picker-resizer {
+    position: absolute;
+    top: 0;
+    left: var(--picker-width, 300px);
+    width: 7px;
+    height: 100%;
+    transform: translateX(-3px);
+    cursor: col-resize;
+    z-index: 5;
+    background: transparent;
+  }
+  .picker-resizer::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 3px;
+    width: 1px;
+    height: 100%;
+    background: transparent;
+    transition: background 0.1s ease;
+  }
+  .picker-resizer:hover::after,
+  .body.resizing .picker-resizer::after {
+    background: var(--accent, #4a9eff);
   }
   .diff {
     display: flex;
