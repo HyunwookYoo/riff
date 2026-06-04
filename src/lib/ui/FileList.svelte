@@ -188,7 +188,7 @@
             {isFocused ? "←" : "→"}
           </button>
         </div>
-        {#if group.repo.kind !== "main" && group.repo.override}
+        {#if appState.compareMode === "branch" && group.repo.kind !== "main" && group.repo.override}
           <div
             class="group-refs"
             class:focused={isFocused}
