@@ -1,6 +1,6 @@
 {
   "name": "riff",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Lightweight Git diff viewer for two-branch comparison",
   "type": "module",
   "scripts": {
