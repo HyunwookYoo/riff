@@ -5,7 +5,7 @@ pub mod store;
 use std::path::Path;
 
 use git::{
-    Blame, Branch, ChangedFile, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer,
+    Blame, Branch, ChangedFile, Commit, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer,
     SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
@@ -19,6 +19,17 @@ fn validate_repo(state: tauri::State<GitCli>, path: String) -> Result<(), GitErr
 #[tauri::command]
 fn list_refs(state: tauri::State<GitCli>, path: String) -> Result<Vec<Branch>, GitError> {
     state.list_refs(Path::new(&path))
+}
+
+#[tauri::command]
+fn commit_log(
+    state: tauri::State<GitCli>,
+    path: String,
+    start_ref: String,
+    limit: u32,
+    skip: u32,
+) -> Result<Vec<Commit>, GitError> {
+    state.commit_log(Path::new(&path), &start_ref, limit, skip)
 }
 
 #[tauri::command]
@@ -304,6 +315,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             validate_repo,
             list_refs,
+            commit_log,
             diff_files,
             file_diff,
             worktree_files,

@@ -7,6 +7,7 @@ import {
 } from "./git";
 import { detectLanguage } from "./diff/lang";
 import { preloadLanguages } from "./diff/shiki";
+import { enterHistoryMode, restoreCompareContext } from "./commitHistory";
 import type { ChangedFile, CompareMode, RepoEntry } from "./types";
 
 // Monotonic id so a stale stream from a cancelled compare can't poison the
@@ -344,30 +345,38 @@ export function setMode(m: CompareMode): void {
   }
 }
 
-/// Cycle the workspace: branch-compare → worktree-compare → blame → branch-compare.
-/// Triggered by Ctrl+Shift+W. Leaving blame always lands on branch-compare —
-/// the cycle is positional, not a stack pop.
+/// Cycle the workspace: branch → worktree → history → blame → branch.
+/// Triggered by Ctrl+Shift+W. The cycle is positional, not a stack pop.
 export function cycleAppMode(): void {
   if (appState.appMode === "blame") {
+    restoreCompareContext();
     appState.appMode = "compare";
     if (appState.compareMode !== "branch") {
       setMode("branch");
     }
     return;
   }
+  // History → blame: carry the selected file so blame opens on it.
+  if (appState.appMode === "history") {
+    carrySelectionToBlame();
+    appState.appMode = "blame";
+    return;
+  }
   if (appState.compareMode === "branch") {
     setMode("worktree");
     return;
   }
-  // Entering blame from compare: carry the currently selected file over so
-  // the user lands on its blame view instead of an empty picker. The current
-  // selection always wins — a stale blameTarget from an earlier visit would
-  // be confusing here. Repo-qualified so multi-root opens the right repo.
+  // Worktree → history.
+  void enterHistoryMode();
+}
+
+/// Pin the currently selected file as the blame target so entering blame mode
+/// lands on it instead of an empty picker. Repo-qualified for multi-root.
+function carrySelectionToBlame(): void {
   if (appState.selectedFile) {
     appState.blameTarget = {
       repoIdx: appState.selectedFile.repoIdx ?? 0,
       path: appState.selectedFile.path,
     };
   }
-  appState.appMode = "blame";
 }

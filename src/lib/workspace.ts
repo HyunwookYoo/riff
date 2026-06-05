@@ -10,6 +10,7 @@ import {
   validateRepo,
 } from "./git";
 import { compare } from "./compare";
+import { resetHistory } from "./commitHistory";
 import { clearBlameCache } from "./blameCache";
 import type { Branch, RepoEntry, RepoFile } from "./types";
 
@@ -243,6 +244,8 @@ export async function loadMainRepo(
   // Blame-mode caches/file pin from the previous repo are also stale.
   appState.repoFiles = [];
   appState.blameTarget = null;
+  // History browser's commit log belongs to the old repo — drop it.
+  resetHistory();
   clearBlameCache();
   try {
     await validateRepo(path);

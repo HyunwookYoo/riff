@@ -12,7 +12,7 @@ use super::blame::{parse_porcelain, Blame};
 use super::diff;
 use super::uasset;
 use super::{
-    Branch, BranchKind, ChangedFile, DiffMode, FileDiff, FileStatus, GitError, GitLayer,
+    Branch, BranchKind, ChangedFile, Commit, DiffMode, FileDiff, FileStatus, GitError, GitLayer,
     SubmoduleInfo,
 };
 
@@ -21,6 +21,13 @@ const LARGE_FILE_BYTES: u64 = 1_000_000;
 
 /// Bytes scanned for NUL when sniffing for binary content.
 const BINARY_SNIFF_BYTES: usize = 8192;
+
+/// `git log` pretty format for the history browser. Fields are separated by
+/// the Unit Separator (\x1f) and records by NUL (`-z`), neither of which can
+/// appear in any field — so parsing is a plain split. Field order:
+/// sha, short sha, parents, author name, author unix time, subject, refs.
+const COMMIT_LOG_FORMAT: &str =
+    "--format=%H%x1f%h%x1f%P%x1f%an%x1f%at%x1f%s%x1f%D";
 
 /// `Command::new("git")` with `CREATE_NO_WINDOW` on Windows so spawning git
 /// from a GUI app doesn't flash a console window. No-op on other platforms.
@@ -306,6 +313,50 @@ fn validate_ref(s: &str) -> Result<&str, GitError> {
     Ok(s)
 }
 
+/// Parse `git log -z COMMIT_LOG_FORMAT` output into commits. Split out from the
+/// command so it can be unit-tested without a real repo. Records are NUL-
+/// separated; fields within a record are \x1f-separated in the order declared
+/// by `COMMIT_LOG_FORMAT`.
+fn parse_commit_log(text: &str) -> Vec<Commit> {
+    let mut commits = Vec::new();
+    for rec in text.split('\0') {
+        if rec.is_empty() {
+            continue;
+        }
+        let mut f = rec.splitn(7, '\x1f');
+        let sha = f.next().unwrap_or("").to_string();
+        let short_sha = f.next().unwrap_or("").to_string();
+        let parents_raw = f.next().unwrap_or("");
+        let author = f.next().unwrap_or("").to_string();
+        let time = f.next().unwrap_or("").trim().parse::<i64>().unwrap_or(0);
+        let summary = f.next().unwrap_or("").to_string();
+        let refs_raw = f.next().unwrap_or("");
+        if sha.is_empty() {
+            continue;
+        }
+        let parents = parents_raw
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        let refs = refs_raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        commits.push(Commit {
+            sha,
+            short_sha,
+            parents,
+            author,
+            time,
+            summary,
+            refs,
+        });
+    }
+    commits
+}
+
 /// Reject obviously-malformed path arguments. Real path validity is enforced by git.
 fn validate_path(s: &str) -> Result<(), GitError> {
     if s.is_empty() || s.starts_with('-') {
@@ -413,6 +464,38 @@ impl GitLayer for GitCli {
             });
         }
         Ok(refs)
+    }
+
+    fn commit_log(
+        &self,
+        path: &Path,
+        start_ref: &str,
+        limit: u32,
+        skip: u32,
+    ) -> Result<Vec<Commit>, GitError> {
+        // Empty ref means "current HEAD". Otherwise reuse the same
+        // leading-dash guard as ref diffs so a crafted ref can't smuggle flags.
+        let r = if start_ref.is_empty() {
+            "HEAD"
+        } else {
+            validate_ref(start_ref)?
+        };
+        let limit_s = limit.to_string();
+        let skip_s = skip.to_string();
+        let stdout = self.run(
+            path,
+            &[
+                "log",
+                "-z",
+                COMMIT_LOG_FORMAT,
+                "-n",
+                &limit_s,
+                "--skip",
+                &skip_s,
+                r,
+            ],
+        )?;
+        Ok(parse_commit_log(&String::from_utf8_lossy(&stdout)))
     }
 
     fn diff_files(
@@ -1558,5 +1641,66 @@ mod tests {
         let mut big = vec![b'a'; BINARY_SNIFF_BYTES + 10];
         big[BINARY_SNIFF_BYTES + 5] = 0;
         assert!(!is_binary(&big));
+    }
+
+    // Field separator \x1f, record separator \0 — mirrors COMMIT_LOG_FORMAT.
+    fn log_record(
+        sha: &str,
+        short: &str,
+        parents: &str,
+        author: &str,
+        time: &str,
+        subject: &str,
+        refs: &str,
+    ) -> String {
+        format!("{sha}\u{1f}{short}\u{1f}{parents}\u{1f}{author}\u{1f}{time}\u{1f}{subject}\u{1f}{refs}\0")
+    }
+
+    #[test]
+    fn parse_commit_log_basic() {
+        let input = format!(
+            "{}{}",
+            log_record(
+                "a1b2c3d", "a1b2c3d", "f00ba12 c0ffee0", "Jane", "1700000000",
+                "merge: feature into main", "HEAD -> main, origin/main",
+            ),
+            log_record("f00ba12", "f00ba12", "", "Bob", "1699990000", "init", ""),
+        );
+        let out = parse_commit_log(&input);
+        assert_eq!(out.len(), 2);
+
+        assert_eq!(out[0].sha, "a1b2c3d");
+        assert_eq!(out[0].short_sha, "a1b2c3d");
+        assert_eq!(out[0].parents, vec!["f00ba12", "c0ffee0"]);
+        assert_eq!(out[0].author, "Jane");
+        assert_eq!(out[0].time, 1700000000);
+        assert_eq!(out[0].summary, "merge: feature into main");
+        assert_eq!(out[0].refs, vec!["HEAD -> main", "origin/main"]);
+
+        // Root commit: no parents, no refs.
+        assert!(out[1].parents.is_empty());
+        assert!(out[1].refs.is_empty());
+        assert_eq!(out[1].summary, "init");
+    }
+
+    #[test]
+    fn parse_commit_log_empty() {
+        assert!(parse_commit_log("").is_empty());
+    }
+
+    #[test]
+    fn parse_commit_log_subject_with_separators_in_text() {
+        // A subject containing commas must not be mistaken for ref delimiters,
+        // and an unparsable time degrades to 0 rather than dropping the commit.
+        let input = log_record(
+            "deadbee", "deadbee", "abc1234", "A, B & C", "notanumber",
+            "fix: a, b, c", "tag: v1.0",
+        );
+        let out = parse_commit_log(&input);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].author, "A, B & C");
+        assert_eq!(out[0].time, 0);
+        assert_eq!(out[0].summary, "fix: a, b, c");
+        assert_eq!(out[0].refs, vec!["tag: v1.0"]);
     }
 }

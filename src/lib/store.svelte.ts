@@ -2,6 +2,7 @@ import type {
   AppMode,
   Branch,
   ChangedFile,
+  Commit,
   CompareCtx,
   CompareMode,
   DiffMode,
@@ -101,6 +102,30 @@ class AppState {
   parseUnrealAssets = $state<boolean>(true);
   uassetguiPath = $state<string | null>(null);
   ueVersionByRepo = $state<Record<string, string>>({});
+  // History browser (commit log) state. Session-only. `commits` is the loaded
+  // window (paginated via "load more"); `selectedCommitSha` highlights the row
+  // whose parent..self diff is showing; `historyRef` anchors the log ("" =
+  // HEAD). `commitsHasMore` gates the load-more affordance. `commitPaneFraction`
+  // is the top (commits) share of the split left column, drag-adjustable.
+  commits = $state<Commit[]>([]);
+  selectedCommitSha = $state<string | null>(null);
+  loadingCommits = $state(false);
+  commitsHasMore = $state(false);
+  historyRef = $state("");
+  // Which repo's history is being browsed: index into `repos`. 0 = main;
+  // submodule/manual repos let you browse their own log + branches.
+  historyRepoIdx = $state(0);
+  commitPaneFraction = $state(0.55);
+  // The user's compare context, snapshotted when entering history mode (which
+  // reuses start/target + per-repo overrides + focus to render parent..commit)
+  // and restored when returning to compare — so peeking at history doesn't
+  // clobber their ref selection, submodule overrides, or focus.
+  savedHistoryCtx = $state<{
+    start: string;
+    target: string;
+    activeRepoIdx: number | null;
+    overrides: Record<number, { startBranch: string; targetBranch: string }>;
+  } | null>(null);
 }
 
 export const appState = new AppState();

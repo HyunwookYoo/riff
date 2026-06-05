@@ -3,10 +3,18 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { appState } from "$lib/store.svelte";
   import { compare, setMode } from "$lib/compare";
+  import {
+    enterHistoryMode,
+    restoreCompareContext,
+    setHistoryRef,
+    setHistoryRepo,
+  } from "$lib/commitHistory";
+  import { loadBranchesFor } from "$lib/workspace";
   import { chooseTheme } from "$lib/theme";
   import type { ThemeChoice } from "$lib/types";
   import { loadMainRepo } from "$lib/workspace";
   import BranchModeFields from "./BranchModeFields.svelte";
+  import BranchPicker from "./BranchPicker.svelte";
   import WorkTreeFields from "./WorkTreeFields.svelte";
   import Dropdown from "./Dropdown.svelte";
   import RepoChip from "./RepoChip.svelte";
@@ -16,7 +24,12 @@
   // jump to a specific workspace. Entering blame carries selectedFile over
   // so the user lands on its blame, matching the cycle's hand-off behavior.
   function enterCompareMode(target: "branch" | "worktree") {
-    if (appState.appMode === "blame") appState.appMode = "compare";
+    if (appState.appMode !== "compare") {
+      // Leaving history reuses start/target (+ overrides + focus) for
+      // parent..commit — put the user's own context back before re-comparing.
+      restoreCompareContext();
+      appState.appMode = "compare";
+    }
     setMode(target);
   }
   function enterBlameMode() {
@@ -29,6 +42,24 @@
     }
     appState.appMode = "blame";
   }
+
+  // History-mode repo picker: list every workspace repo (main + submodules).
+  const historyRepoOptions = $derived(
+    appState.repos.map((r, i) => ({
+      value: String(i),
+      label: r.displayName || (i === 0 ? "main" : `repo ${i}`),
+    })),
+  );
+  // Branches for the currently browsed repo. idx 0 (main) is seeded on repo
+  // load; non-main repos lazy-load below.
+  const historyBranches = $derived(
+    appState.branchesByRepoIdx[appState.historyRepoIdx] ?? [],
+  );
+  $effect(() => {
+    if (appState.appMode === "history") {
+      void loadBranchesFor(appState.historyRepoIdx);
+    }
+  });
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
@@ -66,6 +97,14 @@
     </button>
     <button
       type="button"
+      class:active={appState.appMode === "history"}
+      onclick={() => void enterHistoryMode()}
+      title="Browse commit history"
+    >
+      History
+    </button>
+    <button
+      type="button"
       class:active={appState.appMode === "blame"}
       onclick={enterBlameMode}
       title="Blame a file"
@@ -83,6 +122,26 @@
     {:else}
       <WorkTreeFields />
     {/if}
+  {/if}
+
+  {#if appState.appMode === "history"}
+    {#if appState.repos.length > 1}
+      <Dropdown
+        title="Repository to browse"
+        align="left"
+        value={String(appState.historyRepoIdx)}
+        options={historyRepoOptions}
+        onchange={(v) => setHistoryRepo(Number(v))}
+      />
+    {/if}
+    <span class="hist-label">History of</span>
+    <BranchPicker
+      value={appState.historyRef}
+      options={historyBranches}
+      placeholder="HEAD (current)"
+      onchange={setHistoryRef}
+      title="Branch / tag / commit to show history for"
+    />
   {/if}
 
   {#if appState.appMode === "compare"}
@@ -176,6 +235,10 @@
   button:disabled {
     cursor: default;
     opacity: 0.5;
+  }
+  .hist-label {
+    font-size: 0.85em;
+    color: var(--muted);
   }
   .check {
     display: inline-flex;

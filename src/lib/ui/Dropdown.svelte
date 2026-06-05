@@ -13,9 +13,14 @@
     options: Option[];
     onchange: (v: string) => void;
     title?: string;
+    // Which edge the panel aligns to. "right" (default) anchors the panel's
+    // right edge to the trigger and expands left — correct for triggers near
+    // the right of their container. "left" expands right — use for triggers
+    // near the left, so the panel doesn't run off-screen and get clipped.
+    align?: "left" | "right";
   }
 
-  let { value, options, onchange, title }: Props = $props();
+  let { value, options, onchange, title, align = "right" }: Props = $props();
 
   let open = $state(false);
   let trigger = $state<HTMLButtonElement | undefined>(undefined);
@@ -93,7 +98,7 @@
     <span class="caret" class:open aria-hidden="true">▾</span>
   </button>
   {#if open}
-    <div class="panel" bind:this={panel} role="listbox">
+    <div class="panel" class:left={align === "left"} bind:this={panel} role="listbox">
       {#each options as opt, i (opt.value)}
         <button
           type="button"
@@ -146,6 +151,7 @@
     top: calc(100% + 2px);
     right: 0;
     min-width: 100%;
+    max-width: 90vw;
     max-height: 320px;
     overflow-y: auto;
     background: var(--input-bg);
@@ -157,6 +163,10 @@
     z-index: 1000;
     display: flex;
     flex-direction: column;
+  }
+  .panel.left {
+    right: auto;
+    left: 0;
   }
   .option {
     border: none;

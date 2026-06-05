@@ -33,6 +33,21 @@ pub struct ChangedFile {
     pub status: FileStatus,
 }
 
+/// One commit in the history browser's log list. `parents` holds full parent
+/// SHAs (used by the frontend graph layout to wire lanes); `refs` are the raw
+/// decoration names (`HEAD -> main`, `tag: v1`, `origin/main`) for display.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Commit {
+    pub sha: String,
+    pub short_sha: String,
+    pub parents: Vec<String>,
+    pub author: String,
+    /// Author time, unix seconds.
+    pub time: i64,
+    pub summary: String,
+    pub refs: Vec<String>,
+}
+
 /// Submodule entry as declared in `.gitmodules`. `initialized` is true when
 /// the submodule's working tree has been checked out (i.e. `<repo>/<path>/.git`
 /// exists). Used by the multi-root workspace (§13) to populate the repo list.
@@ -103,6 +118,16 @@ pub enum FileDiff {
 pub trait GitLayer {
     fn validate_repo(&self, path: &Path) -> Result<(), GitError>;
     fn list_refs(&self, path: &Path) -> Result<Vec<Branch>, GitError>;
+    /// Return up to `limit` commits reachable from `start_ref` (defaults to
+    /// HEAD when empty), skipping the first `skip`. Used by the history
+    /// browser; `skip` drives "load more" pagination.
+    fn commit_log(
+        &self,
+        path: &Path,
+        start_ref: &str,
+        limit: u32,
+        skip: u32,
+    ) -> Result<Vec<Commit>, GitError>;
     /// Stream the changed files between `start` and `target`.
     /// `on_file` is invoked once per parsed entry as it arrives.
     /// Cancelling a previously-in-flight invocation against the same session

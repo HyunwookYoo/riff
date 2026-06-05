@@ -3,6 +3,7 @@ import type {
   Blame,
   Branch,
   ChangedFile,
+  Commit,
   CompareMode,
   DiffMode,
   FileDiff,
@@ -71,6 +72,19 @@ export function setUeVersionForRepo(
 
 export function listRefs(path: string): Promise<Branch[]> {
   return invoke("list_refs", { path });
+}
+
+/**
+ * Fetch up to `limit` commits reachable from `startRef` (empty = HEAD),
+ * skipping the first `skip`. `skip` drives the history browser's "load more".
+ */
+export function commitLog(
+  path: string,
+  startRef: string,
+  limit: number,
+  skip: number,
+): Promise<Commit[]> {
+  return invoke("commit_log", { path, startRef, limit, skip });
 }
 
 /**

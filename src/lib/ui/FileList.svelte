@@ -6,6 +6,13 @@
   import { buildTree } from "./tree";
   import TreeNode from "./TreeNode.svelte";
 
+  // Abbreviate a ref for display: full hex SHAs (e.g. a commit picked in the
+  // history browser) shrink to 7 chars like git's short SHA; branch/tag names
+  // pass through untouched. The full value stays in the row's tooltip.
+  function shortRef(ref: string): string {
+    return /^[0-9a-f]{12,40}$/i.test(ref) ? ref.slice(0, 7) : ref;
+  }
+
   // Multi-root grouping (§13). Each group is one repo's files. When there is
   // only one repo (the common single-repo case) we render without the group
   // header — keeps the UX identical to v0.2.x.
@@ -194,9 +201,9 @@
             class:focused={isFocused}
             title={`${group.repo.override.startBranch} → ${group.repo.override.targetBranch}`}
           >
-            <span class="ref">{group.repo.override.startBranch}</span>
+            <span class="ref">{shortRef(group.repo.override.startBranch)}</span>
             <span class="arrow" aria-hidden="true">→</span>
-            <span class="ref">{group.repo.override.targetBranch}</span>
+            <span class="ref">{shortRef(group.repo.override.targetBranch)}</span>
           </div>
         {/if}
       {/if}

@@ -81,9 +81,24 @@ export type WorkspaceLayout = "unified" | "tabs";
 export type FileViewMode = "flat" | "tree";
 
 /// Top-level workspace mode. `compare` covers branch + worktree diff (the
-/// sub-mode is `CompareMode`); `blame` is the standalone blame workspace.
-/// Session-only — never persisted.
-export type AppMode = "compare" | "blame";
+/// sub-mode is `CompareMode`); `blame` is the standalone blame workspace;
+/// `history` browses a commit log and shows the selected commit's diff (via
+/// the same branch-compare pipeline, parent..commit). Session-only.
+export type AppMode = "compare" | "blame" | "history";
+
+/// One commit row in the history browser. Mirrors Rust `git::Commit`.
+/// `parents` are full SHAs (drive the graph lane layout); `refs` are raw
+/// decoration strings ("HEAD -> main", "tag: v1", "origin/main").
+export interface Commit {
+  sha: string;
+  short_sha: string;
+  parents: string[];
+  author: string;
+  /// Author time, unix seconds.
+  time: number;
+  summary: string;
+  refs: string[];
+}
 
 export interface PersistedState {
   recent_repos: string[];
