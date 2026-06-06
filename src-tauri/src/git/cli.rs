@@ -13,7 +13,7 @@ use super::diff;
 use super::uasset;
 use super::{
     Branch, BranchKind, ChangedFile, Commit, DiffMode, FileDiff, FileStatus, GitError, GitLayer,
-    RepoStatus, StatusEntry, SubmoduleInfo,
+    Hunk, RepoStatus, StatusEntry, SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -298,6 +298,33 @@ impl GitCli {
         }
         Ok(output.stdout)
     }
+
+    /// Like `run`, but writes `input` to the child's stdin (then closes it so
+    /// the command sees EOF). Used to feed a patch to `git apply`.
+    fn run_stdin(&self, path: &Path, args: &[&str], input: &[u8]) -> Result<Vec<u8>, GitError> {
+        let mut child = git_command()
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        {
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| GitError::CommandFailed("stdin not piped".into()))?;
+            stdin.write_all(input)?;
+            // stdin dropped here → EOF.
+        }
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(GitError::CommandFailed(stderr));
+        }
+        Ok(output.stdout)
+    }
 }
 
 impl Default for GitCli {
@@ -471,6 +498,65 @@ fn status_path(tok: &str, n: usize) -> Option<String> {
     tok.splitn(n + 1, ' ').nth(n).map(|s| s.to_string())
 }
 
+/// Build the `git diff` args for one file's textual patch. `staged` adds
+/// `--cached` (HEAD↔index); otherwise it's the worktree↔index diff.
+fn diff_args(staged: bool, file_path: &str) -> Vec<&str> {
+    let mut args = vec!["diff"];
+    if staged {
+        args.push("--cached");
+    }
+    args.push("--");
+    args.push(file_path);
+    args
+}
+
+/// Split a single-file unified diff into `(header, hunks)`. The header is every
+/// line up to the first `@@` (the `diff --git` / `---` / `+++` preamble); each
+/// hunk is a `@@` line plus its body up to the next `@@` (or EOF). Lines keep
+/// their trailing newline so a sub-patch reassembles byte-for-byte. Split out
+/// for unit testing. Hunk header lines start with `@@` at column 0; diff body
+/// lines are prefixed by a space/`+`/`-`/`\`, so they never false-match.
+fn split_diff(text: &str) -> (String, Vec<String>) {
+    let mut header = String::new();
+    let mut hunks: Vec<String> = Vec::new();
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("@@") {
+            hunks.push(line.to_string());
+        } else if let Some(last) = hunks.last_mut() {
+            last.push_str(line);
+        } else {
+            header.push_str(line);
+        }
+    }
+    (header, hunks)
+}
+
+/// Parse a single-file unified diff into display hunks (header line + added /
+/// removed line counts).
+fn parse_hunks(text: &str) -> Vec<Hunk> {
+    let (_, blocks) = split_diff(text);
+    blocks
+        .iter()
+        .map(|b| {
+            let header = b.lines().next().unwrap_or("").to_string();
+            let mut added = 0;
+            let mut removed = 0;
+            for l in b.lines().skip(1) {
+                match l.as_bytes().first() {
+                    Some(b'+') => added += 1,
+                    Some(b'-') => removed += 1,
+                    _ => {}
+                }
+            }
+            Hunk {
+                header,
+                added,
+                removed,
+            }
+        })
+        .collect()
+}
+
 /// Reject obviously-malformed path arguments. Real path validity is enforced by git.
 fn validate_path(s: &str) -> Result<(), GitError> {
     if s.is_empty() || s.starts_with('-') {
@@ -501,6 +587,40 @@ fn cat_file_filtered(repo: &Path, spec: &str) -> Option<Vec<u8>> {
         return None;
     }
     Some(output.stdout)
+}
+
+/// Read a blob's bytes for `spec` via a one-shot `git cat-file`, bypassing the
+/// long-lived session batch. Required for index specs (`:path`): the batch
+/// process snapshots the index at startup and never sees `git add` / `restore`
+/// / `apply --cached`, so a Changes diff must read the index fresh each time.
+/// Returns `None` when the object is missing (e.g. `HEAD:path` for a new file).
+fn cat_file_oneshot(repo: &Path, spec: &str) -> Option<Vec<u8>> {
+    let out = git_command()
+        .arg("-C")
+        .arg(repo)
+        .args(["cat-file", "blob", spec])
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// Resolve a gitlink/commit spec to its SHA via one-shot `git rev-parse`
+/// (`HEAD:sub`, `:sub`, or `HEAD` inside the submodule). Returns None when the
+/// spec doesn't resolve.
+fn gitlink_sha(repo: &Path, spec: &str) -> Option<String> {
+    let out = git_command()
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--quiet", spec])
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then_some(s)
 }
 
 /// Ensure the cached session targets `path`. Drops the previous session
@@ -1112,87 +1232,94 @@ impl GitLayer for GitCli {
             validate_path(p)?;
         }
 
-        let mut guard = self.session.lock().unwrap();
-        ensure_session(&mut guard, path)?;
-        let session = guard.as_mut().expect("ensure_session populated guard");
-
         let needs_old = !matches!(status, FileStatus::Added);
         let needs_new = !matches!(status, FileStatus::Deleted);
 
         // Old side is always a blob: HEAD for the staged gap, the index for the
-        // unstaged gap. Renames diff against the pre-rename path.
+        // unstaged gap. Renames diff against the pre-rename path. Read fresh via
+        // one-shot cat-file — the session batch snapshots the index at startup,
+        // so it would serve stale `:path` content after a stage/unstage/apply.
         let old_target = old_path.unwrap_or(file_path);
         let old_spec = if staged {
             format!("HEAD:{old_target}")
         } else {
             format!(":{old_target}")
         };
-        // New side: the index blob (staged gap) or the working-tree file.
-        let new_spec = format!(":{file_path}");
+
+        // Submodule gitlink: the working-tree entry is a nested repo directory,
+        // not a file. Reading it as bytes fails (EACCES on Windows), so show the
+        // commit-pointer change like `git diff` does instead.
         let fs_path = path.join(file_path);
-
-        let old_size = if needs_old {
-            match session.batch_check.query_size(&old_spec)? {
-                BatchResponse::Found { size } => Some(size),
-                BatchResponse::Missing => None,
-            }
-        } else {
-            None
-        };
-        let new_size = if needs_new {
-            if staged {
-                match session.batch_check.query_size(&new_spec)? {
-                    BatchResponse::Found { size } => Some(size),
-                    BatchResponse::Missing => None,
-                }
+        if fs_path.is_dir() {
+            let old_sha = gitlink_sha(path, &old_spec);
+            let new_sha = if staged {
+                gitlink_sha(path, &format!(":{file_path}"))
             } else {
-                match fs::metadata(&fs_path) {
-                    Ok(m) => Some(m.len()),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(e) => return Err(GitError::Io(e)),
-                }
-            }
-        } else {
-            None
-        };
-
-        let max_side = old_size.unwrap_or(0).max(new_size.unwrap_or(0));
-        if !force && max_side > LARGE_FILE_BYTES {
-            return Ok(FileDiff::TooLarge {
-                old_size: old_size.unwrap_or(0),
-                new_size: new_size.unwrap_or(0),
+                // The parent's worktree gitlink is the submodule's checked-out HEAD.
+                gitlink_sha(&fs_path, "HEAD")
+            };
+            let to_text = |s: &Option<String>| {
+                s.as_deref()
+                    .map(|sha| format!("Subproject commit {sha}\n"))
+                    .unwrap_or_default()
+            };
+            let old_content = to_text(&old_sha);
+            let new_content = to_text(&new_sha);
+            let changes = diff::compute_changes(&old_content, &new_content);
+            return Ok(FileDiff::Text {
+                old_content,
+                new_content,
+                old_size: 0,
+                new_size: 0,
+                // Not a derived (uasset) view — `derived_label` is wired to the
+                // UE-version dropdown in DiffView, so leave it None.
+                derived_label: None,
+                ue_version: None,
+                changes,
             });
         }
 
-        let old_bytes = if old_size.is_some() {
-            match session.batch.query_content(&old_spec)? {
-                BatchContent::Found { bytes } => bytes,
-                BatchContent::Missing => Vec::new(),
-            }
-        } else {
-            Vec::new()
-        };
-        let new_bytes = if new_size.is_some() {
-            if staged {
-                match session.batch.query_content(&new_spec)? {
-                    BatchContent::Found { bytes } => bytes,
-                    BatchContent::Missing => Vec::new(),
-                }
-            } else {
-                match fs::read(&fs_path) {
-                    Ok(b) => b,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-                    Err(e) => return Err(GitError::Io(e)),
-                }
-            }
+        let old_bytes = if needs_old {
+            cat_file_oneshot(path, &old_spec).unwrap_or_default()
         } else {
             Vec::new()
         };
 
+        // New side: the index blob (staged gap, fresh cat-file) or the
+        // working-tree file on disk. Disk files are unbounded, so guard their
+        // size before reading; git blobs are bounded by repo content.
+        let (new_bytes, new_size) = if !needs_new {
+            (Vec::new(), 0u64)
+        } else if staged {
+            let b = cat_file_oneshot(path, &format!(":{file_path}")).unwrap_or_default();
+            let n = b.len() as u64;
+            (b, n)
+        } else {
+            let disk_size = fs::metadata(&fs_path).map(|m| m.len()).unwrap_or(0);
+            if !force && disk_size.max(old_bytes.len() as u64) > LARGE_FILE_BYTES {
+                return Ok(FileDiff::TooLarge {
+                    old_size: old_bytes.len() as u64,
+                    new_size: disk_size,
+                });
+            }
+            match fs::read(&fs_path) {
+                Ok(b) => {
+                    let n = b.len() as u64;
+                    (b, n)
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Vec::new(), 0),
+                Err(e) => return Err(GitError::Io(e)),
+            }
+        };
+
+        let old_size = old_bytes.len() as u64;
+        if !force && old_size.max(new_size) > LARGE_FILE_BYTES {
+            return Ok(FileDiff::TooLarge { old_size, new_size });
+        }
         if is_binary(&old_bytes) || is_binary(&new_bytes) {
             return Ok(FileDiff::Binary {
-                old_size: old_size.unwrap_or(0),
-                new_size: new_size.unwrap_or(0),
+                old_size,
+                new_size,
                 note: None,
             });
         }
@@ -1203,8 +1330,8 @@ impl GitLayer for GitCli {
         Ok(FileDiff::Text {
             old_content,
             new_content,
-            old_size: old_size.unwrap_or(0),
-            new_size: new_size.unwrap_or(0),
+            old_size,
+            new_size,
             derived_label: None,
             ue_version: None,
             changes,
@@ -1291,6 +1418,49 @@ impl GitLayer for GitCli {
     fn head_commit_message(&self, path: &Path) -> Result<String, GitError> {
         let out = self.run(path, &["log", "-1", "--format=%B"])?;
         Ok(String::from_utf8_lossy(&out).trim_end().to_string())
+    }
+
+    fn file_hunks(&self, path: &Path, file_path: &str, staged: bool) -> Result<Vec<Hunk>, GitError> {
+        validate_path(file_path)?;
+        let out = self.run(path, &diff_args(staged, file_path))?;
+        Ok(parse_hunks(&String::from_utf8_lossy(&out)))
+    }
+
+    fn apply_hunks(
+        &self,
+        path: &Path,
+        file_path: &str,
+        staged: bool,
+        hunks: &[u32],
+    ) -> Result<(), GitError> {
+        validate_path(file_path)?;
+        if hunks.is_empty() {
+            return Ok(());
+        }
+        // Re-diff now so the patch matches the *current* file state and indices
+        // line up with what the user clicked (drift guard below).
+        let out = self.run(path, &diff_args(staged, file_path))?;
+        let text = String::from_utf8_lossy(&out);
+        let (header, blocks) = split_diff(&text);
+        if header.is_empty() || blocks.is_empty() {
+            return Err(GitError::CommandFailed(
+                "no diff to apply (file may have changed)".into(),
+            ));
+        }
+        let mut patch = header;
+        for &i in hunks {
+            let block = blocks.get(i as usize).ok_or_else(|| {
+                GitError::CommandFailed("file changed since hunks were listed; refresh".into())
+            })?;
+            patch.push_str(block);
+        }
+        // Apply to the index: forward stages the hunk, reverse unstages it.
+        let mut args = vec!["apply", "--cached"];
+        if staged {
+            args.push("--reverse");
+        }
+        self.run_stdin(path, &args, patch.as_bytes())?;
+        Ok(())
     }
 
     fn list_repo_files(&self, path: &Path) -> Result<Vec<String>, GitError> {
@@ -2092,5 +2262,50 @@ mod tests {
         assert_eq!(st.entries[0].path, "my file.txt");
         assert_eq!(st.entries[0].index_status, ".");
         assert_eq!(st.entries[0].worktree_status, "M");
+    }
+
+    const SAMPLE_DIFF: &str = "diff --git a/f.txt b/f.txt\n\
+index 111..222 100644\n\
+--- a/f.txt\n\
++++ b/f.txt\n\
+@@ -1,3 +1,3 @@\n \
+a\n\
+-b\n\
++B\n \
+c\n\
+@@ -10,2 +10,3 @@ fn foo()\n \
+x\n\
++y\n \
+z\n";
+
+    #[test]
+    fn split_diff_separates_header_and_hunks() {
+        let (header, hunks) = split_diff(SAMPLE_DIFF);
+        assert!(header.starts_with("diff --git a/f.txt b/f.txt\n"));
+        assert!(header.ends_with("+++ b/f.txt\n"));
+        assert!(!header.contains("@@"));
+        assert_eq!(hunks.len(), 2);
+        assert!(hunks[0].starts_with("@@ -1,3 +1,3 @@\n"));
+        assert!(hunks[1].starts_with("@@ -10,2 +10,3 @@ fn foo()\n"));
+        // A sub-patch of header + one hunk reassembles byte-for-byte.
+        assert_eq!(format!("{header}{}", hunks[1]).contains("+y\n"), true);
+    }
+
+    #[test]
+    fn parse_hunks_counts_added_removed() {
+        let hunks = parse_hunks(SAMPLE_DIFF);
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[0].header, "@@ -1,3 +1,3 @@");
+        assert_eq!((hunks[0].added, hunks[0].removed), (1, 1));
+        assert_eq!(hunks[1].header, "@@ -10,2 +10,3 @@ fn foo()");
+        assert_eq!((hunks[1].added, hunks[1].removed), (1, 0));
+    }
+
+    #[test]
+    fn parse_hunks_empty_diff() {
+        assert!(parse_hunks("").is_empty());
+        // Binary diffs carry no @@ hunks.
+        let bin = "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\n";
+        assert!(parse_hunks(bin).is_empty());
     }
 }

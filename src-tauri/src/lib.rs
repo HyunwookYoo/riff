@@ -6,7 +6,7 @@ use std::path::Path;
 
 use git::{
     Blame, Branch, ChangedFile, Commit, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer,
-    RepoStatus, SubmoduleInfo,
+    Hunk, RepoStatus, SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
@@ -220,6 +220,27 @@ fn head_commit_message(state: tauri::State<GitCli>, path: String) -> Result<Stri
 }
 
 #[tauri::command]
+fn file_hunks(
+    state: tauri::State<GitCli>,
+    path: String,
+    file_path: String,
+    staged: bool,
+) -> Result<Vec<Hunk>, GitError> {
+    state.file_hunks(Path::new(&path), &file_path, staged)
+}
+
+#[tauri::command]
+fn apply_hunks(
+    state: tauri::State<GitCli>,
+    path: String,
+    file_path: String,
+    staged: bool,
+    hunks: Vec<u32>,
+) -> Result<(), GitError> {
+    state.apply_hunks(Path::new(&path), &file_path, staged, &hunks)
+}
+
+#[tauri::command]
 fn list_repo_files(state: tauri::State<GitCli>, path: String) -> Result<Vec<String>, GitError> {
     state.list_repo_files(Path::new(&path))
 }
@@ -394,6 +415,8 @@ pub fn run() {
             unstage,
             commit,
             head_commit_message,
+            file_hunks,
+            apply_hunks,
             blame_file,
             list_repo_files,
             read_repo_file,

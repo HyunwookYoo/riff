@@ -73,6 +73,16 @@ pub struct RepoStatus {
     pub behind: i64,
 }
 
+/// One hunk of a file's unified diff, for the Changes screen's per-hunk
+/// stage/unstage controls. `header` is the `@@ -a,b +c,d @@` line (with any
+/// section heading); `added`/`removed` count changed lines for the badge.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Hunk {
+    pub header: String,
+    pub added: u32,
+    pub removed: u32,
+}
+
 /// Submodule entry as declared in `.gitmodules`. `initialized` is true when
 /// the submodule's working tree has been checked out (i.e. `<repo>/<path>/.git`
 /// exists). Used by the multi-root workspace (§13) to populate the repo list.
@@ -246,6 +256,22 @@ pub trait GitLayer {
     /// The full message of HEAD (`git log -1 --format=%B`), used to pre-fill the
     /// commit box when the user toggles "Amend".
     fn head_commit_message(&self, path: &Path) -> Result<String, GitError>;
+    /// Parse one file's unified diff into hunks for per-hunk staging. `staged`
+    /// true → `git diff --cached` (HEAD↔index); false → `git diff`
+    /// (index↔worktree). Empty for untracked/binary files.
+    fn file_hunks(&self, path: &Path, file_path: &str, staged: bool) -> Result<Vec<Hunk>, GitError>;
+    /// Stage (`staged=false`) or unstage (`staged=true`) the hunks at the given
+    /// indices: re-diffs the file, builds a sub-patch of just those hunks, and
+    /// applies it to the index (`git apply --cached`, reversed for unstage).
+    /// Rejects when an index is out of range — the file changed since the hunks
+    /// were listed.
+    fn apply_hunks(
+        &self,
+        path: &Path,
+        file_path: &str,
+        staged: bool,
+        hunks: &[u32],
+    ) -> Result<(), GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.
