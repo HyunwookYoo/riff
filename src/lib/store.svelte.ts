@@ -134,6 +134,10 @@ class AppState {
   // network toolbar. Session-only; additive until Phase 1 consumes it.
   repoStatus = $state<RepoStatus | null>(null);
   loadingStatus = $state(false);
+  // Which side of the Changes screen the selected file is being viewed on:
+  // "unstaged" (index↔worktree) or "staged" (HEAD↔index). DiffView reads this
+  // to pick the per-side diff. Session-only.
+  changesSide = $state<"staged" | "unstaged">("unstaged");
 }
 
 export const appState = new AppState();

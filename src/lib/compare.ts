@@ -356,6 +356,15 @@ export function cycleAppMode(): void {
     }
     return;
   }
+  // Changes → branch compare. The staging view doesn't snapshot compare
+  // context (it never touches start/target), so just hand back to compare.
+  if (appState.appMode === "changes") {
+    appState.appMode = "compare";
+    if (appState.compareMode !== "branch") {
+      setMode("branch");
+    }
+    return;
+  }
   // History → blame: carry the selected file so blame opens on it.
   if (appState.appMode === "history") {
     carrySelectionToBlame();

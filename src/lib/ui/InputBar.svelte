@@ -9,6 +9,7 @@
     setHistoryRef,
     setHistoryRepo,
   } from "$lib/commitHistory";
+  import { enterChangesMode } from "$lib/sourceControl";
   import { loadBranchesFor } from "$lib/workspace";
   import { chooseTheme } from "$lib/theme";
   import type { ThemeChoice } from "$lib/types";
@@ -77,6 +78,14 @@
 <div class="mode-bar">
   <RepoChip />
   <div class="mode-toggle" role="group" aria-label="Workspace mode">
+    <button
+      type="button"
+      class:active={appState.appMode === "changes"}
+      onclick={() => void enterChangesMode()}
+      title="Stage and commit changes"
+    >
+      Changes
+    </button>
     <button
       type="button"
       class:active={appState.appMode === "compare" &&

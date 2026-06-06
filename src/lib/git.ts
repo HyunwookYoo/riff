@@ -181,6 +181,28 @@ export function worktreeFileDiff(
 }
 
 /**
+ * Per-side diff for the Changes screen. `staged` true → HEAD↔index gap;
+ * false → index↔worktree gap. `status` is the porcelain status for that side.
+ */
+export function changesFileDiff(
+  path: string,
+  filePath: string,
+  oldPath: string | null,
+  status: FileStatus,
+  staged: boolean,
+  force: boolean,
+): Promise<FileDiff> {
+  return invoke("changes_file_diff", {
+    path,
+    filePath,
+    oldPath,
+    status,
+    staged,
+    force,
+  });
+}
+
+/**
  * Run `git blame --porcelain -w -M` on a file. `rev` is ignored when
  * `useContents` is true (worktree mode blames the working copy against HEAD).
  * Lines with no commit (uncommitted edits) come back with sha "00000000".

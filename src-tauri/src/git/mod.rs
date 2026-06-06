@@ -206,6 +206,22 @@ pub trait GitLayer {
         force: bool,
         uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError>;
+    /// Per-file diff for the source-control Changes screen, one *side* at a
+    /// time. `staged` selects the HEAD↔index gap (old = `HEAD:path`, new = the
+    /// index blob); otherwise the index↔worktree gap (old = index blob, new =
+    /// the working-tree file). `status` is the porcelain status for *that side*,
+    /// driving which side is absent (added → no old, deleted → no new). Unreal
+    /// asset derivation is intentionally skipped (raw bytes / binary
+    /// placeholder) — staging is code-centric; rich preview stays in compare.
+    fn changes_file_diff(
+        &self,
+        path: &Path,
+        file_path: &str,
+        old_path: Option<&str>,
+        status: FileStatus,
+        staged: bool,
+        force: bool,
+    ) -> Result<FileDiff, GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.

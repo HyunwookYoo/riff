@@ -1098,6 +1098,119 @@ impl GitLayer for GitCli {
         })
     }
 
+    fn changes_file_diff(
+        &self,
+        path: &Path,
+        file_path: &str,
+        old_path: Option<&str>,
+        status: FileStatus,
+        staged: bool,
+        force: bool,
+    ) -> Result<FileDiff, GitError> {
+        validate_path(file_path)?;
+        if let Some(p) = old_path {
+            validate_path(p)?;
+        }
+
+        let mut guard = self.session.lock().unwrap();
+        ensure_session(&mut guard, path)?;
+        let session = guard.as_mut().expect("ensure_session populated guard");
+
+        let needs_old = !matches!(status, FileStatus::Added);
+        let needs_new = !matches!(status, FileStatus::Deleted);
+
+        // Old side is always a blob: HEAD for the staged gap, the index for the
+        // unstaged gap. Renames diff against the pre-rename path.
+        let old_target = old_path.unwrap_or(file_path);
+        let old_spec = if staged {
+            format!("HEAD:{old_target}")
+        } else {
+            format!(":{old_target}")
+        };
+        // New side: the index blob (staged gap) or the working-tree file.
+        let new_spec = format!(":{file_path}");
+        let fs_path = path.join(file_path);
+
+        let old_size = if needs_old {
+            match session.batch_check.query_size(&old_spec)? {
+                BatchResponse::Found { size } => Some(size),
+                BatchResponse::Missing => None,
+            }
+        } else {
+            None
+        };
+        let new_size = if needs_new {
+            if staged {
+                match session.batch_check.query_size(&new_spec)? {
+                    BatchResponse::Found { size } => Some(size),
+                    BatchResponse::Missing => None,
+                }
+            } else {
+                match fs::metadata(&fs_path) {
+                    Ok(m) => Some(m.len()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(e) => return Err(GitError::Io(e)),
+                }
+            }
+        } else {
+            None
+        };
+
+        let max_side = old_size.unwrap_or(0).max(new_size.unwrap_or(0));
+        if !force && max_side > LARGE_FILE_BYTES {
+            return Ok(FileDiff::TooLarge {
+                old_size: old_size.unwrap_or(0),
+                new_size: new_size.unwrap_or(0),
+            });
+        }
+
+        let old_bytes = if old_size.is_some() {
+            match session.batch.query_content(&old_spec)? {
+                BatchContent::Found { bytes } => bytes,
+                BatchContent::Missing => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        let new_bytes = if new_size.is_some() {
+            if staged {
+                match session.batch.query_content(&new_spec)? {
+                    BatchContent::Found { bytes } => bytes,
+                    BatchContent::Missing => Vec::new(),
+                }
+            } else {
+                match fs::read(&fs_path) {
+                    Ok(b) => b,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                    Err(e) => return Err(GitError::Io(e)),
+                }
+            }
+        } else {
+            Vec::new()
+        };
+
+        if is_binary(&old_bytes) || is_binary(&new_bytes) {
+            return Ok(FileDiff::Binary {
+                old_size: old_size.unwrap_or(0),
+                new_size: new_size.unwrap_or(0),
+                note: None,
+            });
+        }
+
+        let old_content = diff::normalize_eol(&String::from_utf8_lossy(&old_bytes));
+        let new_content = diff::normalize_eol(&String::from_utf8_lossy(&new_bytes));
+        let changes = diff::compute_changes(&old_content, &new_content);
+        Ok(FileDiff::Text {
+            old_content,
+            new_content,
+            old_size: old_size.unwrap_or(0),
+            new_size: new_size.unwrap_or(0),
+            derived_label: None,
+            ue_version: None,
+            changes,
+        })
+    }
+
     fn list_repo_files(&self, path: &Path) -> Result<Vec<String>, GitError> {
         // Fast path: clone the cached Vec under the map lock and return.
         // Same FS-watcher mechanism as worktree_files — any change in the

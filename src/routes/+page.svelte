@@ -6,6 +6,7 @@
   import InputBar from "$lib/ui/InputBar.svelte";
   import FileList from "$lib/ui/FileList.svelte";
   import CommitList from "$lib/ui/CommitList.svelte";
+  import ChangesList from "$lib/ui/ChangesList.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
@@ -396,6 +397,12 @@
           <div class="placeholder">Scanning changed files…</div>
         {:else if appState.appMode === "history"}
           <div class="placeholder">Select a commit to view its changes.</div>
+        {:else if appState.appMode === "changes"}
+          <div class="placeholder">
+            {appState.loadingStatus
+              ? "Loading changes…"
+              : "No changes — working tree is clean."}
+          </div>
         {:else}
           <div class="placeholder">
             Select a repository and two refs to compare.
@@ -406,6 +413,16 @@
 
     {#if appState.appMode === "blame"}
       <BlameView />
+    {:else if appState.appMode === "changes"}
+      <ChangesList />
+      <div
+        class="picker-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize change list"
+        onpointerdown={onResizeStart}
+      ></div>
+      {@render diffPane()}
     {:else if appState.appMode === "history"}
       <div
         class="left-split"
