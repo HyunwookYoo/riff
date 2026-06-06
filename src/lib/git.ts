@@ -10,6 +10,7 @@ import type {
   FileStatus,
   FileViewMode,
   PersistedState,
+  RepoStatus,
   SubmoduleInfo,
   ThemeChoice,
   WorkspaceLayout,
@@ -85,6 +86,15 @@ export function commitLog(
   skip: number,
 ): Promise<Commit[]> {
   return invoke("commit_log", { path, startRef, limit, skip });
+}
+
+/**
+ * Full working-tree status (`git status --porcelain=v2 --branch`): staged /
+ * unstaged / untracked entries plus the current branch's upstream and
+ * ahead/behind counts. Drives the source-control Changes screen.
+ */
+export function status(path: string): Promise<RepoStatus> {
+  return invoke("status", { path });
 }
 
 /**

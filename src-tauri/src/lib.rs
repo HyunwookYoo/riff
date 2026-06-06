@@ -6,7 +6,7 @@ use std::path::Path;
 
 use git::{
     Blame, Branch, ChangedFile, Commit, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer,
-    SubmoduleInfo,
+    RepoStatus, SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
@@ -30,6 +30,11 @@ fn commit_log(
     skip: u32,
 ) -> Result<Vec<Commit>, GitError> {
     state.commit_log(Path::new(&path), &start_ref, limit, skip)
+}
+
+#[tauri::command]
+fn status(state: tauri::State<GitCli>, path: String) -> Result<RepoStatus, GitError> {
+    state.status(Path::new(&path))
 }
 
 #[tauri::command]
@@ -316,6 +321,7 @@ pub fn run() {
             validate_repo,
             list_refs,
             commit_log,
+            status,
             diff_files,
             file_diff,
             worktree_files,

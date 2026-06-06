@@ -100,6 +100,28 @@ export interface Commit {
   refs: string[];
 }
 
+/// One entry from `git status --porcelain=v2`. Mirrors Rust `StatusEntry`.
+/// `index_status` (X, staged side) and `worktree_status` (Y, unstaged side)
+/// are single-character porcelain codes (`.MADRCU?`, `.` = unmodified);
+/// untracked files come back as `?`/`?`. `orig_path` is the pre-rename path.
+export interface StatusEntry {
+  path: string;
+  orig_path: string | null;
+  index_status: string;
+  worktree_status: string;
+}
+
+/// Working-tree status snapshot. Mirrors Rust `RepoStatus`. `ahead`/`behind`
+/// count commits vs `upstream` (0 when no upstream); `branch` is null on a
+/// detached HEAD.
+export interface RepoStatus {
+  entries: StatusEntry[];
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+}
+
 export interface PersistedState {
   recent_repos: string[];
   theme: ThemeChoice;

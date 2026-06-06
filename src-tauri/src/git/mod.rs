@@ -48,6 +48,31 @@ pub struct Commit {
     pub refs: Vec<String>,
 }
 
+/// One entry from `git status --porcelain=v2`. `index_status` / `worktree_status`
+/// are the porcelain-v2 XY status codes: X is the *staged* side (HEAD↔index),
+/// Y the *unstaged* side (index↔worktree). Each is a single character from
+/// `.MADRCU?` where `.` means unmodified on that side; untracked files come back
+/// as `?`/`?`. `orig_path` holds the pre-rename path for renames/copies.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StatusEntry {
+    pub path: String,
+    pub orig_path: Option<String>,
+    pub index_status: String,
+    pub worktree_status: String,
+}
+
+/// Result of `git status --porcelain=v2 --branch`. `ahead` / `behind` are the
+/// commit counts vs `upstream` (both 0 when there is no upstream). `branch` is
+/// `None` on a detached HEAD.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepoStatus {
+    pub entries: Vec<StatusEntry>,
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: i64,
+    pub behind: i64,
+}
+
 /// Submodule entry as declared in `.gitmodules`. `initialized` is true when
 /// the submodule's working tree has been checked out (i.e. `<repo>/<path>/.git`
 /// exists). Used by the multi-root workspace (§13) to populate the repo list.
@@ -128,6 +153,11 @@ pub trait GitLayer {
         limit: u32,
         skip: u32,
     ) -> Result<Vec<Commit>, GitError>;
+    /// Full working-tree status via `git status --porcelain=v2 --branch -z`:
+    /// staged (index) and unstaged (worktree) state per file, untracked files,
+    /// and the current branch's upstream + ahead/behind counts. Drives the
+    /// source-control Changes screen.
+    fn status(&self, path: &Path) -> Result<RepoStatus, GitError>;
     /// Stream the changed files between `start` and `target`.
     /// `on_file` is invoked once per parsed entry as it arrives.
     /// Cancelling a previously-in-flight invocation against the same session

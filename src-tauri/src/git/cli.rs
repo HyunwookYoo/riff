@@ -13,7 +13,7 @@ use super::diff;
 use super::uasset;
 use super::{
     Branch, BranchKind, ChangedFile, Commit, DiffMode, FileDiff, FileStatus, GitError, GitLayer,
-    SubmoduleInfo,
+    RepoStatus, StatusEntry, SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -357,6 +357,120 @@ fn parse_commit_log(text: &str) -> Vec<Commit> {
     commits
 }
 
+/// Parse `git status --porcelain=v2 --branch -z` output. Records are NUL-
+/// separated; a rename/copy (type `2`) entry is followed by a *second* NUL
+/// field holding the original path. Header lines (`# branch.*`) carry the
+/// current branch, upstream, and ahead/behind. Split out so it can be unit-
+/// tested without a real repo.
+fn parse_status(text: &str) -> RepoStatus {
+    let tokens: Vec<&str> = text.split('\0').collect();
+    let mut entries = Vec::new();
+    let mut branch = None;
+    let mut upstream = None;
+    let mut ahead = 0i64;
+    let mut behind = 0i64;
+
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = tokens[i];
+        i += 1;
+        let Some(first) = tok.as_bytes().first() else {
+            continue; // empty token (e.g. the trailing NUL)
+        };
+        match first {
+            b'#' => {
+                // "# branch.head <name>|(detached)" / ".upstream <name>" /
+                // ".ab +<ahead> -<behind>". Other headers (.oid) are ignored.
+                if let Some(rest) = tok.strip_prefix("# branch.") {
+                    if let Some(v) = rest.strip_prefix("head ") {
+                        branch = (v != "(detached)").then(|| v.to_string());
+                    } else if let Some(v) = rest.strip_prefix("upstream ") {
+                        upstream = Some(v.to_string());
+                    } else if let Some(v) = rest.strip_prefix("ab ") {
+                        for part in v.split_whitespace() {
+                            if let Some(n) = part.strip_prefix('+') {
+                                ahead = n.parse().unwrap_or(0);
+                            } else if let Some(n) = part.strip_prefix('-') {
+                                behind = n.parse().unwrap_or(0);
+                            }
+                        }
+                    }
+                }
+            }
+            // "1 XY <sub> <mH> <mI> <mW> <hH> <hI> <path>" — path is field 9.
+            b'1' => {
+                if let (Some((x, y)), Some(path)) = (status_xy(tok), status_path(tok, 8)) {
+                    entries.push(StatusEntry {
+                        path,
+                        orig_path: None,
+                        index_status: x,
+                        worktree_status: y,
+                    });
+                }
+            }
+            // "2 XY ... <Xscore> <path>" followed by a second NUL token = orig path.
+            b'2' => {
+                let orig = tokens.get(i).map(|s| s.to_string());
+                i += 1; // consume the original-path token
+                if let (Some((x, y)), Some(path)) = (status_xy(tok), status_path(tok, 9)) {
+                    entries.push(StatusEntry {
+                        path,
+                        orig_path: orig,
+                        index_status: x,
+                        worktree_status: y,
+                    });
+                }
+            }
+            // Unmerged: "u XY <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>".
+            b'u' => {
+                if let (Some((x, y)), Some(path)) = (status_xy(tok), status_path(tok, 10)) {
+                    entries.push(StatusEntry {
+                        path,
+                        orig_path: None,
+                        index_status: x,
+                        worktree_status: y,
+                    });
+                }
+            }
+            // "? <path>" — untracked. Mark both sides '?'.
+            b'?' => {
+                entries.push(StatusEntry {
+                    path: tok[2..].to_string(),
+                    orig_path: None,
+                    index_status: "?".to_string(),
+                    worktree_status: "?".to_string(),
+                });
+            }
+            // '!' ignored files (only present with --ignored) and anything
+            // unrecognized are skipped.
+            _ => {}
+        }
+    }
+
+    RepoStatus {
+        entries,
+        branch,
+        upstream,
+        ahead,
+        behind,
+    }
+}
+
+/// Extract the porcelain-v2 XY status pair from an entry token like `"1 MM ..."`:
+/// the two characters at byte offsets 2 and 3.
+fn status_xy(tok: &str) -> Option<(String, String)> {
+    let x = tok.get(2..3)?.to_string();
+    let y = tok.get(3..4)?.to_string();
+    Some((x, y))
+}
+
+/// The path field of a space-delimited porcelain-v2 entry: everything after the
+/// first `n` spaces. The path is the final field and may itself contain spaces,
+/// so it's taken as the remainder.
+fn status_path(tok: &str, n: usize) -> Option<String> {
+    tok.splitn(n + 1, ' ').nth(n).map(|s| s.to_string())
+}
+
 /// Reject obviously-malformed path arguments. Real path validity is enforced by git.
 fn validate_path(s: &str) -> Result<(), GitError> {
     if s.is_empty() || s.starts_with('-') {
@@ -496,6 +610,11 @@ impl GitLayer for GitCli {
             ],
         )?;
         Ok(parse_commit_log(&String::from_utf8_lossy(&stdout)))
+    }
+
+    fn status(&self, path: &Path) -> Result<RepoStatus, GitError> {
+        let stdout = self.run(path, &["status", "--porcelain=v2", "--branch", "-z"])?;
+        Ok(parse_status(&String::from_utf8_lossy(&stdout)))
     }
 
     fn diff_files(
@@ -1702,5 +1821,81 @@ mod tests {
         assert_eq!(out[0].time, 0);
         assert_eq!(out[0].summary, "fix: a, b, c");
         assert_eq!(out[0].refs, vec!["tag: v1.0"]);
+    }
+
+    #[test]
+    fn parse_status_basic() {
+        // Mirrors real `git status --porcelain=v2 --branch -z`: two headers, a
+        // staged add (A.), a staged rename (R., two NUL fields), a staged +
+        // unstaged modify (MM), and an untracked file (?).
+        let input = [
+            "# branch.oid 607d018f8459fcf20ee3bf5fb99d0c7be3394f06",
+            "# branch.head master",
+            "1 A. N... 000000 100644 100644 0000000000000000000000000000000000000000 133064328add2ba3a254ca3d562f604627daf2fe added.txt",
+            "2 R. N... 100644 100644 100644 3367afdbbf91e638efe983616377c60477cc6612 3367afdbbf91e638efe983616377c60477cc6612 R100 renamed.txt",
+            "torename.txt",
+            "1 MM N... 100644 100644 100644 de980441c3ab03a8c07dda1ad27b8a11f39deb1e 7be73ce3c1b1cdaea86e8168dfee8575175953bf tracked.txt",
+            "? untracked.txt",
+        ]
+        .join("\0")
+            + "\0";
+        let st = parse_status(&input);
+
+        assert_eq!(st.branch.as_deref(), Some("master"));
+        assert_eq!(st.upstream, None);
+        assert_eq!(st.ahead, 0);
+        assert_eq!(st.behind, 0);
+        assert_eq!(st.entries.len(), 4);
+
+        assert_eq!(st.entries[0].path, "added.txt");
+        assert_eq!(st.entries[0].index_status, "A");
+        assert_eq!(st.entries[0].worktree_status, ".");
+        assert_eq!(st.entries[0].orig_path, None);
+
+        // Rename carries the original path from the second NUL field.
+        assert_eq!(st.entries[1].path, "renamed.txt");
+        assert_eq!(st.entries[1].orig_path.as_deref(), Some("torename.txt"));
+        assert_eq!(st.entries[1].index_status, "R");
+        assert_eq!(st.entries[1].worktree_status, ".");
+
+        // A file modified in both index and worktree shows on both sides.
+        assert_eq!(st.entries[2].path, "tracked.txt");
+        assert_eq!(st.entries[2].index_status, "M");
+        assert_eq!(st.entries[2].worktree_status, "M");
+
+        assert_eq!(st.entries[3].path, "untracked.txt");
+        assert_eq!(st.entries[3].index_status, "?");
+        assert_eq!(st.entries[3].worktree_status, "?");
+    }
+
+    #[test]
+    fn parse_status_branch_ab() {
+        let input = ["# branch.head main", "# branch.upstream origin/main", "# branch.ab +2 -3"]
+            .join("\0")
+            + "\0";
+        let st = parse_status(&input);
+        assert_eq!(st.branch.as_deref(), Some("main"));
+        assert_eq!(st.upstream.as_deref(), Some("origin/main"));
+        assert_eq!(st.ahead, 2);
+        assert_eq!(st.behind, 3);
+        assert!(st.entries.is_empty());
+    }
+
+    #[test]
+    fn parse_status_detached_and_empty() {
+        let st = parse_status("# branch.head (detached)\0");
+        assert_eq!(st.branch, None);
+        assert!(parse_status("").entries.is_empty());
+    }
+
+    #[test]
+    fn parse_status_path_with_spaces() {
+        // The path is the trailing remainder, so embedded spaces survive.
+        let input = "1 .M N... 100644 100644 100644 aaaaaaa bbbbbbb my file.txt\0";
+        let st = parse_status(input);
+        assert_eq!(st.entries.len(), 1);
+        assert_eq!(st.entries[0].path, "my file.txt");
+        assert_eq!(st.entries[0].index_status, ".");
+        assert_eq!(st.entries[0].worktree_status, "M");
     }
 }

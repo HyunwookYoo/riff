@@ -9,6 +9,7 @@ import type {
   FileViewMode,
   RepoEntry,
   RepoFile,
+  RepoStatus,
   ThemeChoice,
   ViewMode,
   WorkspaceLayout,
@@ -126,6 +127,13 @@ class AppState {
     activeRepoIdx: number | null;
     overrides: Record<number, { startBranch: string; targetBranch: string }>;
   } | null>(null);
+  // Source-control status (VC Phase 0 scaffold). Populated from
+  // `git status --porcelain=v2` once the Changes screen (Phase 1) wires it in;
+  // entries split there into staged (index_status≠'.') / unstaged
+  // (worktree_status≠'.') / untracked. `ahead`/`behind`/`upstream` feed the
+  // network toolbar. Session-only; additive until Phase 1 consumes it.
+  repoStatus = $state<RepoStatus | null>(null);
+  loadingStatus = $state(false);
 }
 
 export const appState = new AppState();
