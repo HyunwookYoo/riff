@@ -229,6 +229,23 @@ pub trait GitLayer {
     /// Remove paths from the index while keeping working-tree changes
     /// (`git restore --staged`). `files = None` unstages everything.
     fn unstage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError>;
+    /// Create a commit from the staged index. `subject` is the first line;
+    /// `body` (when non-empty) follows after a blank line. `amend` rewrites
+    /// HEAD; `signoff` adds a Signed-off-by trailer; each `coauthors` entry
+    /// ("Name <email>") becomes a Co-authored-by trailer. GPG signing and
+    /// hooks follow the user's git config — never bypassed (no --no-verify).
+    fn commit(
+        &self,
+        path: &Path,
+        subject: &str,
+        body: &str,
+        amend: bool,
+        signoff: bool,
+        coauthors: &[String],
+    ) -> Result<(), GitError>;
+    /// The full message of HEAD (`git log -1 --format=%B`), used to pre-fill the
+    /// commit box when the user toggles "Amend".
+    fn head_commit_message(&self, path: &Path) -> Result<String, GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.

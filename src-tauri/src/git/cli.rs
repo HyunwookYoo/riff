@@ -1245,6 +1245,54 @@ impl GitLayer for GitCli {
         Ok(())
     }
 
+    fn commit(
+        &self,
+        path: &Path,
+        subject: &str,
+        body: &str,
+        amend: bool,
+        signoff: bool,
+        coauthors: &[String],
+    ) -> Result<(), GitError> {
+        if subject.trim().is_empty() {
+            return Err(GitError::CommandFailed("commit subject is empty".into()));
+        }
+        // Owned trailer strings, borrowed into `args` below.
+        let trailers: Vec<String> = coauthors
+            .iter()
+            .filter(|c| !c.trim().is_empty())
+            .map(|c| format!("Co-authored-by: {}", c.trim()))
+            .collect();
+
+        let mut args: Vec<&str> = vec!["commit"];
+        if amend {
+            args.push("--amend");
+        }
+        if signoff {
+            args.push("-s");
+        }
+        // `-m subject -m body` → git joins them with a blank line, matching the
+        // subject/body convention. Values are message text (not flags), so a
+        // leading dash in the subject is safe.
+        args.push("-m");
+        args.push(subject);
+        if !body.trim().is_empty() {
+            args.push("-m");
+            args.push(body);
+        }
+        for t in &trailers {
+            args.push("--trailer");
+            args.push(t);
+        }
+        self.run(path, &args)?;
+        Ok(())
+    }
+
+    fn head_commit_message(&self, path: &Path) -> Result<String, GitError> {
+        let out = self.run(path, &["log", "-1", "--format=%B"])?;
+        Ok(String::from_utf8_lossy(&out).trim_end().to_string())
+    }
+
     fn list_repo_files(&self, path: &Path) -> Result<Vec<String>, GitError> {
         // Fast path: clone the cached Vec under the map lock and return.
         // Same FS-watcher mechanism as worktree_files — any change in the

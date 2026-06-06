@@ -195,6 +195,31 @@ fn unstage(
 }
 
 #[tauri::command]
+fn commit(
+    state: tauri::State<GitCli>,
+    path: String,
+    subject: String,
+    body: String,
+    amend: bool,
+    signoff: bool,
+    coauthors: Vec<String>,
+) -> Result<(), GitError> {
+    state.commit(
+        Path::new(&path),
+        &subject,
+        &body,
+        amend,
+        signoff,
+        &coauthors,
+    )
+}
+
+#[tauri::command]
+fn head_commit_message(state: tauri::State<GitCli>, path: String) -> Result<String, GitError> {
+    state.head_commit_message(Path::new(&path))
+}
+
+#[tauri::command]
 fn list_repo_files(state: tauri::State<GitCli>, path: String) -> Result<Vec<String>, GitError> {
     state.list_repo_files(Path::new(&path))
 }
@@ -367,6 +392,8 @@ pub fn run() {
             changes_file_diff,
             stage,
             unstage,
+            commit,
+            head_commit_message,
             blame_file,
             list_repo_files,
             read_repo_file,

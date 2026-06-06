@@ -7,6 +7,7 @@
   import FileList from "$lib/ui/FileList.svelte";
   import CommitList from "$lib/ui/CommitList.svelte";
   import ChangesList from "$lib/ui/ChangesList.svelte";
+  import CommitBox from "$lib/ui/CommitBox.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
@@ -414,7 +415,10 @@
     {#if appState.appMode === "blame"}
       <BlameView />
     {:else if appState.appMode === "changes"}
-      <ChangesList />
+      <div class="changes-col">
+        <div class="changes-scroll"><ChangesList /></div>
+        <CommitBox />
+      </div>
       <div
         class="picker-resizer"
         role="separator"
@@ -509,6 +513,20 @@
   .picker-resizer:hover::after,
   .body.resizing .picker-resizer::after {
     background: var(--accent, #4a9eff);
+  }
+  /* Changes mode: the left grid column stacks the scrollable change lists on
+     top of a fixed commit box at the bottom. */
+  .changes-col {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .changes-scroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
   }
   /* History mode: the left grid column is split top (commits) / bottom (files)
      with a draggable horizontal handle between them. */

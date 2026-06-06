@@ -219,6 +219,34 @@ export function unstage(path: string, files: string[] | null): Promise<void> {
 }
 
 /**
+ * Commit the staged index. `subject`/`body` form the message; `amend` rewrites
+ * HEAD; `signoff` adds Signed-off-by; `coauthors` ("Name <email>") become
+ * Co-authored-by trailers. Rejects on empty subject or hook failure.
+ */
+export function commit(
+  path: string,
+  subject: string,
+  body: string,
+  amend: boolean,
+  signoff: boolean,
+  coauthors: string[],
+): Promise<void> {
+  return invoke("commit", {
+    path,
+    subject,
+    body,
+    amend,
+    signoff,
+    coauthors,
+  });
+}
+
+/** Full message of HEAD, for pre-filling the box when amending. */
+export function headCommitMessage(path: string): Promise<string> {
+  return invoke("head_commit_message", { path });
+}
+
+/**
  * Run `git blame --porcelain -w -M` on a file. `rev` is ignored when
  * `useContents` is true (worktree mode blames the working copy against HEAD).
  * Lines with no commit (uncommitted edits) come back with sha "00000000".

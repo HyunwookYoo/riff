@@ -138,6 +138,15 @@ class AppState {
   // "unstaged" (index↔worktree) or "staged" (HEAD↔index). DiffView reads this
   // to pick the per-side diff. Session-only.
   changesSide = $state<"staged" | "unstaged">("unstaged");
+  // Commit box state (Phase 1.3). `commitSignoff` is sticky across commits (a
+  // user preference); subject/body/amend/coauthors are cleared on success.
+  // Session-only.
+  commitSubject = $state("");
+  commitBody = $state("");
+  commitAmend = $state(false);
+  commitSignoff = $state(false);
+  commitCoauthors = $state<string[]>([]);
+  committing = $state(false);
 }
 
 export const appState = new AppState();
