@@ -177,6 +177,24 @@ fn changes_file_diff(
 }
 
 #[tauri::command]
+fn stage(
+    state: tauri::State<GitCli>,
+    path: String,
+    files: Option<Vec<String>>,
+) -> Result<(), GitError> {
+    state.stage(Path::new(&path), files.as_deref())
+}
+
+#[tauri::command]
+fn unstage(
+    state: tauri::State<GitCli>,
+    path: String,
+    files: Option<Vec<String>>,
+) -> Result<(), GitError> {
+    state.unstage(Path::new(&path), files.as_deref())
+}
+
+#[tauri::command]
 fn list_repo_files(state: tauri::State<GitCli>, path: String) -> Result<Vec<String>, GitError> {
     state.list_repo_files(Path::new(&path))
 }
@@ -347,6 +365,8 @@ pub fn run() {
             worktree_files,
             worktree_file_diff,
             changes_file_diff,
+            stage,
+            unstage,
             blame_file,
             list_repo_files,
             read_repo_file,

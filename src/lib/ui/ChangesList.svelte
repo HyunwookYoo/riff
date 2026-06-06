@@ -1,6 +1,14 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { isStaged, isUnstaged, openChange } from "$lib/sourceControl";
+  import {
+    isStaged,
+    isUnstaged,
+    openChange,
+    stageAll,
+    stageEntry,
+    unstageAll,
+    unstageEntry,
+  } from "$lib/sourceControl";
   import type { StatusEntry } from "$lib/types";
 
   const entries = $derived(appState.repoStatus?.entries ?? []);
@@ -27,6 +35,11 @@
     <header>
       <span class="title">Unstaged</span>
       <span class="count">{unstaged.length}</span>
+      {#if unstaged.length > 0}
+        <button type="button" class="bulk" onclick={() => void stageAll()}>
+          Stage all
+        </button>
+      {/if}
     </header>
     {#if appState.loadingStatus && unstaged.length === 0}
       <div class="empty">Loading…</div>
@@ -34,18 +47,28 @@
       <div class="empty">No unstaged changes</div>
     {:else}
       {#each unstaged as e (e.path)}
-        <button
-          type="button"
-          class="row"
-          class:active={selected(e, "unstaged")}
-          onclick={() => openChange(e, "unstaged")}
-          title={e.path}
-        >
-          <span class="badge" data-code={code(e, "unstaged")}>
-            {code(e, "unstaged")}
-          </span>
-          <span class="path">{e.path}</span>
-        </button>
+        <div class="row" class:active={selected(e, "unstaged")}>
+          <button
+            type="button"
+            class="select"
+            onclick={() => openChange(e, "unstaged")}
+            title={e.path}
+          >
+            <span class="badge" data-code={code(e, "unstaged")}>
+              {code(e, "unstaged")}
+            </span>
+            <span class="path">{e.path}</span>
+          </button>
+          <button
+            type="button"
+            class="action"
+            title="Stage this file"
+            aria-label="Stage {e.path}"
+            onclick={() => void stageEntry(e)}
+          >
+            +
+          </button>
+        </div>
       {/each}
     {/if}
   </section>
@@ -54,23 +77,38 @@
     <header>
       <span class="title">Staged</span>
       <span class="count">{staged.length}</span>
+      {#if staged.length > 0}
+        <button type="button" class="bulk" onclick={() => void unstageAll()}>
+          Unstage all
+        </button>
+      {/if}
     </header>
     {#if staged.length === 0}
       <div class="empty">No staged changes</div>
     {:else}
       {#each staged as e (e.path)}
-        <button
-          type="button"
-          class="row"
-          class:active={selected(e, "staged")}
-          onclick={() => openChange(e, "staged")}
-          title={e.path}
-        >
-          <span class="badge" data-code={code(e, "staged")}>
-            {code(e, "staged")}
-          </span>
-          <span class="path">{e.path}</span>
-        </button>
+        <div class="row" class:active={selected(e, "staged")}>
+          <button
+            type="button"
+            class="select"
+            onclick={() => openChange(e, "staged")}
+            title={e.path}
+          >
+            <span class="badge" data-code={code(e, "staged")}>
+              {code(e, "staged")}
+            </span>
+            <span class="path">{e.path}</span>
+          </button>
+          <button
+            type="button"
+            class="action"
+            title="Unstage this file"
+            aria-label="Unstage {e.path}"
+            onclick={() => void unstageEntry(e)}
+          >
+            −
+          </button>
+        </div>
       {/each}
     {/if}
   </section>
@@ -109,6 +147,22 @@
     font-variant-numeric: tabular-nums;
     opacity: 0.7;
   }
+  header .bulk {
+    margin-left: auto;
+    padding: 1px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--input-bg);
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.95em;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  header .bulk:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
   .empty {
     padding: 8px 12px;
     color: var(--muted);
@@ -116,9 +170,23 @@
   }
   .row {
     display: flex;
+    align-items: stretch;
+  }
+  .row:hover {
+    background: var(--hover);
+  }
+  .row.active {
+    background: var(--accent-soft);
+  }
+  .row.active .path {
+    color: var(--accent);
+  }
+  .select {
+    display: flex;
     align-items: center;
     gap: 8px;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: 4px 10px;
     border: none;
     background: transparent;
@@ -127,11 +195,22 @@
     text-align: left;
     font-size: 0.85em;
   }
-  .row:hover {
-    background: var(--hover);
+  .action {
+    flex: 0 0 auto;
+    width: 26px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1.1em;
+    line-height: 1;
+    opacity: 0;
   }
-  .row.active {
-    background: var(--accent-soft);
+  .row:hover .action,
+  .row.active .action {
+    opacity: 1;
+  }
+  .action:hover {
     color: var(--accent);
   }
   .badge {

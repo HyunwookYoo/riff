@@ -203,6 +203,22 @@ export function changesFileDiff(
 }
 
 /**
+ * Stage paths into the index (`git add`). `files = null` stages everything
+ * (`git add -A`); an array stages just those paths.
+ */
+export function stage(path: string, files: string[] | null): Promise<void> {
+  return invoke("stage", { path, files });
+}
+
+/**
+ * Unstage paths (`git restore --staged`), keeping working-tree changes.
+ * `files = null` unstages everything.
+ */
+export function unstage(path: string, files: string[] | null): Promise<void> {
+  return invoke("unstage", { path, files });
+}
+
+/**
  * Run `git blame --porcelain -w -M` on a file. `rev` is ignored when
  * `useContents` is true (worktree mode blames the working copy against HEAD).
  * Lines with no commit (uncommitted edits) come back with sha "00000000".

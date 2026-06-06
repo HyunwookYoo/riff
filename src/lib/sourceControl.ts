@@ -1,5 +1,5 @@
 import { appState } from "./store.svelte";
-import { status } from "./git";
+import { stage as stageCmd, status, unstage as unstageCmd } from "./git";
 import type { ChangedFile, FileStatus, StatusEntry } from "./types";
 
 /// Map a porcelain-v2 status code (X or Y for one side) to a `FileStatus` for
@@ -89,4 +89,29 @@ export function openChange(
   };
   appState.changesSide = side;
   appState.selectedFile = file;
+}
+
+/// Run a stage/unstage op against the active repo, then refresh status so the
+/// two lists + diff reflect the new index. Errors surface in the error banner
+/// but still trigger a reload (the index may be partially updated).
+async function applyAndReload(op: Promise<void>): Promise<void> {
+  try {
+    await op;
+  } catch (e) {
+    appState.error = String(e);
+  }
+  await loadStatus();
+}
+
+export function stageEntry(entry: StatusEntry): Promise<void> {
+  return applyAndReload(stageCmd(changesRepoPath(), [entry.path]));
+}
+export function unstageEntry(entry: StatusEntry): Promise<void> {
+  return applyAndReload(unstageCmd(changesRepoPath(), [entry.path]));
+}
+export function stageAll(): Promise<void> {
+  return applyAndReload(stageCmd(changesRepoPath(), null));
+}
+export function unstageAll(): Promise<void> {
+  return applyAndReload(unstageCmd(changesRepoPath(), null));
 }

@@ -222,6 +222,13 @@ pub trait GitLayer {
         staged: bool,
         force: bool,
     ) -> Result<FileDiff, GitError>;
+    /// Stage paths into the index (`git add`). `files = None` stages everything
+    /// (`git add -A`, including untracked and deletions); `Some` stages just
+    /// those paths. Used by the Changes screen's stage / Stage-all actions.
+    fn stage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError>;
+    /// Remove paths from the index while keeping working-tree changes
+    /// (`git restore --staged`). `files = None` unstages everything.
+    fn unstage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.

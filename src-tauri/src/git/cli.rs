@@ -1211,6 +1211,40 @@ impl GitLayer for GitCli {
         })
     }
 
+    fn stage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError> {
+        match files {
+            None => {
+                self.run(path, &["add", "-A"])?;
+            }
+            Some(files) => {
+                for f in files {
+                    validate_path(f)?;
+                }
+                let mut args: Vec<&str> = vec!["add", "--"];
+                args.extend(files.iter().map(String::as_str));
+                self.run(path, &args)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn unstage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError> {
+        match files {
+            None => {
+                self.run(path, &["restore", "--staged", "--", "."])?;
+            }
+            Some(files) => {
+                for f in files {
+                    validate_path(f)?;
+                }
+                let mut args: Vec<&str> = vec!["restore", "--staged", "--"];
+                args.extend(files.iter().map(String::as_str));
+                self.run(path, &args)?;
+            }
+        }
+        Ok(())
+    }
+
     fn list_repo_files(&self, path: &Path) -> Result<Vec<String>, GitError> {
         // Fast path: clone the cached Vec under the map lock and return.
         // Same FS-watcher mechanism as worktree_files — any change in the
