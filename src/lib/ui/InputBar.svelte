@@ -7,7 +7,6 @@
     enterHistoryMode,
     restoreCompareContext,
     setHistoryRef,
-    setHistoryRepo,
   } from "$lib/commitHistory";
   import { enterChangesMode } from "$lib/sourceControl";
   import { loadBranchesFor } from "$lib/workspace";
@@ -44,13 +43,6 @@
     appState.appMode = "blame";
   }
 
-  // History-mode repo picker: list every workspace repo (main + submodules).
-  const historyRepoOptions = $derived(
-    appState.repos.map((r, i) => ({
-      value: String(i),
-      label: r.displayName || (i === 0 ? "main" : `repo ${i}`),
-    })),
-  );
   // Branches for the currently browsed repo. idx 0 (main) is seeded on repo
   // load; non-main repos lazy-load below.
   const historyBranches = $derived(
@@ -134,15 +126,6 @@
   {/if}
 
   {#if appState.appMode === "history"}
-    {#if appState.repos.length > 1}
-      <Dropdown
-        title="Repository to browse"
-        align="left"
-        value={String(appState.historyRepoIdx)}
-        options={historyRepoOptions}
-        onchange={(v) => setHistoryRepo(Number(v))}
-      />
-    {/if}
     <span class="hist-label">History of</span>
     <BranchPicker
       value={appState.historyRef}

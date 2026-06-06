@@ -30,11 +30,25 @@ function toFileStatus(code: string): FileStatus {
   }
 }
 
-/// The repo whose status the Changes screen browses: the focused repo, or the
-/// main repo when nothing is focused. Mirrors how compare resolves paths.
+/// The repo the Changes screen stages/commits against — `changesRepoIdx`
+/// (main or a submodule/manual repo), independent of the compare Focus.
 export function changesRepoPath(): string {
-  const idx = appState.activeRepoIdx ?? 0;
-  return appState.repos[idx]?.path ?? appState.repoPath;
+  return appState.repos[appState.changesRepoIdx]?.path ?? appState.repoPath;
+}
+
+/// Switch which repo the Changes screen operates on (main vs a submodule).
+/// Clears the per-repo commit box and selection, then reloads that repo's
+/// status. Used by the Changes-mode repo picker.
+export function setChangesRepo(idx: number): void {
+  if (idx === appState.changesRepoIdx) return;
+  appState.changesRepoIdx = idx;
+  appState.repoStatus = null;
+  appState.selectedFile = null;
+  appState.commitSubject = "";
+  appState.commitBody = "";
+  appState.commitAmend = false;
+  appState.commitCoauthors = [];
+  void loadStatus();
 }
 
 /// An entry belongs to the Staged list when its index side changed (and isn't
@@ -63,7 +77,16 @@ export async function loadStatus(): Promise<void> {
     appState.repoStatus = st;
     const unstaged = st.entries.filter(isUnstaged);
     const staged = st.entries.filter(isStaged);
-    if (unstaged.length > 0) {
+    // Keep the current selection if it still has changes on its side (so
+    // staging a hunk/file doesn't jump the view); otherwise fall back to the
+    // first available change.
+    const cur = appState.selectedFile;
+    const side = appState.changesSide;
+    const sameSide = side === "staged" ? staged : unstaged;
+    const kept = cur ? sameSide.find((e) => e.path === cur.path) : undefined;
+    if (kept) {
+      openChange(kept, side);
+    } else if (unstaged.length > 0) {
       openChange(unstaged[0], "unstaged");
     } else if (staged.length > 0) {
       openChange(staged[0], "staged");
@@ -79,22 +102,37 @@ export async function loadStatus(): Promise<void> {
   }
 }
 
-/// Select a change on a given side. Builds a `ChangedFile` (reused verbatim by
-/// DiffView) from the entry's per-side status and records the side so the diff
-/// loads the right gap.
+/// Build a `ChangedFile` (consumed verbatim by DiffView) from a status entry on
+/// a given side — the per-side status code drives the diff header + badge.
+export function entryToChangedFile(
+  entry: StatusEntry,
+  side: "staged" | "unstaged",
+): ChangedFile {
+  const code = side === "staged" ? entry.index_status : entry.worktree_status;
+  return {
+    path: entry.path,
+    old_path: entry.orig_path,
+    status: toFileStatus(code),
+    repoIdx: appState.changesRepoIdx,
+  };
+}
+
+/// Select a change (already a `ChangedFile`) on a side, recording the side so
+/// the diff loads the right gap.
+export function selectChange(
+  file: ChangedFile,
+  side: "staged" | "unstaged",
+): void {
+  appState.changesSide = side;
+  appState.selectedFile = file;
+}
+
+/// Select a change from a status entry on a given side.
 export function openChange(
   entry: StatusEntry,
   side: "staged" | "unstaged",
 ): void {
-  const code = side === "staged" ? entry.index_status : entry.worktree_status;
-  const file: ChangedFile = {
-    path: entry.path,
-    old_path: entry.orig_path,
-    status: toFileStatus(code),
-    repoIdx: appState.activeRepoIdx ?? 0,
-  };
-  appState.changesSide = side;
-  appState.selectedFile = file;
+  selectChange(entryToChangedFile(entry, side), side);
 }
 
 /// Run a stage/unstage op against the active repo, then refresh status so the
@@ -109,17 +147,29 @@ async function applyAndReload(op: Promise<void>): Promise<void> {
   await loadStatus();
 }
 
-export function stageEntry(entry: StatusEntry): Promise<void> {
-  return applyAndReload(stageCmd(changesRepoPath(), [entry.path]));
+export function stagePath(path: string): Promise<void> {
+  return applyAndReload(stageCmd(changesRepoPath(), [path]));
 }
-export function unstageEntry(entry: StatusEntry): Promise<void> {
-  return applyAndReload(unstageCmd(changesRepoPath(), [entry.path]));
+export function unstagePath(path: string): Promise<void> {
+  return applyAndReload(unstageCmd(changesRepoPath(), [path]));
 }
 export function stageAll(): Promise<void> {
   return applyAndReload(stageCmd(changesRepoPath(), null));
 }
 export function unstageAll(): Promise<void> {
   return applyAndReload(unstageCmd(changesRepoPath(), null));
+}
+
+/// Clear all Changes-screen state on repo switch — the status, repo selection,
+/// and commit box belong to the old workspace.
+export function resetSourceControl(): void {
+  appState.repoStatus = null;
+  appState.changesRepoIdx = 0;
+  appState.changesSide = "unstaged";
+  appState.commitSubject = "";
+  appState.commitBody = "";
+  appState.commitAmend = false;
+  appState.commitCoauthors = [];
 }
 
 /// Pre-fill the commit box with HEAD's message when "Amend" is toggled on.

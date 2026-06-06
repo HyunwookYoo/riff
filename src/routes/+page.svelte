@@ -8,6 +8,8 @@
   import CommitList from "$lib/ui/CommitList.svelte";
   import ChangesList from "$lib/ui/ChangesList.svelte";
   import CommitBox from "$lib/ui/CommitBox.svelte";
+  import HunkBar from "$lib/ui/HunkBar.svelte";
+  import RepoTabs from "$lib/ui/RepoTabs.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
@@ -17,6 +19,8 @@
   import { loadState, setBlamePickerWidth } from "$lib/git";
   import { loadMainRepo } from "$lib/workspace";
   import { compare, cycleAppMode } from "$lib/compare";
+  import { setHistoryRepo } from "$lib/commitHistory";
+  import { setChangesRepo } from "$lib/sourceControl";
   import { popHistory, redoHistory } from "$lib/history";
   import { exitFocus } from "$lib/focus";
   import { cycleTab, selectTab } from "$lib/tabs";
@@ -373,6 +377,11 @@
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />
   {/if}
+  {#if appState.repos.length > 1 && appState.appMode === "history"}
+    <RepoTabs value={appState.historyRepoIdx} onselect={setHistoryRepo} />
+  {:else if appState.repos.length > 1 && appState.appMode === "changes"}
+    <RepoTabs value={appState.changesRepoIdx} onselect={setChangesRepo} />
+  {/if}
   <div
     class="body"
     class:resizing
@@ -391,6 +400,9 @@
               <span class="from">(from {appState.selectedFile.old_path})</span>
             {/if}
           </header>
+          {#if appState.appMode === "changes"}
+            <HunkBar />
+          {/if}
           <DiffView />
         {:else if appState.loadingRepo}
           <div class="placeholder">Opening repository…</div>

@@ -9,6 +9,7 @@ import type {
   FileDiff,
   FileStatus,
   FileViewMode,
+  Hunk,
   PersistedState,
   RepoStatus,
   SubmoduleInfo,
@@ -244,6 +245,31 @@ export function commit(
 /** Full message of HEAD, for pre-filling the box when amending. */
 export function headCommitMessage(path: string): Promise<string> {
   return invoke("head_commit_message", { path });
+}
+
+/**
+ * Parse one file's unified diff into hunks. `staged` true → HEAD↔index
+ * (`git diff --cached`); false → index↔worktree. Empty for untracked/binary.
+ */
+export function fileHunks(
+  path: string,
+  filePath: string,
+  staged: boolean,
+): Promise<Hunk[]> {
+  return invoke("file_hunks", { path, filePath, staged });
+}
+
+/**
+ * Stage (`staged=false`) or unstage (`staged=true`) the hunks at the given
+ * indices. Rejects if an index is out of range (the file changed since listing).
+ */
+export function applyHunks(
+  path: string,
+  filePath: string,
+  staged: boolean,
+  hunks: number[],
+): Promise<void> {
+  return invoke("apply_hunks", { path, filePath, staged, hunks });
 }
 
 /**

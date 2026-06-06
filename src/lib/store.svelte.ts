@@ -138,6 +138,13 @@ class AppState {
   // "unstaged" (index↔worktree) or "staged" (HEAD↔index). DiffView reads this
   // to pick the per-side diff. Session-only.
   changesSide = $state<"staged" | "unstaged">("unstaged");
+  // Which repo the Changes screen stages/commits against: index into `repos`.
+  // 0 = main; submodule/manual repos let you stage & commit inside them. Like
+  // History's `historyRepoIdx`, independent of the compare Focus. Session-only.
+  changesRepoIdx = $state(0);
+  // Top (Unstaged) share of the Changes list area; the draggable divider
+  // between the Unstaged and Staged panes adjusts it. Session-only.
+  changesPaneFraction = $state(0.5);
   // Commit box state (Phase 1.3). `commitSignoff` is sticky across commits (a
   // user preference); subject/body/amend/coauthors are cleared on success.
   // Session-only.

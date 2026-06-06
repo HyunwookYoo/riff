@@ -11,6 +11,7 @@ import {
 } from "./git";
 import { compare } from "./compare";
 import { resetHistory } from "./commitHistory";
+import { resetSourceControl } from "./sourceControl";
 import { clearBlameCache } from "./blameCache";
 import type { Branch, RepoEntry, RepoFile } from "./types";
 
@@ -246,6 +247,7 @@ export async function loadMainRepo(
   appState.blameTarget = null;
   // History browser's commit log belongs to the old repo — drop it.
   resetHistory();
+  resetSourceControl();
   clearBlameCache();
   try {
     await validateRepo(path);

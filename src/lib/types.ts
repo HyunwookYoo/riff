@@ -123,6 +123,16 @@ export interface RepoStatus {
   behind: number;
 }
 
+/// One hunk of a file's unified diff, for per-hunk stage/unstage. Mirrors Rust
+/// `Hunk`. `header` is the `@@ -a,b +c,d @@` line; `added`/`removed` are line
+/// counts for the badge. The hunk's index in the returned array identifies it
+/// for `applyHunks`.
+export interface Hunk {
+  header: string;
+  added: number;
+  removed: number;
+}
+
 export interface PersistedState {
   recent_repos: string[];
   theme: ThemeChoice;
