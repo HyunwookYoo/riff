@@ -153,13 +153,15 @@ pub enum FileDiff {
 pub trait GitLayer {
     fn validate_repo(&self, path: &Path) -> Result<(), GitError>;
     fn list_refs(&self, path: &Path) -> Result<Vec<Branch>, GitError>;
-    /// Return up to `limit` commits reachable from `start_ref` (defaults to
-    /// HEAD when empty), skipping the first `skip`. Used by the history
-    /// browser; `skip` drives "load more" pagination.
+    /// Return up to `limit` commits, skipping the first `skip` (drives "load
+    /// more" pagination). When `all` is true the log spans every ref
+    /// (`git log --all --date-order`, the default graph view); otherwise it
+    /// follows `start_ref` (or HEAD when empty).
     fn commit_log(
         &self,
         path: &Path,
         start_ref: &str,
+        all: bool,
         limit: u32,
         skip: u32,
     ) -> Result<Vec<Commit>, GitError>;
@@ -290,6 +292,19 @@ pub trait GitLayer {
     fn delete_branch(&self, path: &Path, name: &str, force: bool) -> Result<(), GitError>;
     /// Set `branch`'s upstream tracking ref (`git branch --set-upstream-to`).
     fn set_upstream(&self, path: &Path, branch: &str, upstream: &str) -> Result<(), GitError>;
+    /// Create a lightweight tag `name` at `target` (`git tag`).
+    fn create_tag(&self, path: &Path, name: &str, target: &str) -> Result<(), GitError>;
+    /// Move the current branch to `target` (`git reset --<mode>`); `mode` is one
+    /// of "soft" | "mixed" | "hard". Hard discards working-tree changes — the
+    /// caller must confirm first.
+    fn reset(&self, path: &Path, target: &str, mode: &str) -> Result<(), GitError>;
+    /// Apply `target`'s changes onto the current branch (`git cherry-pick`).
+    fn cherry_pick(&self, path: &Path, target: &str) -> Result<(), GitError>;
+    /// Create a commit that undoes `target` (`git revert --no-edit`).
+    fn revert(&self, path: &Path, target: &str) -> Result<(), GitError>;
+    /// Rebase the current branch onto `onto` (`git rebase`). Conflicts surface
+    /// as an error; resolving them is done outside the app for now.
+    fn rebase(&self, path: &Path, onto: &str) -> Result<(), GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.

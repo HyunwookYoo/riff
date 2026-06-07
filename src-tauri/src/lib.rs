@@ -26,10 +26,11 @@ fn commit_log(
     state: tauri::State<GitCli>,
     path: String,
     start_ref: String,
+    all: bool,
     limit: u32,
     skip: u32,
 ) -> Result<Vec<Commit>, GitError> {
-    state.commit_log(Path::new(&path), &start_ref, limit, skip)
+    state.commit_log(Path::new(&path), &start_ref, all, limit, skip)
 }
 
 #[tauri::command]
@@ -287,6 +288,45 @@ fn set_upstream(
 }
 
 #[tauri::command]
+fn create_tag(
+    state: tauri::State<GitCli>,
+    path: String,
+    name: String,
+    target: String,
+) -> Result<(), GitError> {
+    state.create_tag(Path::new(&path), &name, &target)
+}
+
+#[tauri::command]
+fn reset(
+    state: tauri::State<GitCli>,
+    path: String,
+    target: String,
+    mode: String,
+) -> Result<(), GitError> {
+    state.reset(Path::new(&path), &target, &mode)
+}
+
+#[tauri::command]
+fn cherry_pick(
+    state: tauri::State<GitCli>,
+    path: String,
+    target: String,
+) -> Result<(), GitError> {
+    state.cherry_pick(Path::new(&path), &target)
+}
+
+#[tauri::command]
+fn revert(state: tauri::State<GitCli>, path: String, target: String) -> Result<(), GitError> {
+    state.revert(Path::new(&path), &target)
+}
+
+#[tauri::command]
+fn rebase(state: tauri::State<GitCli>, path: String, onto: String) -> Result<(), GitError> {
+    state.rebase(Path::new(&path), &onto)
+}
+
+#[tauri::command]
 fn list_repo_files(state: tauri::State<GitCli>, path: String) -> Result<Vec<String>, GitError> {
     state.list_repo_files(Path::new(&path))
 }
@@ -468,6 +508,11 @@ pub fn run() {
             rename_branch,
             delete_branch,
             set_upstream,
+            create_tag,
+            reset,
+            cherry_pick,
+            revert,
+            rebase,
             blame_file,
             list_repo_files,
             read_repo_file,

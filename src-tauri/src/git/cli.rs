@@ -712,31 +712,35 @@ impl GitLayer for GitCli {
         &self,
         path: &Path,
         start_ref: &str,
+        all: bool,
         limit: u32,
         skip: u32,
     ) -> Result<Vec<Commit>, GitError> {
-        // Empty ref means "current HEAD". Otherwise reuse the same
-        // leading-dash guard as ref diffs so a crafted ref can't smuggle flags.
-        let r = if start_ref.is_empty() {
-            "HEAD"
-        } else {
-            validate_ref(start_ref)?
-        };
         let limit_s = limit.to_string();
         let skip_s = skip.to_string();
-        let stdout = self.run(
-            path,
-            &[
-                "log",
-                "-z",
-                COMMIT_LOG_FORMAT,
-                "-n",
-                &limit_s,
-                "--skip",
-                &skip_s,
-                r,
-            ],
-        )?;
+        let mut args = vec![
+            "log",
+            "-z",
+            COMMIT_LOG_FORMAT,
+            "-n",
+            &limit_s,
+            "--skip",
+            &skip_s,
+        ];
+        if all {
+            // Every ref, chronological — the default "all branches" graph.
+            args.push("--all");
+            args.push("--date-order");
+        } else {
+            // Empty ref means HEAD. Reuse the leading-dash guard so a crafted
+            // ref can't smuggle flags.
+            args.push(if start_ref.is_empty() {
+                "HEAD"
+            } else {
+                validate_ref(start_ref)?
+            });
+        }
+        let stdout = self.run(path, &args)?;
         Ok(parse_commit_log(&String::from_utf8_lossy(&stdout)))
     }
 
@@ -1523,6 +1527,46 @@ impl GitLayer for GitCli {
         validate_ref(upstream)?;
         let arg = format!("--set-upstream-to={upstream}");
         self.run(path, &["branch", &arg, branch])?;
+        Ok(())
+    }
+
+    fn create_tag(&self, path: &Path, name: &str, target: &str) -> Result<(), GitError> {
+        validate_ref(name)?;
+        validate_ref(target)?;
+        self.run(path, &["tag", name, target])?;
+        Ok(())
+    }
+
+    fn reset(&self, path: &Path, target: &str, mode: &str) -> Result<(), GitError> {
+        validate_ref(target)?;
+        let flag = match mode {
+            "soft" => "--soft",
+            "hard" => "--hard",
+            _ => "--mixed",
+        };
+        self.run(path, &["reset", flag, target])?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn cherry_pick(&self, path: &Path, target: &str) -> Result<(), GitError> {
+        validate_ref(target)?;
+        self.run(path, &["cherry-pick", target])?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn revert(&self, path: &Path, target: &str) -> Result<(), GitError> {
+        validate_ref(target)?;
+        self.run(path, &["revert", "--no-edit", target])?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn rebase(&self, path: &Path, onto: &str) -> Result<(), GitError> {
+        validate_ref(onto)?;
+        self.run(path, &["rebase", onto])?;
+        self.drop_session();
         Ok(())
     }
 
