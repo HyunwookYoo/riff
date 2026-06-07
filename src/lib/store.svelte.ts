@@ -148,6 +148,14 @@ class AppState {
   // refs sidebar (branches/tags) visibility. Toggleable (Ctrl+B), hidden by
   // default. Session-only.
   sidebarOpen = $state(false);
+  // refs sidebar width (px), drag-resizable. Session-only.
+  sidebarWidth = $state(240);
+  // Current branch of the source-control repo, shown by the toolbar branch
+  // chip. Set by loadStatus / loadCurrentBranch; null on detached HEAD.
+  // Session-only.
+  currentBranch = $state<string | null>(null);
+  currentAhead = $state(0);
+  currentBehind = $state(0);
   // Commit box state (Phase 1.3). `commitSignoff` is sticky across commits (a
   // user preference); subject/body/amend/coauthors are cleared on success.
   // Session-only.

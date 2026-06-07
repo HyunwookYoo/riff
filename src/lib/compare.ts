@@ -7,7 +7,8 @@ import {
 } from "./git";
 import { detectLanguage } from "./diff/lang";
 import { preloadLanguages } from "./diff/shiki";
-import { enterHistoryMode, restoreCompareContext } from "./commitHistory";
+import { restoreCompareContext } from "./commitHistory";
+import { enterChangesMode } from "./sourceControl";
 import type { ChangedFile, CompareMode, RepoEntry } from "./types";
 
 // Monotonic id so a stale stream from a cancelled compare can't poison the
@@ -345,10 +346,18 @@ export function setMode(m: CompareMode): void {
   }
 }
 
-/// Cycle the workspace: branch → worktree → history → blame → branch.
-/// Triggered by Ctrl+Shift+W. The cycle is positional, not a stack pop.
+/// Cycle the workspace: Changes → Compare → Blame → Changes.
+/// Triggered by Ctrl+Shift+W. The graph sub-view returns to Changes. The cycle
+/// is positional, not a stack pop.
 export function cycleAppMode(): void {
-  if (appState.appMode === "blame") {
+  // Graph sub-view or Blame → back to the working (Changes) view.
+  if (appState.appMode === "history" || appState.appMode === "blame") {
+    void enterChangesMode();
+    return;
+  }
+  // Changes → branch compare. Restore the compare refs a graph visit may have
+  // overwritten (parent..commit) before re-comparing.
+  if (appState.appMode === "changes") {
     restoreCompareContext();
     appState.appMode = "compare";
     if (appState.compareMode !== "branch") {
@@ -356,27 +365,9 @@ export function cycleAppMode(): void {
     }
     return;
   }
-  // Changes → branch compare. The staging view doesn't snapshot compare
-  // context (it never touches start/target), so just hand back to compare.
-  if (appState.appMode === "changes") {
-    appState.appMode = "compare";
-    if (appState.compareMode !== "branch") {
-      setMode("branch");
-    }
-    return;
-  }
-  // History → blame: carry the selected file so blame opens on it.
-  if (appState.appMode === "history") {
-    carrySelectionToBlame();
-    appState.appMode = "blame";
-    return;
-  }
-  if (appState.compareMode === "branch") {
-    setMode("worktree");
-    return;
-  }
-  // Worktree → history.
-  void enterHistoryMode();
+  // Branch compare → blame: carry the selected file so blame opens on it.
+  carrySelectionToBlame();
+  appState.appMode = "blame";
 }
 
 /// Pin the currently selected file as the blame target so entering blame mode

@@ -4,7 +4,7 @@
   import { appState } from "$lib/store.svelte";
   import { compare, setMode } from "$lib/compare";
   import {
-    enterHistoryMode,
+    enterGraphView,
     restoreCompareContext,
     setHistoryRef,
   } from "$lib/commitHistory";
@@ -18,6 +18,7 @@
   import WorkTreeFields from "./WorkTreeFields.svelte";
   import Dropdown from "./Dropdown.svelte";
   import RepoChip from "./RepoChip.svelte";
+  import BranchChip from "./BranchChip.svelte";
   import UnrealSettings from "./UnrealSettings.svelte";
 
   // Direct mode-toggle buttons. Unlike Ctrl+Shift+W (which cycles), these
@@ -72,9 +73,10 @@
   <div class="mode-toggle" role="group" aria-label="Workspace mode">
     <button
       type="button"
-      class:active={appState.appMode === "changes"}
+      class:active={appState.appMode === "changes" ||
+        appState.appMode === "history"}
       onclick={() => void enterChangesMode()}
-      title="Stage and commit changes"
+      title="Source control — stage, commit, and the commit graph"
     >
       Changes
     </button>
@@ -89,23 +91,6 @@
     </button>
     <button
       type="button"
-      class:active={appState.appMode === "compare" &&
-        appState.compareMode === "worktree"}
-      onclick={() => enterCompareMode("worktree")}
-      title="Uncommitted changes vs HEAD"
-    >
-      Working Tree
-    </button>
-    <button
-      type="button"
-      class:active={appState.appMode === "history"}
-      onclick={() => void enterHistoryMode()}
-      title="Browse commit history"
-    >
-      History
-    </button>
-    <button
-      type="button"
       class:active={appState.appMode === "blame"}
       onclick={enterBlameMode}
       title="Blame a file"
@@ -113,19 +98,32 @@
       Blame
     </button>
   </div>
-  <button
-    type="button"
-    class="sidebar-toggle"
-    class:active={appState.sidebarOpen}
-    title="Toggle branches sidebar (Ctrl+B)"
-    onclick={() => (appState.sidebarOpen = !appState.sidebarOpen)}
-  >
-    Branches
-  </button>
+  <BranchChip />
   <span class="mode-hint">Ctrl+Shift+W to cycle</span>
 </div>
 
 <div class="bar">
+  {#if appState.appMode === "changes" || appState.appMode === "history"}
+    <div class="subtoggle" role="group" aria-label="Source control view">
+      <button
+        type="button"
+        class:active={appState.appMode === "changes"}
+        onclick={() => void enterChangesMode()}
+        title="Working tree — stage & commit"
+      >
+        Working
+      </button>
+      <button
+        type="button"
+        class:active={appState.appMode === "history"}
+        onclick={() => void enterGraphView()}
+        title="Commit graph"
+      >
+        Graph
+      </button>
+    </div>
+  {/if}
+
   {#if appState.appMode === "compare"}
     {#if appState.compareMode === "branch"}
       <BranchModeFields />
@@ -195,16 +193,6 @@
     border-bottom: 1px solid var(--border);
     background: var(--bar-bg);
   }
-  .sidebar-toggle {
-    margin-left: auto;
-    font-size: 0.8em;
-    padding: 3px 9px;
-  }
-  .sidebar-toggle.active {
-    background: var(--accent-soft);
-    color: var(--accent);
-    border-color: var(--accent);
-  }
   .mode-hint {
     font-size: 0.75em;
     opacity: 0.5;
@@ -261,6 +249,29 @@
   .check input {
     margin: 0;
     cursor: pointer;
+  }
+  .subtoggle {
+    display: inline-flex;
+  }
+  .subtoggle button {
+    border-radius: 0;
+    font-size: 0.82em;
+    padding: 3px 12px;
+  }
+  .subtoggle button:first-child {
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+  }
+  .subtoggle button:last-child {
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+    border-left: none;
+  }
+  .subtoggle button.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    box-shadow: inset 0 -2px 0 var(--accent);
   }
   .mode-toggle {
     display: inline-flex;

@@ -42,6 +42,11 @@ export function changesRepoPath(): string {
 export function setChangesRepo(idx: number): void {
   if (idx === appState.changesRepoIdx) return;
   appState.changesRepoIdx = idx;
+  // Keep the graph (history) repo in lockstep, and drop its cached log so the
+  // graph reloads for the new repo on next visit.
+  appState.historyRepoIdx = idx;
+  appState.commits = [];
+  appState.selectedCommitSha = null;
   appState.repoStatus = null;
   appState.selectedFile = null;
   appState.commitSubject = "";
@@ -62,6 +67,10 @@ export function isUnstaged(e: StatusEntry): boolean {
 }
 
 export async function enterChangesMode(): Promise<void> {
+  // Returning from the graph (history) sub-view: keep the same repo selected.
+  if (appState.appMode === "history") {
+    appState.changesRepoIdx = appState.historyRepoIdx;
+  }
   appState.appMode = "changes";
   await loadStatus();
 }
@@ -75,6 +84,9 @@ export async function loadStatus(): Promise<void> {
   try {
     const st = await status(changesRepoPath());
     appState.repoStatus = st;
+    appState.currentBranch = st.branch;
+    appState.currentAhead = st.ahead;
+    appState.currentBehind = st.behind;
     const unstaged = st.entries.filter(isUnstaged);
     const staged = st.entries.filter(isStaged);
     // Keep the current selection if it still has changes on its side (so
@@ -158,6 +170,21 @@ export function stageAll(): Promise<void> {
 }
 export function unstageAll(): Promise<void> {
   return applyAndReload(unstageCmd(changesRepoPath(), null));
+}
+
+/// Refresh just the current-branch indicator (name + ahead/behind) for the
+/// source-control repo, without touching the staging selection. Called after
+/// branch ops (checkout, etc.) so the toolbar chip stays accurate.
+export async function loadCurrentBranch(): Promise<void> {
+  if (!appState.repoPath) return;
+  try {
+    const st = await status(changesRepoPath());
+    appState.currentBranch = st.branch;
+    appState.currentAhead = st.ahead;
+    appState.currentBehind = st.behind;
+  } catch {
+    // Keep the last known value.
+  }
 }
 
 /// Clear all Changes-screen state on repo switch — the status, repo selection,

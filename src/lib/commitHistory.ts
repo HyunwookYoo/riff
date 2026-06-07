@@ -1,6 +1,7 @@
 import { appState } from "./store.svelte";
 import { commitLog } from "./git";
 import { compare } from "./compare";
+import { loadCurrentBranch } from "./sourceControl";
 import type { Commit } from "./types";
 
 /// Commits fetched per page; "load more" appends another page.
@@ -87,6 +88,21 @@ export async function enterHistoryMode(): Promise<void> {
   if (sel) openCommit(sel);
 }
 
+/// Enter the commit-graph sub-view of the source-control area. When coming
+/// from the working (Changes) view, point the graph at the same repo.
+export async function enterGraphView(): Promise<void> {
+  if (
+    appState.appMode !== "history" &&
+    appState.historyRepoIdx !== appState.changesRepoIdx
+  ) {
+    appState.historyRepoIdx = appState.changesRepoIdx;
+    appState.historyRef = "";
+    appState.commits = [];
+    appState.selectedCommitSha = null;
+  }
+  await enterHistoryMode();
+}
+
 /// Restore the compare context snapshotted on entering history (branch refs,
 /// per-repo overrides, focus). Called when transitioning back into a compare
 /// mode. No-op if history was never entered.
@@ -105,9 +121,13 @@ export function restoreCompareContext(): void {
 export function setHistoryRepo(idx: number): void {
   if (idx === appState.historyRepoIdx) return;
   appState.historyRepoIdx = idx;
+  // Keep the working (Changes) repo in lockstep — they're one source-control
+  // repo — and refresh the toolbar branch chip to this repo's branch.
+  appState.changesRepoIdx = idx;
   appState.historyRef = "";
   appState.selectedCommitSha = null;
   void loadCommits();
+  void loadCurrentBranch();
 }
 
 /// Switch which ref the commit log follows (empty = HEAD) and reload. Used by

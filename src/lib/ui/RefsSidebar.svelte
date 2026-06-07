@@ -9,6 +9,8 @@
     setUpstream,
     status,
   } from "$lib/git";
+  import { loadCurrentBranch } from "$lib/sourceControl";
+  import RefIcon from "./RefIcon.svelte";
   import type { Branch } from "$lib/types";
 
   // The sidebar reflects the repo the current mode is acting on: the Changes /
@@ -37,7 +39,6 @@
 
   $effect(() => {
     void repoPath;
-    // Re-list after commits / stage ops change refs or ahead/behind.
     void appState.repoStatus;
     if (!repoPath) {
       branches = [];
@@ -75,17 +76,16 @@
     } finally {
       busy = false;
       await load();
+      void loadCurrentBranch();
     }
   }
 
   function doCheckout(b: Branch) {
-    // A remote branch DWIMs into a tracking local of the same short name.
     const target =
       b.kind === "remote" ? b.name.replace(/^[^/]+\//, "") : b.name;
     void run(checkout(repoPath, target));
   }
 
-  // Safe delete (-d); on "not fully merged" offer an explicit force (-D).
   async function doDelete(b: Branch) {
     if (busy) return;
     busy = true;
@@ -110,11 +110,69 @@
     } finally {
       busy = false;
       await load();
+      void loadCurrentBranch();
     }
   }
 
-  // Inline editor for create / rename / set-upstream — avoids native prompt
-  // (unreliable in WebView2).
+  // ── Tree (collapse by "/") ──────────────────────────────────────────────
+  type Row =
+    | { kind: "dir"; name: string; path: string; depth: number }
+    | { kind: "ref"; ref: Branch; name: string; depth: number };
+
+  // Collapsed dirs keyed `<section>:<dirPath>`.
+  let collapsedDirs = $state(new Set<string>());
+  function toggleDir(section: string, path: string) {
+    const key = section + ":" + path;
+    const next = new Set(collapsedDirs);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    collapsedDirs = next;
+  }
+
+  // Flatten a section's refs into rows, nesting by "/" and honoring collapse.
+  function buildRows(refs: Branch[], section: string): Row[] {
+    interface Dir {
+      children: Map<string, Dir>;
+      leaves: { ref: Branch; leaf: string }[];
+    }
+    const root: Dir = { children: new Map(), leaves: [] };
+    for (const ref of refs) {
+      const parts = ref.name.split("/");
+      let cur = root;
+      for (let i = 0; i < parts.length - 1; i++) {
+        let next = cur.children.get(parts[i]);
+        if (!next) {
+          next = { children: new Map(), leaves: [] };
+          cur.children.set(parts[i], next);
+        }
+        cur = next;
+      }
+      cur.leaves.push({ ref, leaf: parts[parts.length - 1] });
+    }
+    const out: Row[] = [];
+    const walk = (dir: Dir, prefix: string, depth: number) => {
+      for (const name of [...dir.children.keys()].sort()) {
+        const path = prefix ? prefix + "/" + name : name;
+        out.push({ kind: "dir", name, path, depth });
+        if (!collapsedDirs.has(section + ":" + path)) {
+          walk(dir.children.get(name)!, path, depth + 1);
+        }
+      }
+      for (const { ref, leaf } of [...dir.leaves].sort((a, b) =>
+        a.leaf.localeCompare(b.leaf),
+      )) {
+        out.push({ kind: "ref", ref, name: leaf, depth });
+      }
+    };
+    walk(root, "", 0);
+    return out;
+  }
+
+  const localRows = $derived(buildRows(locals, "local"));
+  const remoteRows = $derived(buildRows(remotes, "remote"));
+  const tagRows = $derived(buildRows(tags, "tag"));
+
+  // ── Inline editor (create / rename / set-upstream) ──────────────────────
   type Editor =
     | { kind: "new"; start: string | null }
     | { kind: "rename"; branch: string }
@@ -147,17 +205,77 @@
     else void run(setUpstream(repoPath, ed.branch, v));
   }
 
-  // Right-click context menu.
+  // ── Context menu ────────────────────────────────────────────────────────
   let menu = $state<{ x: number; y: number; ref: Branch } | null>(null);
   function openMenu(e: MouseEvent, ref: Branch) {
     e.preventDefault();
     menu = { x: e.clientX, y: e.clientY, ref };
   }
+
+  // ── Width resize ────────────────────────────────────────────────────────
+  let asideEl = $state<HTMLElement | null>(null);
+  let resizing = $state(false);
+  function onResizeStart(e: PointerEvent) {
+    if (e.button !== 0 || !asideEl) return;
+    e.preventDefault();
+    resizing = true;
+    const left = asideEl.getBoundingClientRect().left;
+    const onMove = (ev: PointerEvent) => {
+      appState.sidebarWidth = Math.min(500, Math.max(160, ev.clientX - left));
+    };
+    const onUp = () => {
+      resizing = false;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
 </script>
 
 <svelte:window onclick={() => (menu = null)} />
 
-<aside class="refs">
+{#snippet refRow(ref: Branch, name: string, depth: number)}
+  <button
+    type="button"
+    class="ref"
+    class:current={ref.name === current}
+    style="padding-left: {8 + depth * 14}px"
+    ondblclick={() => doCheckout(ref)}
+    oncontextmenu={(e) => openMenu(e, ref)}
+    title="Double-click to checkout · right-click for actions"
+  >
+    <RefIcon kind={ref.kind} />
+    <span class="name">{name}</span>
+    {#if ref.name === current && (ahead || behind)}
+      <span class="ab">
+        {#if ahead}↑{ahead}{/if}{#if behind}↓{behind}{/if}
+      </span>
+    {/if}
+  </button>
+{/snippet}
+
+{#snippet dirRow(section: string, path: string, name: string, depth: number)}
+  <button
+    type="button"
+    class="dir"
+    style="padding-left: {8 + depth * 14}px"
+    onclick={() => toggleDir(section, path)}
+  >
+    <span class="caret" aria-hidden="true">
+      {collapsedDirs.has(section + ":" + path) ? "▸" : "▾"}
+    </span>
+    <RefIcon kind="folder" />
+    <span class="dir-name">{name}</span>
+  </button>
+{/snippet}
+
+<aside
+  class="refs"
+  class:resizing
+  bind:this={asideEl}
+  style="flex-basis: {appState.sidebarWidth}px;"
+>
   <header>
     <span class="title" title={repoPath}>{repoName}</span>
     <button
@@ -176,7 +294,11 @@
       <label>
         <span class="editor-label">{editorLabel}</span>
         <!-- svelte-ignore a11y_autofocus -->
-        <input bind:value={editVal} autofocus onkeydown={(e) => e.key === "Escape" && (editor = null)} />
+        <input
+          bind:value={editVal}
+          autofocus
+          onkeydown={(e) => e.key === "Escape" && (editor = null)}
+        />
       </label>
     </form>
   {/if}
@@ -195,25 +317,14 @@
           ＋
         </button>
       </div>
-      {#each locals as b (b.name)}
-        <button
-          type="button"
-          class="ref"
-          class:current={b.name === current}
-          ondblclick={() => doCheckout(b)}
-          oncontextmenu={(e) => openMenu(e, b)}
-          title="Double-click to checkout · right-click for actions"
-        >
-          <span class="dot">{b.name === current ? "●" : ""}</span>
-          <span class="name">{b.name}</span>
-          {#if b.name === current && (ahead || behind)}
-            <span class="ab">
-              {#if ahead}↑{ahead}{/if}{#if behind}↓{behind}{/if}
-            </span>
-          {/if}
-        </button>
+      {#each localRows as row (row.kind === "dir" ? "d:" + row.path : "r:" + row.ref.name)}
+        {#if row.kind === "dir"}
+          {@render dirRow("local", row.path, row.name, row.depth)}
+        {:else}
+          {@render refRow(row.ref, row.name, row.depth)}
+        {/if}
       {/each}
-      {#if locals.length === 0}
+      {#if localRows.length === 0}
         <div class="empty">No local branches</div>
       {/if}
     </section>
@@ -221,17 +332,12 @@
     {#if remotes.length}
       <section>
         <div class="sec-head"><span>Remotes</span></div>
-        {#each remotes as b (b.name)}
-          <button
-            type="button"
-            class="ref"
-            ondblclick={() => doCheckout(b)}
-            oncontextmenu={(e) => openMenu(e, b)}
-            title="Double-click to checkout · right-click for actions"
-          >
-            <span class="dot"></span>
-            <span class="name">{b.name}</span>
-          </button>
+        {#each remoteRows as row (row.kind === "dir" ? "d:" + row.path : "r:" + row.ref.name)}
+          {#if row.kind === "dir"}
+            {@render dirRow("remote", row.path, row.name, row.depth)}
+          {:else}
+            {@render refRow(row.ref, row.name, row.depth)}
+          {/if}
         {/each}
       </section>
     {/if}
@@ -239,21 +345,24 @@
     {#if tags.length}
       <section>
         <div class="sec-head"><span>Tags</span></div>
-        {#each tags as b (b.name)}
-          <button
-            type="button"
-            class="ref"
-            ondblclick={() => doCheckout(b)}
-            oncontextmenu={(e) => openMenu(e, b)}
-            title="Double-click to checkout · right-click for actions"
-          >
-            <span class="dot"></span>
-            <span class="name">{b.name}</span>
-          </button>
+        {#each tagRows as row (row.kind === "dir" ? "d:" + row.path : "r:" + row.ref.name)}
+          {#if row.kind === "dir"}
+            {@render dirRow("tag", row.path, row.name, row.depth)}
+          {:else}
+            {@render refRow(row.ref, row.name, row.depth)}
+          {/if}
         {/each}
       </section>
     {/if}
   </div>
+
+  <div
+    class="resizer"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize sidebar"
+    onpointerdown={onResizeStart}
+  ></div>
 </aside>
 
 {#if menu}
@@ -303,13 +412,18 @@
 
 <style>
   .refs {
-    flex: 0 0 220px;
+    position: relative;
+    flex: 0 0 auto;
     display: flex;
     flex-direction: column;
     min-height: 0;
+    min-width: 0;
     border-right: 1px solid var(--border);
     background: var(--sidebar-bg, var(--bar-bg));
     overflow: hidden;
+  }
+  .refs.resizing {
+    user-select: none;
   }
   header {
     display: flex;
@@ -396,6 +510,35 @@
   .sec-head .new:hover {
     color: var(--accent);
   }
+  .dir {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+    padding: 4px 10px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+    font-size: 0.84em;
+    user-select: none;
+  }
+  .dir:hover {
+    background: var(--hover);
+  }
+  .dir .caret {
+    width: 10px;
+    flex-shrink: 0;
+    opacity: 0.6;
+    font-size: 0.8em;
+  }
+  .dir .dir-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.85;
+  }
   .ref {
     display: flex;
     align-items: center;
@@ -416,19 +559,13 @@
   .ref.current {
     color: var(--accent);
     font-weight: 600;
-  }
-  .ref .dot {
-    width: 0.8em;
-    flex-shrink: 0;
-    color: var(--accent);
-    font-size: 0.7em;
+    background: var(--accent-soft);
+    box-shadow: inset 2px 0 var(--accent);
   }
   .ref .name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    direction: rtl;
-    text-align: left;
     flex: 1;
   }
   .ref .ab {
@@ -441,6 +578,31 @@
     padding: 6px 12px;
     color: var(--muted);
     font-size: 0.8em;
+  }
+  .resizer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 7px;
+    height: 100%;
+    transform: translateX(3px);
+    cursor: col-resize;
+    z-index: 6;
+    background: transparent;
+  }
+  .resizer::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 3px;
+    width: 1px;
+    height: 100%;
+    background: transparent;
+    transition: background 0.1s ease;
+  }
+  .resizer:hover::after,
+  .refs.resizing .resizer::after {
+    background: var(--accent);
   }
   .ctxmenu {
     position: fixed;

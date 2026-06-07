@@ -91,7 +91,10 @@
       appState.recentRepos = s.recent_repos;
       appState.theme = s.theme;
       appState.fontSize = s.font_size;
-      appState.compareMode = s.compare_mode;
+      // Working Tree mode was folded into Changes; coerce any persisted
+      // "worktree" value to "branch" so compare always has a usable sub-mode.
+      appState.compareMode =
+        s.compare_mode === "worktree" ? "branch" : s.compare_mode;
       appState.manualReposByMain = s.manual_repos_by_main ?? {};
       appState.workspaceLayout = s.workspace_layout ?? "unified";
       appState.blamePickerWidth = s.blame_picker_width ?? 300;
