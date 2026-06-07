@@ -272,6 +272,24 @@ pub trait GitLayer {
         staged: bool,
         hunks: &[u32],
     ) -> Result<(), GitError>;
+    /// Create branch `name` (at `start_point`, default HEAD). When `checkout`
+    /// is true, also switch to it (`git checkout -b`); otherwise just create it.
+    fn create_branch(
+        &self,
+        path: &Path,
+        name: &str,
+        start_point: Option<&str>,
+        checkout: bool,
+    ) -> Result<(), GitError>;
+    /// Switch the working tree to `ref_name` (`git checkout`).
+    fn checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
+    /// Rename branch `old` to `new` (`git branch -m`).
+    fn rename_branch(&self, path: &Path, old: &str, new: &str) -> Result<(), GitError>;
+    /// Delete branch `name`. `force` uses `-D` (drops unmerged commits) instead
+    /// of the safe `-d`; callers must confirm before forcing.
+    fn delete_branch(&self, path: &Path, name: &str, force: bool) -> Result<(), GitError>;
+    /// Set `branch`'s upstream tracking ref (`git branch --set-upstream-to`).
+    fn set_upstream(&self, path: &Path, branch: &str, upstream: &str) -> Result<(), GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.

@@ -299,6 +299,14 @@ impl GitCli {
         Ok(output.stdout)
     }
 
+    /// Drop the cached session so its batch processes respawn against fresh repo
+    /// state. Called after operations that move HEAD (checkout) — the long-lived
+    /// cat-file processes would otherwise keep resolving `HEAD:path` against the
+    /// previous tip.
+    fn drop_session(&self) {
+        self.session.lock().unwrap().take();
+    }
+
     /// Like `run`, but writes `input` to the child's stdin (then closes it so
     /// the command sees EOF). Used to feed a patch to `git apply`.
     fn run_stdin(&self, path: &Path, args: &[&str], input: &[u8]) -> Result<Vec<u8>, GitError> {
@@ -1460,6 +1468,61 @@ impl GitLayer for GitCli {
             args.push("--reverse");
         }
         self.run_stdin(path, &args, patch.as_bytes())?;
+        Ok(())
+    }
+
+    fn create_branch(
+        &self,
+        path: &Path,
+        name: &str,
+        start_point: Option<&str>,
+        checkout: bool,
+    ) -> Result<(), GitError> {
+        validate_ref(name)?;
+        if let Some(sp) = start_point {
+            validate_ref(sp)?;
+        }
+        let mut args: Vec<&str> = if checkout {
+            vec!["checkout", "-b", name]
+        } else {
+            vec!["branch", name]
+        };
+        if let Some(sp) = start_point {
+            args.push(sp);
+        }
+        self.run(path, &args)?;
+        if checkout {
+            self.drop_session();
+        }
+        Ok(())
+    }
+
+    fn checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
+        validate_ref(ref_name)?;
+        self.run(path, &["checkout", ref_name])?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn rename_branch(&self, path: &Path, old: &str, new: &str) -> Result<(), GitError> {
+        validate_ref(old)?;
+        validate_ref(new)?;
+        self.run(path, &["branch", "-m", old, new])?;
+        Ok(())
+    }
+
+    fn delete_branch(&self, path: &Path, name: &str, force: bool) -> Result<(), GitError> {
+        validate_ref(name)?;
+        let flag = if force { "-D" } else { "-d" };
+        self.run(path, &["branch", flag, name])?;
+        Ok(())
+    }
+
+    fn set_upstream(&self, path: &Path, branch: &str, upstream: &str) -> Result<(), GitError> {
+        validate_ref(branch)?;
+        validate_ref(upstream)?;
+        let arg = format!("--set-upstream-to={upstream}");
+        self.run(path, &["branch", &arg, branch])?;
         Ok(())
     }
 

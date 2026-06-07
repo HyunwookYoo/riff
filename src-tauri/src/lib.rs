@@ -241,6 +241,52 @@ fn apply_hunks(
 }
 
 #[tauri::command]
+fn create_branch(
+    state: tauri::State<GitCli>,
+    path: String,
+    name: String,
+    start_point: Option<String>,
+    checkout: bool,
+) -> Result<(), GitError> {
+    state.create_branch(Path::new(&path), &name, start_point.as_deref(), checkout)
+}
+
+#[tauri::command]
+fn checkout(state: tauri::State<GitCli>, path: String, ref_name: String) -> Result<(), GitError> {
+    state.checkout(Path::new(&path), &ref_name)
+}
+
+#[tauri::command]
+fn rename_branch(
+    state: tauri::State<GitCli>,
+    path: String,
+    old: String,
+    new: String,
+) -> Result<(), GitError> {
+    state.rename_branch(Path::new(&path), &old, &new)
+}
+
+#[tauri::command]
+fn delete_branch(
+    state: tauri::State<GitCli>,
+    path: String,
+    name: String,
+    force: bool,
+) -> Result<(), GitError> {
+    state.delete_branch(Path::new(&path), &name, force)
+}
+
+#[tauri::command]
+fn set_upstream(
+    state: tauri::State<GitCli>,
+    path: String,
+    branch: String,
+    upstream: String,
+) -> Result<(), GitError> {
+    state.set_upstream(Path::new(&path), &branch, &upstream)
+}
+
+#[tauri::command]
 fn list_repo_files(state: tauri::State<GitCli>, path: String) -> Result<Vec<String>, GitError> {
     state.list_repo_files(Path::new(&path))
 }
@@ -417,6 +463,11 @@ pub fn run() {
             head_commit_message,
             file_hunks,
             apply_hunks,
+            create_branch,
+            checkout,
+            rename_branch,
+            delete_branch,
+            set_upstream,
             blame_file,
             list_repo_files,
             read_repo_file,
