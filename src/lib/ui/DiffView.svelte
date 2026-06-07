@@ -5,12 +5,7 @@
   import { MergeView, unifiedMergeView, Change } from "@codemirror/merge";
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
-  import {
-    changesFileDiff,
-    fileDiff,
-    setUeVersionForRepo,
-    worktreeFileDiff,
-  } from "$lib/git";
+  import { changesFileDiff, fileDiff, setUeVersionForRepo } from "$lib/git";
   import { resolveDiffRefsFor } from "$lib/workspace";
   import type { ChangedFile, FileDiff } from "$lib/types";
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
@@ -140,15 +135,6 @@
           file.status,
           appState.changesSide === "staged",
           force,
-        );
-      } else if (appState.compareMode === "worktree") {
-        next = await worktreeFileDiff(
-          repoPath,
-          file.path,
-          file.old_path,
-          file.status,
-          force,
-          ueVersion,
         );
       } else {
         const refs = await resolveDiffRefsFor(repoIdx);

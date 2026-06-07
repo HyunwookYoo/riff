@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { appState } from "$lib/store.svelte";
-  import { compare, setMode } from "$lib/compare";
+  import { compare } from "$lib/compare";
   import {
     enterGraphView,
     restoreCompareContext,
@@ -15,7 +15,6 @@
   import { loadMainRepo } from "$lib/workspace";
   import BranchModeFields from "./BranchModeFields.svelte";
   import BranchPicker from "./BranchPicker.svelte";
-  import WorkTreeFields from "./WorkTreeFields.svelte";
   import Dropdown from "./Dropdown.svelte";
   import RepoChip from "./RepoChip.svelte";
   import BranchChip from "./BranchChip.svelte";
@@ -25,14 +24,13 @@
   // Direct mode-toggle buttons. Unlike Ctrl+Shift+W (which cycles), these
   // jump to a specific workspace. Entering blame carries selectedFile over
   // so the user lands on its blame, matching the cycle's hand-off behavior.
-  function enterCompareMode(target: "branch" | "worktree") {
+  function enterCompareMode() {
     if (appState.appMode !== "compare") {
       // Leaving history reuses start/target (+ overrides + focus) for
       // parent..commit — put the user's own context back before re-comparing.
       restoreCompareContext();
       appState.appMode = "compare";
     }
-    setMode(target);
   }
   function enterBlameMode() {
     if (appState.selectedFile) {
@@ -83,9 +81,8 @@
     </button>
     <button
       type="button"
-      class:active={appState.appMode === "compare" &&
-        appState.compareMode === "branch"}
-      onclick={() => enterCompareMode("branch")}
+      class:active={appState.appMode === "compare"}
+      onclick={enterCompareMode}
       title="Compare two refs"
     >
       Branch
@@ -127,11 +124,7 @@
   {/if}
 
   {#if appState.appMode === "compare"}
-    {#if appState.compareMode === "branch"}
-      <BranchModeFields />
-    {:else}
-      <WorkTreeFields />
-    {/if}
+    <BranchModeFields />
   {/if}
 
   {#if appState.appMode === "history"}
@@ -173,8 +166,6 @@
     >
       {#if appState.loadingFiles}
         …
-      {:else if appState.compareMode === "worktree"}
-        Refresh
       {:else}
         Compare
       {/if}

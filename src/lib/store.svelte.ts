@@ -107,8 +107,7 @@ class AppState {
   // History browser (commit log) state. Session-only. `commits` is the loaded
   // window (paginated via "load more"); `selectedCommitSha` highlights the row
   // whose parent..self diff is showing; `historyRef` anchors the log ("" =
-  // HEAD). `commitsHasMore` gates the load-more affordance. `commitPaneFraction`
-  // is the top (commits) share of the split left column, drag-adjustable.
+  // HEAD). `commitsHasMore` gates the load-more affordance.
   commits = $state<Commit[]>([]);
   selectedCommitSha = $state<string | null>(null);
   loadingCommits = $state(false);
@@ -117,7 +116,6 @@ class AppState {
   // Which repo's history is being browsed: index into `repos`. 0 = main;
   // submodule/manual repos let you browse their own log + branches.
   historyRepoIdx = $state(0);
-  commitPaneFraction = $state(0.55);
   // Graph mode: width (px) of the right-hand commit-detail panel (files + diff).
   // The graph itself takes the remaining (majority) width. Drag-resizable,
   // session-only.

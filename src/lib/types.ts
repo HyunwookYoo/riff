@@ -69,7 +69,9 @@ export type ViewMode = "side-by-side" | "unified";
 
 export type ThemeChoice = "system" | "light" | "dark";
 
-export type CompareMode = "branch" | "worktree";
+/// Only branch (two-ref) compare remains — the Working Tree sub-mode was folded
+/// into the Changes screen.
+export type CompareMode = "branch";
 
 /// Workspace layout choice (§14). "unified" is the §13 multi-root view with
 /// repo group headers + Focus toggle; "tabs" is the opt-in Fork-style tab

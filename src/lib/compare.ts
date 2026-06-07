@@ -1,15 +1,10 @@
 import { appState } from "./store.svelte";
-import {
-  diffFiles,
-  setCompareMode,
-  submoduleShaAt,
-  worktreeFiles,
-} from "./git";
+import { diffFiles, submoduleShaAt } from "./git";
 import { detectLanguage } from "./diff/lang";
 import { preloadLanguages } from "./diff/shiki";
 import { restoreCompareContext } from "./commitHistory";
 import { enterChangesMode } from "./sourceControl";
-import type { ChangedFile, CompareMode, RepoEntry } from "./types";
+import type { ChangedFile, RepoEntry } from "./types";
 
 // Monotonic id so a stale stream from a cancelled compare can't poison the
 // newer one's state. The Rust side also kills its previous child, but events
@@ -58,33 +53,16 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
     }
   }
   const session = ++compareSession;
-  // Worktree refreshes preserve the user's current selection if it survives;
-  // branch compares (different ref pair) reset to the first file. With
-  // multi-root, the previous repoIdx matters too — same path in two repos
-  // shouldn't false-match.
-  const previousPath =
-    opts.preservePath !== undefined
-      ? opts.preservePath
-      : appState.compareMode === "worktree"
-        ? (appState.selectedFile?.path ?? null)
-        : null;
+  // Branch compares reset to the first file unless the caller asked to
+  // preserve a path (drill-in Back). The previous repoIdx matters too in
+  // multi-root — same path in two repos shouldn't false-match.
+  const previousPath = opts.preservePath ?? null;
   const previousRepoIdx = appState.selectedFile?.repoIdx ?? null;
-
-  // Worktree refreshes (focus auto-refresh, F5) re-scan the *same* ref pair —
-  // HEAD vs working tree. Blanking the file list + diff pane for the scan
-  // duration just to repaint the same content is jarring, so keep the current
-  // snapshot on screen and swap it in one shot at the end. Branch compares
-  // change refs, so the old diff is meaningless — clear upfront and stream.
-  const keepStale = appState.compareMode === "worktree";
-  // Fresh scan buffer for the keepStale swap-at-end path.
-  const incoming: ChangedFile[] = [];
 
   appState.loadingFiles = true;
   appState.error = null;
-  if (!keepStale) {
-    appState.files = [];
-    appState.selectedFile = null;
-  }
+  appState.files = [];
+  appState.selectedFile = null;
 
   // Paths of submodule gitlinks inside main. When main lists a changed
   // file at one of these paths it's actually the submodule-pointer bump
@@ -136,13 +114,6 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
     if (session !== compareSession) return;
     if (repoIdx === 0 && submoduleGitlinkPaths.has(file.path)) return;
     file.repoIdx = repoIdx;
-    if (keepStale) {
-      // Collect silently; the old snapshot stays on screen until the swap at
-      // the end. No reactive writes to files/selectedFile during the scan.
-      incoming.push(file);
-      pendingLangs.add(detectLanguage(file.path));
-      return;
-    }
     buffer.push(file);
     // Selection updates immediately so a previously-viewed file is reopened
     // as soon as it arrives — DiffView reads selectedFile directly and
@@ -193,39 +164,17 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
         console.warn(`compare: repo ${repo.path} failed:`, e);
       }
     }
-    if (keepStale) {
-      // Swap the stale snapshot for the fresh scan in one shot. Re-selecting
-      // a *new* object for the same path (rather than keeping the old one)
-      // forces DiffView to reload the file's fresh content; the double-buffer
-      // there makes that swap flicker-free.
-      if (session === compareSession) {
-        appState.files = incoming;
-        const prev = previousPath
-          ? incoming.find(
-              (f) =>
-                f.path === previousPath &&
-                (f.repoIdx ?? 0) === (previousRepoIdx ?? 0),
-            )
-          : undefined;
-        appState.selectedFile = prev ?? incoming[0] ?? null;
-        if (pendingLangs.size > 0) {
-          void preloadLanguages([...pendingLangs]);
-          pendingLangs.clear();
-        }
-      }
-    } else {
-      // Final flush so anything queued in the last frame lands before we
-      // judge "did the previous selection survive?".
-      flushBuffer();
-      // Previous selection didn't survive the refresh — fall back to first file.
-      if (
-        session === compareSession &&
-        previousPath &&
-        !appState.selectedFile &&
-        appState.files.length > 0
-      ) {
-        appState.selectedFile = appState.files[0];
-      }
+    // Final flush so anything queued in the last frame lands before we judge
+    // "did the previous selection survive?".
+    flushBuffer();
+    // Previous selection didn't survive the refresh — fall back to first file.
+    if (
+      session === compareSession &&
+      previousPath &&
+      !appState.selectedFile &&
+      appState.files.length > 0
+    ) {
+      appState.selectedFile = appState.files[0];
     }
   } catch (e) {
     if (session === compareSession) {
@@ -249,9 +198,8 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
  * them to `onFile`. Implements the per-kind resolution rules (§13.3 #7-#10):
  *
  * - main: refs from appState directly
- * - submodule (branch mode): derive old/new SHAs via submoduleShaAt from
- *   main's start/target gitlinks (gitlink-follow)
- * - submodule (worktree mode): plain `git diff HEAD` inside the submodule
+ * - submodule: derive old/new SHAs via submoduleShaAt from main's start/target
+ *   gitlinks (gitlink-follow), unless a per-repo override is set
  * - manual: override refs if set, else same names as main
  */
 async function fetchRepoChanges(
@@ -259,11 +207,6 @@ async function fetchRepoChanges(
   mainPath: string,
   onFile: (file: ChangedFile) => void,
 ): Promise<void> {
-  if (appState.compareMode === "worktree") {
-    await worktreeFiles(repo.path, appState.ignoreWhitespace, onFile);
-    return;
-  }
-  // Branch mode below.
   if (repo.kind === "main") {
     await diffFiles(
       repo.path,
@@ -329,23 +272,6 @@ async function fetchRepoChanges(
   void _exhaustive;
 }
 
-export function setMode(m: CompareMode): void {
-  if (m === appState.compareMode) return;
-  appState.compareMode = m;
-  void setCompareMode(m);
-  appState.files = [];
-  appState.selectedFile = null;
-  appState.error = null;
-  if (!appState.repoPath) return;
-  // Auto-reload after toggling. Worktree never needs inputs; branch needs
-  // both refs filled — otherwise leave it for the user to type and Compare.
-  if (m === "worktree") {
-    void compare();
-  } else if (appState.startBranch && appState.targetBranch) {
-    void compare();
-  }
-}
-
 /// Cycle the workspace: Changes → Compare → Blame → Changes.
 /// Triggered by Ctrl+Shift+W. The graph sub-view returns to Changes. The cycle
 /// is positional, not a stack pop.
@@ -360,9 +286,6 @@ export function cycleAppMode(): void {
   if (appState.appMode === "changes") {
     restoreCompareContext();
     appState.appMode = "compare";
-    if (appState.compareMode !== "branch") {
-      setMode("branch");
-    }
     return;
   }
   // Branch compare → blame: carry the selected file so blame opens on it.

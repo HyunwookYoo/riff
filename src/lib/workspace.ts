@@ -273,11 +273,6 @@ export async function loadMainRepo(
     // Populate the toolbar branch chip + stash list up front.
     void loadCurrentBranch();
     void loadStashes();
-    // Working tree mode has no inputs to fill in — load immediately so the
-    // user sees their uncommitted changes on repo open.
-    if (appState.compareMode === "worktree") {
-      void compare();
-    }
     // Pre-warm the blame picker's file list in the background. BlameView's
     // own `$effect` does the same lazily on first entry, but kicking it off
     // here hides the latency: by the time the user clicks Blame the list is
@@ -330,10 +325,7 @@ export async function addManualRepoToWorkspace(path: string): Promise<void> {
   );
   // Repopulate file lists (blame picker) and changed files (compare).
   appState.repoFiles = [];
-  if (
-    appState.compareMode === "worktree" ||
-    (appState.startBranch && appState.targetBranch)
-  ) {
+  if (appState.startBranch && appState.targetBranch) {
     void compare({ silent: true });
   }
 }
@@ -389,10 +381,6 @@ export function clearRepoOverride(idx: number): void {
 
 function triggerCompareIfReady(): void {
   if (!appState.repoPath) return;
-  if (appState.compareMode === "worktree") {
-    void compare({ silent: true });
-    return;
-  }
   // Active repo with its own override needs no main refs (§13.3 #9 — let
   // submodule-only comparisons work without the user first filling main).
   const idx = appState.activeRepoIdx;
@@ -435,10 +423,7 @@ export async function removeManualRepoFromWorkspace(
     appState.manualReposByMain[main] ?? [],
   );
   appState.repoFiles = [];
-  if (
-    appState.compareMode === "worktree" ||
-    (appState.startBranch && appState.targetBranch)
-  ) {
+  if (appState.startBranch && appState.targetBranch) {
     void compare({ silent: true });
   }
 }

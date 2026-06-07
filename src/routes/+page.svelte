@@ -20,9 +20,9 @@
   import { appState } from "$lib/store.svelte";
   import { loadState, setBlamePickerWidth } from "$lib/git";
   import { loadMainRepo } from "$lib/workspace";
-  import { compare, cycleAppMode } from "$lib/compare";
+  import { cycleAppMode } from "$lib/compare";
   import { setHistoryRepo } from "$lib/commitHistory";
-  import { setChangesRepo } from "$lib/sourceControl";
+  import { loadStatus, setChangesRepo } from "$lib/sourceControl";
   import { popHistory, redoHistory } from "$lib/history";
   import { exitFocus } from "$lib/focus";
   import { cycleTab, selectTab } from "$lib/tabs";
@@ -93,10 +93,8 @@
       appState.recentRepos = s.recent_repos;
       appState.theme = s.theme;
       appState.fontSize = s.font_size;
-      // Working Tree mode was folded into Changes; coerce any persisted
-      // "worktree" value to "branch" so compare always has a usable sub-mode.
-      appState.compareMode =
-        s.compare_mode === "worktree" ? "branch" : s.compare_mode;
+      // Only branch compare remains (Working Tree folded into Changes).
+      appState.compareMode = "branch";
       appState.manualReposByMain = s.manual_repos_by_main ?? {};
       appState.workspaceLayout = s.workspace_layout ?? "unified";
       appState.blamePickerWidth = s.blame_picker_width ?? 300;
@@ -129,15 +127,10 @@
     }
   });
 
-  // Auto-refresh on window focus when viewing the working tree: the user
-  // probably just came back from editing files in another window. Silent so a
-  // transient git error doesn't flash an error banner.
-  //
-  // Only refresh when the window was actually blurred for a meaningful time.
-  // WebView2 on Windows emits blur/focus *pairs* during window drag/resize —
-  // they flip in well under 100ms — and we don't want a real worktree scan
-  // running for those. A 500ms threshold cleanly separates real Alt-Tab/click-
-  // -away switches (typically 500ms+) from drag-induced noise.
+  // Auto-refresh the Changes status when the window regains focus after a real
+  // blur — the user probably just edited files in another window. Silent.
+  // WebView2 on Windows emits blur/focus *pairs* during window drag/resize
+  // (<100ms); a 500ms threshold ignores those and only reacts to real switches.
   onMount(() => {
     let unlisten: (() => void) | undefined;
     let blurredAt = 0;
@@ -152,16 +145,8 @@
         const duration = Date.now() - blurredAt;
         blurredAt = 0;
         if (duration < MIN_BLUR_MS) return;
-        if (
-          appState.appMode !== "compare" ||
-          appState.compareMode !== "worktree" ||
-          !appState.repoPath ||
-          appState.loadingFiles ||
-          appState.loadingRepo
-        ) {
-          return;
-        }
-        void compare({ silent: true });
+        if (appState.appMode !== "changes" || !appState.repoPath) return;
+        void loadStatus();
       })
       .then((u) => (unlisten = u));
     return () => unlisten?.();
@@ -202,7 +187,7 @@
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName?.toLowerCase();
 
-    // Ctrl+Shift+W cycles app modes (branch compare → worktree compare → blame)
+    // Ctrl+Shift+W cycles app modes (Changes → Compare → Blame)
     // regardless of focus, so the user can switch even while a ref input has
     // the cursor.
     if (
@@ -278,12 +263,12 @@
       return;
     }
 
-    // F5 or Ctrl+R refreshes the working tree view.
+    // F5 or Ctrl+R refreshes the Changes status.
     const isRefresh =
       e.key === "F5" ||
       ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "r");
-    if (isRefresh && appState.compareMode === "worktree") {
-      void compare();
+    if (isRefresh && appState.appMode === "changes") {
+      void loadStatus();
       e.preventDefault();
       return;
     }

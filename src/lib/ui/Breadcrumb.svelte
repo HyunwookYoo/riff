@@ -3,7 +3,6 @@
   import { popHistory } from "$lib/history";
 
   function currentLabel(): string {
-    if (appState.compareMode === "worktree") return "working tree";
     const sep = appState.mode === "two-dot" ? ".." : "...";
     return `${appState.startBranch}${sep}${appState.targetBranch}`;
   }
@@ -11,7 +10,6 @@
   function previousLabel(): string | null {
     const prev = appState.history[appState.history.length - 1];
     if (!prev) return null;
-    if (prev.compareMode === "worktree") return "working tree";
     const sep = prev.mode === "two-dot" ? ".." : "...";
     return `${prev.startBranch}${sep}${prev.targetBranch}`;
   }
