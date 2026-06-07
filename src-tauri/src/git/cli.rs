@@ -299,6 +299,24 @@ impl GitCli {
         Ok(output.stdout)
     }
 
+    /// Like `run`, but for network commands (fetch/pull/push): disables git's
+    /// terminal credential prompt so a GUI launch never hangs waiting on stdin.
+    /// The user's credential helper (e.g. Git Credential Manager) still supplies
+    /// cached creds or pops its own dialog; otherwise the command fails fast.
+    fn run_network(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+        let output = git_command()
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(GitError::CommandFailed(stderr));
+        }
+        Ok(output.stdout)
+    }
+
     /// Drop the cached session so its batch processes respawn against fresh repo
     /// state. Called after operations that move HEAD (checkout) — the long-lived
     /// cat-file processes would otherwise keep resolving `HEAD:path` against the
@@ -1567,6 +1585,43 @@ impl GitLayer for GitCli {
         validate_ref(onto)?;
         self.run(path, &["rebase", onto])?;
         self.drop_session();
+        Ok(())
+    }
+
+    fn fetch(&self, path: &Path) -> Result<(), GitError> {
+        self.run_network(path, &["fetch", "--all", "--prune"])?;
+        // Newly-fetched objects/refs won't be visible to the cached batch.
+        self.drop_session();
+        Ok(())
+    }
+
+    fn pull(&self, path: &Path, rebase: bool) -> Result<(), GitError> {
+        let mut args = vec!["pull"];
+        if rebase {
+            args.push("--rebase");
+        }
+        self.run_network(path, &args)?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn push(
+        &self,
+        path: &Path,
+        set_upstream_branch: Option<&str>,
+        force: bool,
+    ) -> Result<(), GitError> {
+        let mut args = vec!["push"];
+        if force {
+            args.push("--force-with-lease");
+        }
+        if let Some(branch) = set_upstream_branch {
+            validate_ref(branch)?;
+            args.push("--set-upstream");
+            args.push("origin");
+            args.push(branch);
+        }
+        self.run_network(path, &args)?;
         Ok(())
     }
 

@@ -327,6 +327,26 @@ fn rebase(state: tauri::State<GitCli>, path: String, onto: String) -> Result<(),
 }
 
 #[tauri::command]
+fn fetch(state: tauri::State<GitCli>, path: String) -> Result<(), GitError> {
+    state.fetch(Path::new(&path))
+}
+
+#[tauri::command]
+fn pull(state: tauri::State<GitCli>, path: String, rebase: bool) -> Result<(), GitError> {
+    state.pull(Path::new(&path), rebase)
+}
+
+#[tauri::command]
+fn push(
+    state: tauri::State<GitCli>,
+    path: String,
+    set_upstream_branch: Option<String>,
+    force: bool,
+) -> Result<(), GitError> {
+    state.push(Path::new(&path), set_upstream_branch.as_deref(), force)
+}
+
+#[tauri::command]
 fn list_repo_files(state: tauri::State<GitCli>, path: String) -> Result<Vec<String>, GitError> {
     state.list_repo_files(Path::new(&path))
 }
@@ -513,6 +533,9 @@ pub fn run() {
             cherry_pick,
             revert,
             rebase,
+            fetch,
+            pull,
+            push,
             blame_file,
             list_repo_files,
             read_repo_file,

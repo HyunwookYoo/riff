@@ -305,6 +305,20 @@ pub trait GitLayer {
     /// Rebase the current branch onto `onto` (`git rebase`). Conflicts surface
     /// as an error; resolving them is done outside the app for now.
     fn rebase(&self, path: &Path, onto: &str) -> Result<(), GitError>;
+    /// Fetch every remote, pruning deleted branches (`git fetch --all --prune`).
+    fn fetch(&self, path: &Path) -> Result<(), GitError>;
+    /// Integrate the upstream into the current branch (`git pull`); `rebase`
+    /// switches to `git pull --rebase`. Conflicts surface as an error.
+    fn pull(&self, path: &Path, rebase: bool) -> Result<(), GitError>;
+    /// Push the current branch (`git push`). `set_upstream_branch` runs
+    /// `--set-upstream origin <branch>` for a first push; `force` adds
+    /// `--force-with-lease` (never a bare `--force`) — confirm before using.
+    fn push(
+        &self,
+        path: &Path,
+        set_upstream_branch: Option<&str>,
+        force: bool,
+    ) -> Result<(), GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.
