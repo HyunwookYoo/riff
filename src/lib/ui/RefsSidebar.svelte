@@ -80,9 +80,19 @@
     }
   }
 
+  function checkoutTarget(b: Branch): string {
+    // A remote branch DWIMs into a tracking local of the same short name.
+    return b.kind === "remote" ? b.name.replace(/^[^/]+\//, "") : b.name;
+  }
   function doCheckout(b: Branch) {
-    const target =
-      b.kind === "remote" ? b.name.replace(/^[^/]+\//, "") : b.name;
+    void run(checkout(repoPath, checkoutTarget(b)));
+  }
+  // Double-click is easy to trigger, so confirm before switching the tree.
+  function confirmCheckout(b: Branch) {
+    const target = checkoutTarget(b);
+    if (!confirm(`Check out '${target}'? This switches your working tree.`)) {
+      return;
+    }
     void run(checkout(repoPath, target));
   }
 
@@ -168,9 +178,21 @@
     return out;
   }
 
-  const localRows = $derived(buildRows(locals, "local"));
-  const remoteRows = $derived(buildRows(remotes, "remote"));
-  const tagRows = $derived(buildRows(tags, "tag"));
+  // Name search + pin the checked-out branch to the top of Local.
+  let query = $state("");
+  function matches(name: string): boolean {
+    const q = query.trim().toLowerCase();
+    return q === "" || name.toLowerCase().includes(q);
+  }
+  const filtered = (refs: Branch[]) => refs.filter((b) => matches(b.name));
+  const currentLocal = $derived(
+    locals.find((b) => b.name === current && matches(b.name)) ?? null,
+  );
+  const localRows = $derived(
+    buildRows(filtered(locals.filter((b) => b.name !== current)), "local"),
+  );
+  const remoteRows = $derived(buildRows(filtered(remotes), "remote"));
+  const tagRows = $derived(buildRows(filtered(tags), "tag"));
 
   // ── Inline editor (create / rename / set-upstream) ──────────────────────
   type Editor =
@@ -241,7 +263,7 @@
     class="ref"
     class:current={ref.name === current}
     style="padding-left: {8 + depth * 14}px"
-    ondblclick={() => doCheckout(ref)}
+    ondblclick={() => confirmCheckout(ref)}
     oncontextmenu={(e) => openMenu(e, ref)}
     title="Double-click to checkout · right-click for actions"
   >
@@ -289,6 +311,24 @@
     </button>
   </header>
 
+  <div class="search">
+    <input
+      type="text"
+      placeholder="Search branches…"
+      bind:value={query}
+    />
+    {#if query}
+      <button
+        type="button"
+        class="clear"
+        aria-label="Clear search"
+        onclick={() => (query = "")}
+      >
+        ×
+      </button>
+    {/if}
+  </div>
+
   {#if editor}
     <form class="editor" onsubmit={submitEditor}>
       <label>
@@ -317,6 +357,9 @@
           ＋
         </button>
       </div>
+      {#if currentLocal}
+        {@render refRow(currentLocal, currentLocal.name, 0)}
+      {/if}
       {#each localRows as row (row.kind === "dir" ? "d:" + row.path : "r:" + row.ref.name)}
         {#if row.kind === "dir"}
           {@render dirRow("local", row.path, row.name, row.depth)}
@@ -324,8 +367,8 @@
           {@render refRow(row.ref, row.name, row.depth)}
         {/if}
       {/each}
-      {#if localRows.length === 0}
-        <div class="empty">No local branches</div>
+      {#if !currentLocal && localRows.length === 0}
+        <div class="empty">{query ? "No matches" : "No local branches"}</div>
       {/if}
     </section>
 
@@ -479,6 +522,37 @@
     color: inherit;
     font-size: 0.82em;
     font-family: var(--mono);
+  }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .search input {
+    flex: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 4px 7px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: inherit;
+    font-size: 0.82em;
+  }
+  .search .clear {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1.1em;
+    line-height: 1;
+    padding: 0 4px;
+  }
+  .search .clear:hover {
+    color: var(--accent);
   }
   .scroll {
     flex: 1;

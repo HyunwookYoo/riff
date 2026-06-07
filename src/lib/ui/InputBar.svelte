@@ -133,13 +133,13 @@
   {/if}
 
   {#if appState.appMode === "history"}
-    <span class="hist-label">History of</span>
+    <span class="hist-label">Showing</span>
     <BranchPicker
       value={appState.historyRef}
       options={historyBranches}
-      placeholder="HEAD (current)"
+      placeholder="All branches"
       onchange={setHistoryRef}
-      title="Branch / tag / commit to show history for"
+      title="Limit the graph to one branch / tag / commit (empty = all branches)"
     />
   {/if}
 

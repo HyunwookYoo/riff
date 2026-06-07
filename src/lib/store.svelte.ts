@@ -117,6 +117,10 @@ class AppState {
   // submodule/manual repos let you browse their own log + branches.
   historyRepoIdx = $state(0);
   commitPaneFraction = $state(0.55);
+  // Graph mode: width (px) of the right-hand commit-detail panel (files + diff).
+  // The graph itself takes the remaining (majority) width. Drag-resizable,
+  // session-only.
+  graphDetailWidth = $state(460);
   // The user's compare context, snapshotted when entering history mode (which
   // reuses start/target + per-repo overrides + focus to render parent..commit)
   // and restored when returning to compare — so peeking at history doesn't

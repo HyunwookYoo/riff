@@ -65,19 +65,20 @@
   // Drag-resize the horizontal split between the commit list (top) and the
   // commit's file list (bottom) in history mode. Session-only — the fraction
   // isn't persisted. Clamped so neither pane collapses entirely.
-  let leftSplitEl = $state<HTMLDivElement | null>(null);
-  let vResizing = $state(false);
-  function onSplitStart(e: PointerEvent) {
-    if (e.button !== 0 || !leftSplitEl) return;
+  // Graph mode: drag the boundary between the wide graph and the right-hand
+  // commit-detail panel (files + diff). Adjusts its width; session-only.
+  let graphRowEl = $state<HTMLDivElement | null>(null);
+  function onGraphDetailResize(e: PointerEvent) {
+    if (e.button !== 0 || !graphRowEl) return;
     e.preventDefault();
-    vResizing = true;
-    const rect = leftSplitEl.getBoundingClientRect();
+    const rect = graphRowEl.getBoundingClientRect();
     const onMove = (ev: PointerEvent) => {
-      const f = (ev.clientY - rect.top) / rect.height;
-      appState.commitPaneFraction = Math.min(0.85, Math.max(0.15, f));
+      appState.graphDetailWidth = Math.min(
+        rect.width - 240,
+        Math.max(280, ev.clientX - rect.left),
+      );
     };
     const onUp = () => {
-      vResizing = false;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
@@ -459,30 +460,23 @@
       ></div>
       {@render diffPane()}
     {:else if appState.appMode === "history"}
-      <div
-        class="left-split"
-        class:resizing={vResizing}
-        bind:this={leftSplitEl}
-        style="--top: {appState.commitPaneFraction};"
-      >
-        <div class="commits-pane"><CommitList /></div>
+      <div class="graph-row" bind:this={graphRowEl}>
         <div
-          class="hsplit"
+          class="graph-detail"
+          style="--gd-w: {appState.graphDetailWidth}px;"
+        >
+          <div class="gd-files"><FileList /></div>
+          {@render diffPane()}
+        </div>
+        <div
+          class="graph-resizer"
           role="separator"
-          aria-orientation="horizontal"
-          aria-label="Resize commit list"
-          onpointerdown={onSplitStart}
+          aria-orientation="vertical"
+          aria-label="Resize commit detail"
+          onpointerdown={onGraphDetailResize}
         ></div>
-        <div class="files-pane"><FileList /></div>
+        <div class="graph-main"><CommitList /></div>
       </div>
-      <div
-        class="picker-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize panel"
-        onpointerdown={onResizeStart}
-      ></div>
-      {@render diffPane()}
     {:else}
       <FileList />
       <div
@@ -567,55 +561,60 @@
     min-height: 0;
     overflow: hidden;
   }
-  /* History mode: the left grid column is split top (commits) / bottom (files)
-     with a draggable horizontal handle between them. */
-  .left-split {
+  /* Graph mode: the commit graph is the wide primary area; the selected
+     commit's files + diff live in a resizable detail panel on the right. */
+  .graph-row {
+    grid-column: 1 / -1;
     display: flex;
-    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  .graph-main {
+    flex: 1;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
   }
-  .left-split.resizing {
-    cursor: row-resize;
-    user-select: none;
-  }
-  .commits-pane {
-    flex: 0 0 calc(var(--top, 0.55) * 100%);
-    min-height: 0;
-    overflow: hidden;
-  }
-  .files-pane {
-    flex: 1 1 0;
-    min-height: 0;
-    overflow: hidden;
-    border-top: 1px solid var(--border);
-  }
-  .hsplit {
+  .graph-resizer {
     flex: 0 0 7px;
-    margin: -3px 0;
+    margin: 0 -3px;
     z-index: 5;
-    cursor: row-resize;
+    cursor: col-resize;
     background: transparent;
     position: relative;
   }
-  .hsplit::after {
+  .graph-resizer::after {
     content: "";
     position: absolute;
-    left: 0;
-    top: 3px;
-    height: 1px;
-    width: 100%;
-    background: transparent;
+    left: 3px;
+    top: 0;
+    width: 1px;
+    height: 100%;
+    background: var(--border);
     transition: background 0.1s ease;
   }
-  .hsplit:hover::after,
-  .left-split.resizing .hsplit::after {
-    background: var(--accent, #4a9eff);
+  .graph-resizer:hover::after {
+    background: var(--accent);
+  }
+  .graph-detail {
+    flex: 0 0 var(--gd-w, 460px);
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+  }
+  .gd-files {
+    flex: 0 0 38%;
+    min-height: 0;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border);
   }
   .diff {
     display: flex;
     flex-direction: column;
+    flex: 1;
     min-width: 0;
     min-height: 0;
     overflow: hidden;

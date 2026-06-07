@@ -1,7 +1,102 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { openCommit, loadMoreCommits } from "$lib/commitHistory";
+  import { openCommit, loadCommits, loadMoreCommits } from "$lib/commitHistory";
+  import { changesRepoPath, loadCurrentBranch } from "$lib/sourceControl";
+  import {
+    checkout,
+    cherryPick,
+    createBranch,
+    createTag,
+    rebase,
+    reset,
+    revert,
+  } from "$lib/git";
+  import type { Commit } from "$lib/types";
   import { computeGraph } from "./graph";
+
+  let busy = $state(false);
+  // Run a commit-graph action, then reload the log + current-branch chip.
+  // On failure keep the error and skip the reload — loadCommits() clears
+  // appState.error, which would otherwise swallow the message.
+  async function act(op: Promise<void>) {
+    if (busy) return;
+    busy = true;
+    try {
+      await op;
+    } catch (e) {
+      appState.error = String(e);
+      busy = false;
+      return;
+    }
+    busy = false;
+    await loadCommits();
+    void loadCurrentBranch();
+  }
+
+  // Right-click context menu on a commit.
+  let menu = $state<{ x: number; y: number; sha: string } | null>(null);
+  function openMenu(e: MouseEvent, commit: Commit) {
+    e.preventDefault();
+    menu = { x: e.clientX, y: e.clientY, sha: commit.sha };
+  }
+
+  // Inline name entry for "new branch here" / "tag here".
+  let editor = $state<{ kind: "branch" | "tag"; sha: string } | null>(null);
+  let editVal = $state("");
+  function openEditor(kind: "branch" | "tag", sha: string) {
+    menu = null;
+    editor = { kind, sha };
+    editVal = "";
+  }
+  function submitEditor(e: Event) {
+    e.preventDefault();
+    const ed = editor;
+    const v = editVal.trim();
+    editor = null;
+    if (!ed || !v) return;
+    const p = changesRepoPath();
+    // Create at the commit without switching the working tree (works even
+    // with uncommitted changes; checking out an arbitrary commit would fail
+    // on a dirty tree). Switch via the sidebar if desired.
+    if (ed.kind === "branch") void act(createBranch(p, v, ed.sha, false));
+    else void act(createTag(p, v, ed.sha));
+  }
+
+  function doCheckout(sha: string) {
+    void act(checkout(changesRepoPath(), sha));
+  }
+  // Double-click a branch label in the graph to check it out (with confirm).
+  // A remote-tracking label (origin/x) DWIMs into a local branch of the same
+  // short name — checking out "origin/x" verbatim would detach HEAD. Local
+  // branches (even "feature/foo") are checked out as-is; the kind comes from
+  // the repo's ref list so a slash in a local name isn't mis-stripped.
+  function confirmCheckoutRef(name: string) {
+    const refs = appState.branchesByRepoIdx[appState.changesRepoIdx] ?? [];
+    const isRemote = refs.find((r) => r.name === name)?.kind === "remote";
+    const target = isRemote ? name.replace(/^[^/]+\//, "") : name;
+    if (!confirm(`Check out '${target}'? This switches your working tree.`)) {
+      return;
+    }
+    void act(checkout(changesRepoPath(), target));
+  }
+  function doReset(sha: string, mode: "soft" | "mixed" | "hard") {
+    if (
+      mode === "hard" &&
+      !confirm("Hard reset discards uncommitted working-tree changes. Continue?")
+    )
+      return;
+    void act(reset(changesRepoPath(), sha, mode));
+  }
+  function doCherryPick(sha: string) {
+    void act(cherryPick(changesRepoPath(), sha));
+  }
+  function doRevert(sha: string) {
+    void act(revert(changesRepoPath(), sha));
+  }
+  function doRebase(sha: string) {
+    if (!confirm(`Rebase the current branch onto ${sha.slice(0, 7)}?`)) return;
+    void act(rebase(changesRepoPath(), sha));
+  }
 
   // Lane gutter geometry. Row height is fixed so the SVG graph segments line
   // up across rows (a lane at column j exits one row's bottom edge exactly
@@ -53,6 +148,25 @@
   }
 </script>
 
+<svelte:window onclick={() => (menu = null)} />
+
+<div class="cl-wrap">
+  {#if editor}
+  <form class="cl-editor" onsubmit={submitEditor}>
+    <span class="cl-editor-label">
+      {editor.kind === "branch" ? "New branch at" : "Tag at"}
+      {editor.sha.slice(0, 7)}
+    </span>
+    <!-- svelte-ignore a11y_autofocus -->
+    <input
+      bind:value={editVal}
+      placeholder={editor.kind === "branch" ? "branch name" : "tag name"}
+      autofocus
+      onkeydown={(e) => e.key === "Escape" && (editor = null)}
+    />
+  </form>
+{/if}
+
 <div class="commit-list" onscroll={onScroll}>
   {#if appState.commits.length === 0 && appState.loadingCommits}
     <div class="empty">Loading history…</div>
@@ -67,6 +181,7 @@
         class:selected={commit.sha === appState.selectedCommitSha}
         style="height: {ROW_H}px;"
         onclick={() => openCommit(commit)}
+        oncontextmenu={(e) => openMenu(e, commit)}
         title={commit.summary}
       >
         <svg class="graph" width={gutterW} height={ROW_H} style="flex: 0 0 {gutterW}px;">
@@ -96,7 +211,32 @@
           <span class="line1">
             {#each commit.refs as ref}
               {@const r = refLabel(ref)}
-              <span class="ref {r.kind}">{r.text}</span>
+              {#if r.kind === "branch"}
+                <span
+                  class="ref branch"
+                  style={row ? `--c: ${color(row.color)}` : ""}
+                  role="button"
+                  tabindex="0"
+                  title="Double-click to checkout {r.text}"
+                  onclick={(e) => e.stopPropagation()}
+                  ondblclick={(e) => {
+                    e.stopPropagation();
+                    confirmCheckoutRef(r.text);
+                  }}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter") {
+                      e.stopPropagation();
+                      confirmCheckoutRef(r.text);
+                    }
+                  }}>{r.text}</span
+                >
+              {:else if r.kind === "head"}
+                <span class="ref head">
+                  <span class="check" aria-hidden="true">✓</span>{r.text}
+                </span>
+              {:else}
+                <span class="ref tag">{r.text}</span>
+              {/if}
             {/each}
             <span class="summary">{commit.summary}</span>
           </span>
@@ -112,15 +252,120 @@
       <div class="empty small">Loading more…</div>
     {/if}
   {/if}
+  </div>
 </div>
 
+{#if menu}
+  {@const sha = menu.sha}
+  <div class="ctxmenu" style="left: {menu.x}px; top: {menu.y}px" role="menu">
+    <button type="button" role="menuitem" onclick={() => openEditor("branch", sha)}>
+      New branch here…
+    </button>
+    <button type="button" role="menuitem" onclick={() => openEditor("tag", sha)}>
+      Tag here…
+    </button>
+    <button type="button" role="menuitem" onclick={() => doCheckout(sha)}>
+      Checkout (detached)
+    </button>
+    <div class="sep"></div>
+    <button type="button" role="menuitem" onclick={() => doCherryPick(sha)}>
+      Cherry-pick onto current
+    </button>
+    <button type="button" role="menuitem" onclick={() => doRevert(sha)}>
+      Revert
+    </button>
+    <button type="button" role="menuitem" onclick={() => doRebase(sha)}>
+      Rebase current onto this…
+    </button>
+    <div class="sep"></div>
+    <button type="button" role="menuitem" onclick={() => doReset(sha, "mixed")}>
+      Reset (mixed) here
+    </button>
+    <button type="button" role="menuitem" onclick={() => doReset(sha, "soft")}>
+      Reset (soft) here
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      class="danger"
+      onclick={() => doReset(sha, "hard")}
+    >
+      Reset (hard) here
+    </button>
+  </div>
+{/if}
+
 <style>
+  .cl-wrap {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .cl-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--accent-soft);
+    flex-shrink: 0;
+  }
+  .cl-editor-label {
+    font-size: 0.72em;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+  .cl-editor input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--input-bg);
+    color: inherit;
+    font-size: 0.82em;
+    font-family: var(--mono);
+  }
   .commit-list {
     overflow-y: auto;
     overflow-x: hidden;
-    height: 100%;
+    flex: 1;
     min-height: 0;
     background: var(--bg);
+  }
+  .ctxmenu {
+    position: fixed;
+    z-index: 100;
+    min-width: 200px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+  }
+  .ctxmenu button {
+    border: none;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.85em;
+  }
+  .ctxmenu button:hover {
+    background: var(--hover);
+  }
+  .ctxmenu button.danger {
+    color: var(--error-fg, #f85149);
+  }
+  .ctxmenu .sep {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
   }
   .row {
     display: flex;
@@ -197,16 +442,24 @@
     border: 1px solid var(--border);
   }
   .ref.head {
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--accent);
+    color: #fff;
     border-color: var(--accent);
+    font-weight: 700;
+  }
+  .ref.head .check {
+    margin-right: 3px;
+    font-weight: 900;
   }
   .ref.tag {
     background: var(--info-bg, var(--hover));
     color: var(--info-fg, inherit);
   }
   .ref.branch {
-    background: var(--hover);
+    background: transparent;
+    color: var(--c, inherit);
+    border-color: var(--c, var(--border));
+    font-weight: 600;
   }
   .empty {
     padding: 16px;

@@ -151,6 +151,9 @@ export async function loadCommits(opts: { more?: boolean } = {}): Promise<void> 
     const page = await commitLog(
       historyRepoPath(),
       appState.historyRef,
+      // Empty ref → show every branch (the default graph); a picked ref scopes
+      // the log to just that branch.
+      appState.historyRef === "",
       PAGE_SIZE,
       skip,
     );

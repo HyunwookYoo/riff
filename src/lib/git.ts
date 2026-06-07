@@ -121,6 +121,39 @@ export function setUpstream(
   return invoke("set_upstream", { path, branch, upstream });
 }
 
+/** Create a lightweight tag at a commit. */
+export function createTag(
+  path: string,
+  name: string,
+  target: string,
+): Promise<void> {
+  return invoke("create_tag", { path, name, target });
+}
+
+/** Move the current branch to `target`. `mode`: "soft" | "mixed" | "hard". */
+export function reset(
+  path: string,
+  target: string,
+  mode: "soft" | "mixed" | "hard",
+): Promise<void> {
+  return invoke("reset", { path, target, mode });
+}
+
+/** Apply a commit onto the current branch (`git cherry-pick`). */
+export function cherryPick(path: string, target: string): Promise<void> {
+  return invoke("cherry_pick", { path, target });
+}
+
+/** Create a commit that undoes `target` (`git revert`). */
+export function revert(path: string, target: string): Promise<void> {
+  return invoke("revert", { path, target });
+}
+
+/** Rebase the current branch onto `onto` (`git rebase`). */
+export function rebase(path: string, onto: string): Promise<void> {
+  return invoke("rebase", { path, onto });
+}
+
 /**
  * Fetch up to `limit` commits reachable from `startRef` (empty = HEAD),
  * skipping the first `skip`. `skip` drives the history browser's "load more".
@@ -128,10 +161,11 @@ export function setUpstream(
 export function commitLog(
   path: string,
   startRef: string,
+  all: boolean,
   limit: number,
   skip: number,
 ): Promise<Commit[]> {
-  return invoke("commit_log", { path, startRef, limit, skip });
+  return invoke("commit_log", { path, startRef, all, limit, skip });
 }
 
 /**
