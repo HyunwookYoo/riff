@@ -231,8 +231,7 @@ pub trait GitLayer {
     /// index blob); otherwise the index↔worktree gap (old = index blob, new =
     /// the working-tree file). `status` is the porcelain status for *that side*,
     /// driving which side is absent (added → no old, deleted → no new). Unreal
-    /// asset derivation is intentionally skipped (raw bytes / binary
-    /// placeholder) — staging is code-centric; rich preview stays in compare.
+    /// assets are derived to a property view per `uasset_cfg`.
     fn changes_file_diff(
         &self,
         path: &Path,
@@ -241,6 +240,7 @@ pub trait GitLayer {
         status: FileStatus,
         staged: bool,
         force: bool,
+        uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError>;
     /// Stage paths into the index (`git add`). `files = None` stages everything
     /// (`git add -A`, including untracked and deletions); `Some` stages just

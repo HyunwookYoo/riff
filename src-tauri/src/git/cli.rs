@@ -1274,6 +1274,7 @@ impl GitLayer for GitCli {
         status: FileStatus,
         staged: bool,
         force: bool,
+        uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError> {
         validate_path(file_path)?;
         if let Some(p) = old_path {
@@ -1325,6 +1326,65 @@ impl GitLayer for GitCli {
                 ue_version: None,
                 changes,
             });
+        }
+
+        // Unreal asset → property view. Read both sides through the smudge
+        // filter so LFS pointers resolve to real bytes (the new side, when it's
+        // the working-tree file, is already smudged on disk). Sizes come from
+        // the filtered content so the too-large guard sees the real asset, not
+        // an LFS pointer.
+        if uasset_cfg.enabled && uasset::is_uasset_path(file_path) {
+            let old_asset = if needs_old {
+                cat_file_filtered(path, &old_spec).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let new_asset = if !needs_new {
+                Vec::new()
+            } else if staged {
+                cat_file_filtered(path, &format!(":{file_path}")).unwrap_or_default()
+            } else {
+                fs::read(&fs_path).unwrap_or_default()
+            };
+            let old_size = old_asset.len() as u64;
+            let new_size = new_asset.len() as u64;
+            if !force && old_size.max(new_size) > uasset::UASSET_MAX_BYTES {
+                return Ok(FileDiff::Binary {
+                    old_size,
+                    new_size,
+                    note: Some("Unreal asset too large to preview.".into()),
+                });
+            }
+            let old_uexp = if needs_old {
+                uasset::sibling_uexp(old_target).and_then(|sp| {
+                    let spec = if staged {
+                        format!("HEAD:{sp}")
+                    } else {
+                        format!(":{sp}")
+                    };
+                    cat_file_filtered(path, &spec)
+                })
+            } else {
+                None
+            };
+            let new_uexp = if !needs_new {
+                None
+            } else if staged {
+                uasset::sibling_uexp(file_path)
+                    .and_then(|sp| cat_file_filtered(path, &format!(":{sp}")))
+            } else {
+                uasset::sibling_uexp(file_path).and_then(|sp| fs::read(path.join(sp)).ok())
+            };
+            return Ok(uasset::derive_filediff(
+                uasset_cfg,
+                file_path,
+                &old_asset,
+                old_uexp.as_deref(),
+                &new_asset,
+                new_uexp.as_deref(),
+                old_size,
+                new_size,
+            ));
         }
 
         let old_bytes = if needs_old {

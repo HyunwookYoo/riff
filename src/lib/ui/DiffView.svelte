@@ -135,6 +135,7 @@
           file.status,
           appState.changesSide === "staged",
           force,
+          ueVersion,
         );
       } else {
         const refs = await resolveDiffRefsFor(repoIdx);

@@ -159,6 +159,7 @@ fn worktree_file_diff(
 
 #[tauri::command]
 fn changes_file_diff(
+    app: tauri::AppHandle,
     state: tauri::State<GitCli>,
     path: String,
     file_path: String,
@@ -166,7 +167,9 @@ fn changes_file_diff(
     status: FileStatus,
     staged: bool,
     force: bool,
+    ue_version: Option<String>,
 ) -> Result<FileDiff, GitError> {
+    let cfg = uasset_config(&app, ue_version);
     state.changes_file_diff(
         Path::new(&path),
         &file_path,
@@ -174,6 +177,7 @@ fn changes_file_diff(
         status,
         staged,
         force,
+        &cfg,
     )
 }
 

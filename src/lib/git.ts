@@ -302,6 +302,7 @@ export function changesFileDiff(
   status: FileStatus,
   staged: boolean,
   force: boolean,
+  ueVersion: string | null = null,
 ): Promise<FileDiff> {
   return invoke("changes_file_diff", {
     path,
@@ -310,6 +311,7 @@ export function changesFileDiff(
     status,
     staged,
     force,
+    ueVersion,
   });
 }
 
