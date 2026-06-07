@@ -9,7 +9,7 @@
     setUpstream,
     status,
   } from "$lib/git";
-  import { loadCurrentBranch } from "$lib/sourceControl";
+  import { doMergeBranch, loadCurrentBranch } from "$lib/sourceControl";
   import RefIcon from "./RefIcon.svelte";
   import type { Branch } from "$lib/types";
 
@@ -415,6 +415,13 @@
     {#if ref.name !== current}
       <button type="button" role="menuitem" onclick={() => doCheckout(ref)}>
         Checkout
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => void doMergeBranch(ref.name)}
+      >
+        Merge into current
       </button>
     {/if}
     <button

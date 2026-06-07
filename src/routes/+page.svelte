@@ -11,6 +11,7 @@
   import HunkBar from "$lib/ui/HunkBar.svelte";
   import RepoTabs from "$lib/ui/RepoTabs.svelte";
   import RefsSidebar from "$lib/ui/RefsSidebar.svelte";
+  import ConflictBanner from "$lib/ui/ConflictBanner.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
@@ -390,6 +391,7 @@
       </button>
     </div>
   {/if}
+  <ConflictBanner />
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />
   {/if}

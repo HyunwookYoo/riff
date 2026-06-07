@@ -3,6 +3,10 @@ import {
   commit as commitCmd,
   fetch as fetchCmd,
   headCommitMessage,
+  merge as mergeCmd,
+  opAbort,
+  opContinue,
+  pendingOp,
   pull as pullCmd,
   push as pushCmd,
   stage as stageCmd,
@@ -77,6 +81,7 @@ export async function enterChangesMode(): Promise<void> {
   }
   appState.appMode = "changes";
   await loadStatus();
+  void loadPendingOp();
 }
 
 /// Load `git status --porcelain=v2` for the active repo and auto-open the first
@@ -218,7 +223,59 @@ async function runSync(op: Promise<void>): Promise<void> {
   } finally {
     appState.syncing = false;
     await reloadAfterSync();
+    await loadPendingOp();
   }
+}
+
+/// Refresh the in-progress-operation indicator (drives the conflict banner).
+export async function loadPendingOp(): Promise<void> {
+  if (!appState.repoPath) {
+    appState.pendingOp = "none";
+    return;
+  }
+  try {
+    appState.pendingOp = await pendingOp(changesRepoPath());
+  } catch {
+    appState.pendingOp = "none";
+  }
+}
+
+/// Merge a branch into the current one. On conflict the repo is left mid-merge
+/// and the banner appears; resolve + stage in Working, then Continue.
+export async function doMergeBranch(branch: string): Promise<void> {
+  try {
+    await mergeCmd(changesRepoPath(), branch);
+  } catch (e) {
+    appState.error = String(e);
+  }
+  await reloadAfterSync();
+  await loadPendingOp();
+}
+
+/// Abort the in-progress operation.
+export async function abortOp(): Promise<void> {
+  const op = appState.pendingOp;
+  if (op === "none") return;
+  try {
+    await opAbort(changesRepoPath(), op);
+  } catch (e) {
+    appState.error = String(e);
+  }
+  await reloadAfterSync();
+  await loadPendingOp();
+}
+
+/// Continue the in-progress operation (conflicts must be resolved + staged).
+export async function continueOp(): Promise<void> {
+  const op = appState.pendingOp;
+  if (op === "none") return;
+  try {
+    await opContinue(changesRepoPath(), op);
+  } catch (e) {
+    appState.error = String(e);
+  }
+  await reloadAfterSync();
+  await loadPendingOp();
 }
 
 export function doFetch(): Promise<void> {

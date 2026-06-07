@@ -176,6 +176,26 @@ export function push(
   return invoke("push", { path, setUpstreamBranch, force });
 }
 
+/** Merge `branch` into the current branch (`git merge`). */
+export function merge(path: string, branch: string): Promise<void> {
+  return invoke("merge", { path, branch });
+}
+
+/** The in-progress op: "merge" | "rebase" | "cherry-pick" | "revert" | "none". */
+export function pendingOp(path: string): Promise<string> {
+  return invoke("pending_op", { path });
+}
+
+/** Abort the in-progress operation. */
+export function opAbort(path: string, op: string): Promise<void> {
+  return invoke("op_abort", { path, op });
+}
+
+/** Continue the in-progress operation (after resolving + staging conflicts). */
+export function opContinue(path: string, op: string): Promise<void> {
+  return invoke("op_continue", { path, op });
+}
+
 /**
  * Fetch up to `limit` commits reachable from `startRef` (empty = HEAD),
  * skipping the first `skip`. `skip` drives the history browser's "load more".

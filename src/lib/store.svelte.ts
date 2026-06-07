@@ -163,6 +163,9 @@ class AppState {
   currentBehind = $state(0);
   // True while a fetch/pull/push runs (disables the sync buttons + spinner).
   syncing = $state(false);
+  // In-progress operation that may need resolving: "merge" | "rebase" |
+  // "cherry-pick" | "revert" | "none". Drives the conflict banner.
+  pendingOp = $state("none");
   // Bumped after network ops so the refs sidebar re-lists (new remotes/branches)
   // without going through a full status reload.
   refsRefresh = $state(0);

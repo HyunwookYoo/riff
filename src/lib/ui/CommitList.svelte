@@ -1,7 +1,11 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import { openCommit, loadCommits, loadMoreCommits } from "$lib/commitHistory";
-  import { changesRepoPath, loadCurrentBranch } from "$lib/sourceControl";
+  import {
+    changesRepoPath,
+    loadCurrentBranch,
+    loadPendingOp,
+  } from "$lib/sourceControl";
   import {
     checkout,
     cherryPick,
@@ -26,11 +30,14 @@
     } catch (e) {
       appState.error = String(e);
       busy = false;
+      // A conflicting cherry-pick/revert/rebase leaves the repo mid-operation.
+      void loadPendingOp();
       return;
     }
     busy = false;
     await loadCommits();
     void loadCurrentBranch();
+    void loadPendingOp();
   }
 
   // Right-click context menu on a commit.

@@ -1625,6 +1625,67 @@ impl GitLayer for GitCli {
         Ok(())
     }
 
+    fn merge(&self, path: &Path, branch: &str) -> Result<(), GitError> {
+        validate_ref(branch)?;
+        self.run(path, &["merge", branch])?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn pending_op(&self, path: &Path) -> Result<String, GitError> {
+        let out = self.run(path, &["rev-parse", "--git-dir"])?;
+        // `--git-dir` is relative to `path` (or absolute). join() handles both.
+        let base = path.join(String::from_utf8_lossy(&out).trim());
+        let has = |p: &str| base.join(p).exists();
+        let op = if has("rebase-merge") || has("rebase-apply") {
+            "rebase"
+        } else if has("MERGE_HEAD") {
+            "merge"
+        } else if has("CHERRY_PICK_HEAD") {
+            "cherry-pick"
+        } else if has("REVERT_HEAD") {
+            "revert"
+        } else {
+            "none"
+        };
+        Ok(op.to_string())
+    }
+
+    fn op_abort(&self, path: &Path, op: &str) -> Result<(), GitError> {
+        let sub = match op {
+            "merge" | "rebase" | "cherry-pick" | "revert" => op,
+            _ => return Err(GitError::CommandFailed("no operation in progress".into())),
+        };
+        self.run(path, &[sub, "--abort"])?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn op_continue(&self, path: &Path, op: &str) -> Result<(), GitError> {
+        // For merge, complete the commit (--continue would open an editor);
+        // for the sequencer ops, --continue with the editor suppressed.
+        let args: &[&str] = match op {
+            "merge" => &["commit", "--no-edit"],
+            "rebase" => &["rebase", "--continue"],
+            "cherry-pick" => &["cherry-pick", "--continue"],
+            "revert" => &["revert", "--continue"],
+            _ => return Err(GitError::CommandFailed("no operation in progress".into())),
+        };
+        let output = git_command()
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .env("GIT_EDITOR", "true")
+            .env("GIT_SEQUENCE_EDITOR", "true")
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(GitError::CommandFailed(stderr));
+        }
+        self.drop_session();
+        Ok(())
+    }
+
     fn list_repo_files(&self, path: &Path) -> Result<Vec<String>, GitError> {
         // Fast path: clone the cached Vec under the map lock and return.
         // Same FS-watcher mechanism as worktree_files — any change in the

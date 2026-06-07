@@ -347,6 +347,26 @@ fn push(
 }
 
 #[tauri::command]
+fn merge(state: tauri::State<GitCli>, path: String, branch: String) -> Result<(), GitError> {
+    state.merge(Path::new(&path), &branch)
+}
+
+#[tauri::command]
+fn pending_op(state: tauri::State<GitCli>, path: String) -> Result<String, GitError> {
+    state.pending_op(Path::new(&path))
+}
+
+#[tauri::command]
+fn op_abort(state: tauri::State<GitCli>, path: String, op: String) -> Result<(), GitError> {
+    state.op_abort(Path::new(&path), &op)
+}
+
+#[tauri::command]
+fn op_continue(state: tauri::State<GitCli>, path: String, op: String) -> Result<(), GitError> {
+    state.op_continue(Path::new(&path), &op)
+}
+
+#[tauri::command]
 fn list_repo_files(state: tauri::State<GitCli>, path: String) -> Result<Vec<String>, GitError> {
     state.list_repo_files(Path::new(&path))
 }
@@ -536,6 +556,10 @@ pub fn run() {
             fetch,
             pull,
             push,
+            merge,
+            pending_op,
+            op_abort,
+            op_continue,
             blame_file,
             list_repo_files,
             read_repo_file,

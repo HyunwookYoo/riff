@@ -319,6 +319,17 @@ pub trait GitLayer {
         set_upstream_branch: Option<&str>,
         force: bool,
     ) -> Result<(), GitError>;
+    /// Merge `branch` into the current branch (`git merge`). On conflict the
+    /// repo is left mid-merge; resolve + Continue, or Abort.
+    fn merge(&self, path: &Path, branch: &str) -> Result<(), GitError>;
+    /// The in-progress operation, if any: "merge" | "rebase" | "cherry-pick" |
+    /// "revert" | "none". Drives the conflict banner.
+    fn pending_op(&self, path: &Path) -> Result<String, GitError>;
+    /// Abort the in-progress `op` (`git <op> --abort`).
+    fn op_abort(&self, path: &Path, op: &str) -> Result<(), GitError>;
+    /// Continue the in-progress `op` after conflicts are resolved + staged
+    /// (editor suppressed so it can't hang).
+    fn op_continue(&self, path: &Path, op: &str) -> Result<(), GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.
