@@ -145,6 +145,9 @@ class AppState {
   // Top (Unstaged) share of the Changes list area; the draggable divider
   // between the Unstaged and Staged panes adjusts it. Session-only.
   changesPaneFraction = $state(0.5);
+  // refs sidebar (branches/tags) visibility. Toggleable (Ctrl+B), hidden by
+  // default. Session-only.
+  sidebarOpen = $state(false);
   // Commit box state (Phase 1.3). `commitSignoff` is sticky across commits (a
   // user preference); subject/body/amend/coauthors are cleared on success.
   // Session-only.

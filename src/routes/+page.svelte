@@ -10,6 +10,7 @@
   import CommitBox from "$lib/ui/CommitBox.svelte";
   import HunkBar from "$lib/ui/HunkBar.svelte";
   import RepoTabs from "$lib/ui/RepoTabs.svelte";
+  import RefsSidebar from "$lib/ui/RefsSidebar.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
@@ -209,6 +210,17 @@
       return;
     }
 
+    // Ctrl+B toggles the refs sidebar, regardless of focus.
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      !e.shiftKey &&
+      e.key.toLowerCase() === "b"
+    ) {
+      appState.sidebarOpen = !appState.sidebarOpen;
+      e.preventDefault();
+      return;
+    }
+
     // §14.6 #21: Tab navigation — Ctrl+Tab next, Ctrl+Shift+Tab previous,
     // Ctrl+1..9 jump to that tab. Active only in Tabs layout while comparing.
     // Fires before the form-control yield so users can switch tabs while
@@ -382,12 +394,16 @@
   {:else if appState.repos.length > 1 && appState.appMode === "changes"}
     <RepoTabs value={appState.changesRepoIdx} onselect={setChangesRepo} />
   {/if}
-  <div
-    class="body"
-    class:resizing
-    bind:this={bodyEl}
-    style="--picker-width: {appState.blamePickerWidth}px;"
-  >
+  <div class="workarea">
+    {#if appState.sidebarOpen}
+      <RefsSidebar />
+    {/if}
+    <div
+      class="body"
+      class:resizing
+      bind:this={bodyEl}
+      style="--picker-width: {appState.blamePickerWidth}px;"
+    >
     {#snippet diffPane()}
       <main class="diff">
         {#if appState.selectedFile}
@@ -475,6 +491,7 @@
       ></div>
       {@render diffPane()}
     {/if}
+    </div>
   </div>
 </div>
 
@@ -484,6 +501,12 @@
     flex-direction: column;
     height: 100vh;
     overflow: hidden;
+  }
+  .workarea {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
   }
   .body {
     position: relative;
@@ -496,6 +519,7 @@
     grid-template-rows: minmax(0, 1fr);
     flex: 1;
     min-height: 0;
+    min-width: 0;
   }
   .body.resizing {
     cursor: col-resize;

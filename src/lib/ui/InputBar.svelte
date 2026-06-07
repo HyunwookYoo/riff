@@ -113,6 +113,15 @@
       Blame
     </button>
   </div>
+  <button
+    type="button"
+    class="sidebar-toggle"
+    class:active={appState.sidebarOpen}
+    title="Toggle branches sidebar (Ctrl+B)"
+    onclick={() => (appState.sidebarOpen = !appState.sidebarOpen)}
+  >
+    Branches
+  </button>
   <span class="mode-hint">Ctrl+Shift+W to cycle</span>
 </div>
 
@@ -186,10 +195,19 @@
     border-bottom: 1px solid var(--border);
     background: var(--bar-bg);
   }
+  .sidebar-toggle {
+    margin-left: auto;
+    font-size: 0.8em;
+    padding: 3px 9px;
+  }
+  .sidebar-toggle.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
   .mode-hint {
     font-size: 0.75em;
     opacity: 0.5;
-    margin-left: auto;
     font-family: var(--mono);
   }
   .bar {

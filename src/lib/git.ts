@@ -77,6 +77,51 @@ export function listRefs(path: string): Promise<Branch[]> {
 }
 
 /**
+ * Create branch `name` (at `startPoint`, default HEAD). `checkout` also
+ * switches to it.
+ */
+export function createBranch(
+  path: string,
+  name: string,
+  startPoint: string | null,
+  checkout: boolean,
+): Promise<void> {
+  return invoke("create_branch", { path, name, startPoint, checkout });
+}
+
+/** Switch the working tree to `refName` (`git checkout`). */
+export function checkout(path: string, refName: string): Promise<void> {
+  return invoke("checkout", { path, refName });
+}
+
+/** Rename a branch. */
+export function renameBranch(
+  path: string,
+  oldName: string,
+  newName: string,
+): Promise<void> {
+  return invoke("rename_branch", { path, old: oldName, new: newName });
+}
+
+/** Delete a branch. `force` (-D) drops unmerged commits — confirm first. */
+export function deleteBranch(
+  path: string,
+  name: string,
+  force: boolean,
+): Promise<void> {
+  return invoke("delete_branch", { path, name, force });
+}
+
+/** Set a branch's upstream tracking ref. */
+export function setUpstream(
+  path: string,
+  branch: string,
+  upstream: string,
+): Promise<void> {
+  return invoke("set_upstream", { path, branch, upstream });
+}
+
+/**
  * Fetch up to `limit` commits reachable from `startRef` (empty = HEAD),
  * skipping the first `skip`. `skip` drives the history browser's "load more".
  */
