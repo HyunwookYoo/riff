@@ -158,8 +158,14 @@ class AppState {
   // chip. Set by loadStatus / loadCurrentBranch; null on detached HEAD.
   // Session-only.
   currentBranch = $state<string | null>(null);
+  currentUpstream = $state<string | null>(null);
   currentAhead = $state(0);
   currentBehind = $state(0);
+  // True while a fetch/pull/push runs (disables the sync buttons + spinner).
+  syncing = $state(false);
+  // Bumped after network ops so the refs sidebar re-lists (new remotes/branches)
+  // without going through a full status reload.
+  refsRefresh = $state(0);
   // Commit box state (Phase 1.3). `commitSignoff` is sticky across commits (a
   // user preference); subject/body/amend/coauthors are cleared on success.
   // Session-only.

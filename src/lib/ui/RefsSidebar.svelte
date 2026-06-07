@@ -40,6 +40,7 @@
   $effect(() => {
     void repoPath;
     void appState.repoStatus;
+    void appState.refsRefresh;
     if (!repoPath) {
       branches = [];
       current = null;

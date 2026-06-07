@@ -19,6 +19,7 @@
   import Dropdown from "./Dropdown.svelte";
   import RepoChip from "./RepoChip.svelte";
   import BranchChip from "./BranchChip.svelte";
+  import SyncControls from "./SyncControls.svelte";
   import UnrealSettings from "./UnrealSettings.svelte";
 
   // Direct mode-toggle buttons. Unlike Ctrl+Shift+W (which cycles), these
@@ -99,6 +100,7 @@
     </button>
   </div>
   <BranchChip />
+  <SyncControls />
   <span class="mode-hint">Ctrl+Shift+W to cycle</span>
 </div>
 

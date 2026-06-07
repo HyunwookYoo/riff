@@ -154,6 +154,28 @@ export function rebase(path: string, onto: string): Promise<void> {
   return invoke("rebase", { path, onto });
 }
 
+/** Fetch all remotes (`git fetch --all --prune`). */
+export function fetch(path: string): Promise<void> {
+  return invoke("fetch", { path });
+}
+
+/** Pull the upstream into the current branch; `rebase` uses `--rebase`. */
+export function pull(path: string, rebase: boolean): Promise<void> {
+  return invoke("pull", { path, rebase });
+}
+
+/**
+ * Push the current branch. `setUpstreamBranch` sets the upstream on first
+ * push; `force` adds `--force-with-lease` (confirm first).
+ */
+export function push(
+  path: string,
+  setUpstreamBranch: string | null,
+  force: boolean,
+): Promise<void> {
+  return invoke("push", { path, setUpstreamBranch, force });
+}
+
 /**
  * Fetch up to `limit` commits reachable from `startRef` (empty = HEAD),
  * skipping the first `skip`. `skip` drives the history browser's "load more".

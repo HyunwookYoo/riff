@@ -1,11 +1,15 @@
 import { appState } from "./store.svelte";
 import {
   commit as commitCmd,
+  fetch as fetchCmd,
   headCommitMessage,
+  pull as pullCmd,
+  push as pushCmd,
   stage as stageCmd,
   status,
   unstage as unstageCmd,
 } from "./git";
+import { loadCommits } from "./commitHistory";
 import type { ChangedFile, FileStatus, StatusEntry } from "./types";
 
 /// Map a porcelain-v2 status code (X or Y for one side) to a `FileStatus` for
@@ -85,6 +89,7 @@ export async function loadStatus(): Promise<void> {
     const st = await status(changesRepoPath());
     appState.repoStatus = st;
     appState.currentBranch = st.branch;
+    appState.currentUpstream = st.upstream;
     appState.currentAhead = st.ahead;
     appState.currentBehind = st.behind;
     const unstaged = st.entries.filter(isUnstaged);
@@ -180,11 +185,55 @@ export async function loadCurrentBranch(): Promise<void> {
   try {
     const st = await status(changesRepoPath());
     appState.currentBranch = st.branch;
+    appState.currentUpstream = st.upstream;
     appState.currentAhead = st.ahead;
     appState.currentBehind = st.behind;
   } catch {
     // Keep the last known value.
   }
+}
+
+/// Reload the UI after a network op: status (Working) or current-branch +
+/// commits (Graph), and nudge the refs sidebar to re-list.
+async function reloadAfterSync(): Promise<void> {
+  if (appState.appMode === "changes") {
+    await loadStatus();
+  } else {
+    await loadCurrentBranch();
+    if (appState.appMode === "history") await loadCommits();
+  }
+  appState.refsRefresh++;
+}
+
+/// Run a fetch/pull/push against the source-control repo with a busy flag,
+/// surfacing errors and refreshing afterward.
+async function runSync(op: Promise<void>): Promise<void> {
+  if (appState.syncing) return;
+  appState.syncing = true;
+  appState.error = null;
+  try {
+    await op;
+  } catch (e) {
+    appState.error = String(e);
+  } finally {
+    appState.syncing = false;
+    await reloadAfterSync();
+  }
+}
+
+export function doFetch(): Promise<void> {
+  return runSync(fetchCmd(changesRepoPath()));
+}
+export function doPull(rebase: boolean): Promise<void> {
+  return runSync(pullCmd(changesRepoPath(), rebase));
+}
+export function doPush(force: boolean): Promise<void> {
+  // First push (no upstream): set it on the current branch while pushing.
+  const setUpstream =
+    !appState.currentUpstream && appState.currentBranch
+      ? appState.currentBranch
+      : null;
+  return runSync(pushCmd(changesRepoPath(), setUpstream, force));
 }
 
 /// Clear all Changes-screen state on repo switch — the status, repo selection,
