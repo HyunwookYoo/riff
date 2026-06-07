@@ -10,6 +10,10 @@ import {
   pull as pullCmd,
   push as pushCmd,
   stage as stageCmd,
+  stashApply,
+  stashDrop,
+  stashList,
+  stashSave,
   status,
   unstage as unstageCmd,
 } from "./git";
@@ -82,6 +86,7 @@ export async function enterChangesMode(): Promise<void> {
   appState.appMode = "changes";
   await loadStatus();
   void loadPendingOp();
+  void loadStashes();
 }
 
 /// Load `git status --porcelain=v2` for the active repo and auto-open the first
@@ -278,6 +283,51 @@ export async function continueOp(): Promise<void> {
   await loadPendingOp();
 }
 
+/// Load the stash list for the source-control repo (shown in the sidebar).
+export async function loadStashes(): Promise<void> {
+  if (!appState.repoPath) {
+    appState.stashes = [];
+    return;
+  }
+  try {
+    appState.stashes = await stashList(changesRepoPath());
+  } catch {
+    appState.stashes = [];
+  }
+}
+
+/// Stash the working tree (including untracked) under an optional message.
+export async function doStashSave(message?: string): Promise<void> {
+  try {
+    await stashSave(changesRepoPath(), message ?? null, true);
+  } catch (e) {
+    appState.error = String(e);
+  }
+  await reloadAfterSync();
+  await loadStashes();
+}
+
+/// Apply (or pop) a stash back onto the working tree.
+export async function doStashApply(index: number, pop: boolean): Promise<void> {
+  try {
+    await stashApply(changesRepoPath(), index, pop);
+  } catch (e) {
+    appState.error = String(e);
+  }
+  await reloadAfterSync();
+  await loadStashes();
+}
+
+/// Drop a stash (no working-tree change).
+export async function doStashDrop(index: number): Promise<void> {
+  try {
+    await stashDrop(changesRepoPath(), index);
+  } catch (e) {
+    appState.error = String(e);
+  }
+  await loadStashes();
+}
+
 export function doFetch(): Promise<void> {
   return runSync(fetchCmd(changesRepoPath()));
 }
@@ -297,6 +347,7 @@ export function doPush(force: boolean): Promise<void> {
 /// and commit box belong to the old workspace.
 export function resetSourceControl(): void {
   appState.repoStatus = null;
+  appState.stashes = [];
   appState.changesRepoIdx = 0;
   appState.changesSide = "unstaged";
   appState.commitSubject = "";

@@ -10,6 +10,7 @@ import type {
   RepoEntry,
   RepoFile,
   RepoStatus,
+  Stash,
   ThemeChoice,
   ViewMode,
   WorkspaceLayout,
@@ -166,6 +167,9 @@ class AppState {
   // In-progress operation that may need resolving: "merge" | "rebase" |
   // "cherry-pick" | "revert" | "none". Drives the conflict banner.
   pendingOp = $state("none");
+  // Stash entries (git stash list) for the source-control repo. Shown in the
+  // refs sidebar. Session-only.
+  stashes = $state<Stash[]>([]);
   // Bumped after network ops so the refs sidebar re-lists (new remotes/branches)
   // without going through a full status reload.
   refsRefresh = $state(0);

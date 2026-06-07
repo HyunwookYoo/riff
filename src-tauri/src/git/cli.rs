@@ -13,7 +13,7 @@ use super::diff;
 use super::uasset;
 use super::{
     Branch, BranchKind, ChangedFile, Commit, DiffMode, FileDiff, FileStatus, GitError, GitLayer,
-    Hunk, RepoStatus, StatusEntry, SubmoduleInfo,
+    Hunk, RepoStatus, Stash, StatusEntry, SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -579,6 +579,24 @@ fn parse_hunks(text: &str) -> Vec<Hunk> {
                 added,
                 removed,
             }
+        })
+        .collect()
+}
+
+/// Parse `git stash list --format=%gd%x1f%s` output: one stash per line, the
+/// `stash@{N}` selector and the subject separated by \x1f.
+fn parse_stash_list(text: &str) -> Vec<Stash> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, '\x1f');
+            let gd = parts.next()?;
+            let message = parts.next().unwrap_or("").to_string();
+            let index = gd
+                .strip_prefix("stash@{")?
+                .strip_suffix('}')?
+                .parse::<u32>()
+                .ok()?;
+            Some(Stash { index, message })
         })
         .collect()
 }
@@ -1625,6 +1643,46 @@ impl GitLayer for GitCli {
         Ok(())
     }
 
+    fn stash_list(&self, path: &Path) -> Result<Vec<Stash>, GitError> {
+        let out = self.run(path, &["stash", "list", "--format=%gd%x1f%s"])?;
+        Ok(parse_stash_list(&String::from_utf8_lossy(&out)))
+    }
+
+    fn stash_save(
+        &self,
+        path: &Path,
+        message: Option<&str>,
+        include_untracked: bool,
+    ) -> Result<(), GitError> {
+        let mut args = vec!["stash", "push"];
+        if include_untracked {
+            args.push("--include-untracked");
+        }
+        if let Some(m) = message {
+            if !m.trim().is_empty() {
+                args.push("-m");
+                args.push(m);
+            }
+        }
+        self.run(path, &args)?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn stash_apply(&self, path: &Path, index: u32, pop: bool) -> Result<(), GitError> {
+        let sel = format!("stash@{{{index}}}");
+        let sub = if pop { "pop" } else { "apply" };
+        self.run(path, &["stash", sub, &sel])?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn stash_drop(&self, path: &Path, index: u32) -> Result<(), GitError> {
+        let sel = format!("stash@{{{index}}}");
+        self.run(path, &["stash", "drop", &sel])?;
+        Ok(())
+    }
+
     fn merge(&self, path: &Path, branch: &str) -> Result<(), GitError> {
         validate_ref(branch)?;
         self.run(path, &["merge", branch])?;
@@ -2522,6 +2580,16 @@ z\n";
         assert_eq!((hunks[0].added, hunks[0].removed), (1, 1));
         assert_eq!(hunks[1].header, "@@ -10,2 +10,3 @@ fn foo()");
         assert_eq!((hunks[1].added, hunks[1].removed), (1, 0));
+    }
+
+    #[test]
+    fn parse_stash_list_basic() {
+        let input = "stash@{0}\u{1f}WIP on main: a1b2 fix\nstash@{1}\u{1f}On dev: wip\n";
+        let s = parse_stash_list(input);
+        assert_eq!(s.len(), 2);
+        assert_eq!((s[0].index, s[0].message.as_str()), (0, "WIP on main: a1b2 fix"));
+        assert_eq!((s[1].index, s[1].message.as_str()), (1, "On dev: wip"));
+        assert!(parse_stash_list("").is_empty());
     }
 
     #[test]

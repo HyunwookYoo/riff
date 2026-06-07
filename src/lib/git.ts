@@ -12,6 +12,7 @@ import type {
   Hunk,
   PersistedState,
   RepoStatus,
+  Stash,
   SubmoduleInfo,
   ThemeChoice,
   WorkspaceLayout,
@@ -179,6 +180,34 @@ export function push(
 /** Merge `branch` into the current branch (`git merge`). */
 export function merge(path: string, branch: string): Promise<void> {
   return invoke("merge", { path, branch });
+}
+
+/** List stash entries (`git stash list`). */
+export function stashList(path: string): Promise<Stash[]> {
+  return invoke("stash_list", { path });
+}
+
+/** Save the working tree to a new stash. */
+export function stashSave(
+  path: string,
+  message: string | null,
+  includeUntracked: boolean,
+): Promise<void> {
+  return invoke("stash_save", { path, message, includeUntracked });
+}
+
+/** Apply `stash@{index}`; `pop` removes it after applying. */
+export function stashApply(
+  path: string,
+  index: number,
+  pop: boolean,
+): Promise<void> {
+  return invoke("stash_apply", { path, index, pop });
+}
+
+/** Drop `stash@{index}`. */
+export function stashDrop(path: string, index: number): Promise<void> {
+  return invoke("stash_drop", { path, index });
 }
 
 /** The in-progress op: "merge" | "rebase" | "cherry-pick" | "revert" | "none". */

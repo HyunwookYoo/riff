@@ -1,7 +1,7 @@
 import { appState } from "./store.svelte";
 import { commitLog } from "./git";
 import { compare } from "./compare";
-import { loadCurrentBranch } from "./sourceControl";
+import { loadCurrentBranch, loadPendingOp, loadStashes } from "./sourceControl";
 import type { Commit } from "./types";
 
 /// Commits fetched per page; "load more" appends another page.
@@ -101,6 +101,8 @@ export async function enterGraphView(): Promise<void> {
     appState.selectedCommitSha = null;
   }
   await enterHistoryMode();
+  void loadPendingOp();
+  void loadStashes();
 }
 
 /// Restore the compare context snapshotted on entering history (branch refs,

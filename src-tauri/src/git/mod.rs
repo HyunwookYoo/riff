@@ -73,6 +73,14 @@ pub struct RepoStatus {
     pub behind: i64,
 }
 
+/// One entry from `git stash list`. `index` is its position (`stash@{index}`);
+/// `message` is the stash subject.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Stash {
+    pub index: u32,
+    pub message: String,
+}
+
 /// One hunk of a file's unified diff, for the Changes screen's per-hunk
 /// stage/unstage controls. `header` is the `@@ -a,b +c,d @@` line (with any
 /// section heading); `added`/`removed` count changed lines for the badge.
@@ -330,6 +338,20 @@ pub trait GitLayer {
     /// Continue the in-progress `op` after conflicts are resolved + staged
     /// (editor suppressed so it can't hang).
     fn op_continue(&self, path: &Path, op: &str) -> Result<(), GitError>;
+    /// List the stash entries (`git stash list`).
+    fn stash_list(&self, path: &Path) -> Result<Vec<Stash>, GitError>;
+    /// Save the working tree to a new stash (`git stash push`). `message` sets a
+    /// custom subject; `include_untracked` also stashes untracked files.
+    fn stash_save(
+        &self,
+        path: &Path,
+        message: Option<&str>,
+        include_untracked: bool,
+    ) -> Result<(), GitError>;
+    /// Apply `stash@{index}`; `pop` removes it after applying.
+    fn stash_apply(&self, path: &Path, index: u32, pop: bool) -> Result<(), GitError>;
+    /// Drop `stash@{index}`.
+    fn stash_drop(&self, path: &Path, index: u32) -> Result<(), GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.

@@ -11,7 +11,11 @@ import {
 } from "./git";
 import { compare } from "./compare";
 import { resetHistory } from "./commitHistory";
-import { loadCurrentBranch, resetSourceControl } from "./sourceControl";
+import {
+  loadCurrentBranch,
+  loadStashes,
+  resetSourceControl,
+} from "./sourceControl";
 import { clearBlameCache } from "./blameCache";
 import type { Branch, RepoEntry, RepoFile } from "./types";
 
@@ -266,8 +270,9 @@ export async function loadMainRepo(
     // pull from one source regardless of which repo is focused.
     appState.branchesByRepoIdx = { 0: branches };
     appState.recentRepos = recentRepos;
-    // Populate the toolbar branch chip up front (before the user opens Changes).
+    // Populate the toolbar branch chip + stash list up front.
     void loadCurrentBranch();
+    void loadStashes();
     // Working tree mode has no inputs to fill in — load immediately so the
     // user sees their uncommitted changes on repo open.
     if (appState.compareMode === "worktree") {

@@ -133,6 +133,13 @@ export interface Hunk {
   removed: number;
 }
 
+/// One `git stash list` entry. Mirrors Rust `Stash`. `index` is its position
+/// (`stash@{index}`); `message` is the subject.
+export interface Stash {
+  index: number;
+  message: string;
+}
+
 export interface PersistedState {
   recent_repos: string[];
   theme: ThemeChoice;

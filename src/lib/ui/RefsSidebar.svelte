@@ -9,7 +9,13 @@
     setUpstream,
     status,
   } from "$lib/git";
-  import { doMergeBranch, loadCurrentBranch } from "$lib/sourceControl";
+  import {
+    doMergeBranch,
+    doStashApply,
+    doStashDrop,
+    doStashSave,
+    loadCurrentBranch,
+  } from "$lib/sourceControl";
   import RefIcon from "./RefIcon.svelte";
   import type { Branch } from "$lib/types";
 
@@ -398,6 +404,48 @@
         {/each}
       </section>
     {/if}
+
+    <section>
+      <div class="sec-head">
+        <span>Stashes</span>
+        <button
+          type="button"
+          class="new"
+          title="Stash working-tree changes"
+          aria-label="Stash changes"
+          onclick={() => void doStashSave()}
+        >
+          ＋
+        </button>
+      </div>
+      {#each appState.stashes as s (s.index)}
+        <div class="stash">
+          <span class="stash-msg" title={s.message}>{s.message}</span>
+          <div class="stash-actions">
+            <button
+              type="button"
+              title="Pop (apply and drop)"
+              onclick={() => void doStashApply(s.index, true)}>Pop</button
+            >
+            <button
+              type="button"
+              title="Apply (keep the stash)"
+              onclick={() => void doStashApply(s.index, false)}>Apply</button
+            >
+            <button
+              type="button"
+              class="drop"
+              title="Drop"
+              aria-label="Drop stash"
+              onclick={() => void doStashDrop(s.index)}>×</button
+            >
+          </div>
+        </div>
+      {/each}
+      {#if appState.stashes.length === 0}
+        <div class="empty">No stashes</div>
+      {/if}
+    </section>
   </div>
 
   <div
@@ -660,6 +708,50 @@
     padding: 6px 12px;
     color: var(--muted);
     font-size: 0.8em;
+  }
+  .stash {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 0.82em;
+  }
+  .stash:hover {
+    background: var(--hover);
+  }
+  .stash-msg {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono);
+  }
+  .stash-actions {
+    flex: 0 0 auto;
+    display: inline-flex;
+    gap: 3px;
+    opacity: 0;
+  }
+  .stash:hover .stash-actions {
+    opacity: 1;
+  }
+  .stash-actions button {
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--input-bg);
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 1px 6px;
+    line-height: 1.4;
+  }
+  .stash-actions button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .stash-actions .drop:hover {
+    border-color: var(--error-fg, #f85149);
+    color: var(--error-fg, #f85149);
   }
   .resizer {
     position: absolute;

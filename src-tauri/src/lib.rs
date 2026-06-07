@@ -6,7 +6,7 @@ use std::path::Path;
 
 use git::{
     Blame, Branch, ChangedFile, Commit, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer,
-    Hunk, RepoStatus, SubmoduleInfo,
+    Hunk, RepoStatus, Stash, SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
@@ -352,6 +352,36 @@ fn merge(state: tauri::State<GitCli>, path: String, branch: String) -> Result<()
 }
 
 #[tauri::command]
+fn stash_list(state: tauri::State<GitCli>, path: String) -> Result<Vec<Stash>, GitError> {
+    state.stash_list(Path::new(&path))
+}
+
+#[tauri::command]
+fn stash_save(
+    state: tauri::State<GitCli>,
+    path: String,
+    message: Option<String>,
+    include_untracked: bool,
+) -> Result<(), GitError> {
+    state.stash_save(Path::new(&path), message.as_deref(), include_untracked)
+}
+
+#[tauri::command]
+fn stash_apply(
+    state: tauri::State<GitCli>,
+    path: String,
+    index: u32,
+    pop: bool,
+) -> Result<(), GitError> {
+    state.stash_apply(Path::new(&path), index, pop)
+}
+
+#[tauri::command]
+fn stash_drop(state: tauri::State<GitCli>, path: String, index: u32) -> Result<(), GitError> {
+    state.stash_drop(Path::new(&path), index)
+}
+
+#[tauri::command]
 fn pending_op(state: tauri::State<GitCli>, path: String) -> Result<String, GitError> {
     state.pending_op(Path::new(&path))
 }
@@ -560,6 +590,10 @@ pub fn run() {
             pending_op,
             op_abort,
             op_continue,
+            stash_list,
+            stash_save,
+            stash_apply,
+            stash_drop,
             blame_file,
             list_repo_files,
             read_repo_file,
