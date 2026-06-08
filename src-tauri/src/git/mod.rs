@@ -202,30 +202,6 @@ pub trait GitLayer {
         force: bool,
         uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError>;
-    /// Stream the working tree changes vs HEAD: tracked diff via
-    /// `git diff HEAD --name-status -z --find-renames` plus untracked files
-    /// via `git ls-files --others --exclude-standard -z` (emitted as `Added`).
-    /// Implementations may run the two passes concurrently — hence the `Send`
-    /// bound on `on_file`. Cancellation of any previously in-flight invocation
-    /// is the implementation's responsibility.
-    fn worktree_files(
-        &self,
-        path: &Path,
-        ignore_whitespace: bool,
-        on_file: &mut (dyn FnMut(ChangedFile) -> Result<(), GitError> + Send),
-    ) -> Result<(), GitError>;
-    /// Per-file diff for working tree mode. Old side reads from HEAD blob
-    /// (skipped when `status == Added`); new side reads from the filesystem
-    /// (skipped when `status == Deleted`).
-    fn worktree_file_diff(
-        &self,
-        path: &Path,
-        file_path: &str,
-        old_path: Option<&str>,
-        status: FileStatus,
-        force: bool,
-        uasset_cfg: &uasset::Config,
-    ) -> Result<FileDiff, GitError>;
     /// Per-file diff for the source-control Changes screen, one *side* at a
     /// time. `staged` selects the HEAD↔index gap (old = `HEAD:path`, new = the
     /// index blob); otherwise the index↔worktree gap (old = index blob, new =

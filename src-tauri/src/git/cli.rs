@@ -65,11 +65,6 @@ struct Session {
     /// The currently in-flight `git diff` child for streaming diff_files.
     /// Replacing this slot is how we cancel an outstanding stream.
     diff_files_child: Option<Arc<Mutex<Option<Child>>>>,
-    /// Same pattern as `diff_files_child`, but for `worktree_files`. The
-    /// two passes (diff HEAD + ls-files untracked) now run concurrently so
-    /// this holds *both* in-flight children — a Vec lets a newer call kill
-    /// the whole batch with one slot swap.
-    worktree_files_child: Option<Arc<Mutex<Vec<Child>>>>,
     /// Same pattern as the other `*_child` slots, but for in-flight blame.
     blame_child: Option<Arc<Mutex<Option<Child>>>>,
 }
@@ -81,15 +76,9 @@ struct Session {
 /// the cache + watcher per path means each repo's cache survives unrelated
 /// session swaps and stays valid until the watcher signals a real change.
 struct WorktreeCacheEntry {
-    cache: Option<WorktreeCache>,
-    /// Set to true by the notify watcher whenever something inside the
-    /// watched path (or its `.git/`) changes. Read by the worktree_files
-    /// cache fast path.
-    cache_invalid: Arc<AtomicBool>,
     /// Cache for `list_repo_files` — the blame picker's file union — keyed
-    /// on the same FS watcher. Has its own invalid flag so worktree_files
-    /// and list_repo_files don't clobber each other when both pre-clear the
-    /// flag at scan start.
+    /// on the FS watcher. Set stale by the watcher whenever anything inside
+    /// the watched path (or its `.git/`) changes.
     repo_files: Option<Vec<String>>,
     repo_files_invalid: Arc<AtomicBool>,
     /// FS watcher. Held alive by the HashMap entry; dropped when the entry
@@ -97,11 +86,6 @@ struct WorktreeCacheEntry {
     /// directly — its existence is what keeps the underlying ReadDirectory
     /// loop running.
     _watcher: Option<RecommendedWatcher>,
-}
-
-struct WorktreeCache {
-    files: Vec<ChangedFile>,
-    ignore_whitespace: bool,
 }
 
 /// A long-running `git cat-file` process kept around for a single repo.
@@ -231,12 +215,6 @@ impl Drop for Session {
                 }
             }
         }
-        if let Some(arc) = self.worktree_files_child.take() {
-            for mut child in std::mem::take(&mut *arc.lock().unwrap()) {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-        }
     }
 }
 
@@ -250,7 +228,6 @@ impl Session {
             batch,
             merge_base_cache: HashMap::new(),
             diff_files_child: None,
-            worktree_files_child: None,
             blame_child: None,
         })
     }
@@ -956,288 +933,6 @@ impl GitLayer for GitCli {
                 &old_asset,
                 old_uexp.as_deref(),
                 &new_asset,
-                new_uexp.as_deref(),
-                old_size.unwrap_or(0),
-                new_size.unwrap_or(0),
-            ));
-        }
-
-        if is_binary(&old_bytes) || is_binary(&new_bytes) {
-            return Ok(FileDiff::Binary {
-                old_size: old_size.unwrap_or(0),
-                new_size: new_size.unwrap_or(0),
-                note: None,
-            });
-        }
-
-        let old_content = diff::normalize_eol(&String::from_utf8_lossy(&old_bytes));
-        let new_content = diff::normalize_eol(&String::from_utf8_lossy(&new_bytes));
-        let changes = diff::compute_changes(&old_content, &new_content);
-        Ok(FileDiff::Text {
-            old_content,
-            new_content,
-            old_size: old_size.unwrap_or(0),
-            new_size: new_size.unwrap_or(0),
-            derived_label: None,
-            ue_version: None,
-            changes,
-        })
-    }
-
-    fn worktree_files(
-        &self,
-        path: &Path,
-        ignore_whitespace: bool,
-        on_file: &mut (dyn FnMut(ChangedFile) -> Result<(), GitError> + Send),
-    ) -> Result<(), GitError> {
-        // Fast path: serve from the per-path cache if the FS watcher hasn't
-        // seen any change since last scan AND the `-w` flag matches.
-        // Replaying is O(files) memcpy — for a typical worktree this
-        // finishes inside one animation frame, eliminating the per-toggle
-        // git startup cost. We hold the lock only long enough to clone the
-        // Vec so other repos' caches stay accessible.
-        let cached: Option<Vec<ChangedFile>> = {
-            let guard = self.worktree_caches.lock().unwrap();
-            guard.get(path).and_then(|entry| {
-                if entry.cache_invalid.load(Ordering::Relaxed) {
-                    return None;
-                }
-                let cache = entry.cache.as_ref()?;
-                if cache.ignore_whitespace != ignore_whitespace {
-                    return None;
-                }
-                Some(cache.files.clone())
-            })
-        };
-        if let Some(files) = cached {
-            for f in files {
-                on_file(f)?;
-            }
-            return Ok(());
-        }
-        // Ensure a watcher exists for this path before we run the scan, so
-        // any FS changes that land between now and our cache write are
-        // recorded. Idempotent — repeated calls for the same path reuse the
-        // existing entry. Pre-clear the flag so we can detect events that
-        // fire *during* the scan: if it's still false at the end, our
-        // accumulated data is consistent with the FS state we just observed
-        // and is safe to cache; if it flipped to true mid-scan, something
-        // changed under us and we leave it stale.
-        let flags = self.ensure_worktree_watcher(path);
-        flags.worktree.store(false, Ordering::Relaxed);
-
-        // Single kill slot holding *both* in-flight children. A newer call
-        // swaps the slot to cancel us — Drop / clear_worktree_slot_if_ours
-        // kills whichever children we left behind.
-        let kill_slot: Arc<Mutex<Vec<Child>>> = Arc::new(Mutex::new(Vec::new()));
-        {
-            let mut guard = self.session.lock().unwrap();
-            ensure_session(&mut guard, path)?;
-            let session = guard.as_mut().expect("ensure_session populated guard");
-            let prev = session.worktree_files_child.replace(kill_slot.clone());
-            drop(guard);
-            if let Some(prev) = prev {
-                for mut c in std::mem::take(&mut *prev.lock().unwrap()) {
-                    let _ = c.kill();
-                    let _ = c.wait();
-                }
-            }
-        }
-
-        // Spawn both passes concurrently. Phase 1: tracked changes via
-        // `git diff HEAD --name-status -z --find-renames [-w]`. Phase 2:
-        // untracked files via `git ls-files --others --exclude-standard -z`.
-        // Running them in parallel halves the wall-clock latency that the
-        // user feels when toggling into worktree mode (two cold git starts
-        // collapse into one).
-        let mut diff_args = vec!["diff", "HEAD", "--name-status", "-z", "--find-renames"];
-        if ignore_whitespace {
-            diff_args.push("-w");
-        }
-        let mut diff_child = git_command()
-            .arg("-C")
-            .arg(path)
-            .args(&diff_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let diff_stdout = diff_child
-            .stdout
-            .take()
-            .ok_or_else(|| GitError::CommandFailed("worktree diff stdout not piped".into()))?;
-
-        let mut ls_child = git_command()
-            .arg("-C")
-            .arg(path)
-            .args(["ls-files", "--others", "--exclude-standard", "-z"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let ls_stdout = ls_child
-            .stdout
-            .take()
-            .ok_or_else(|| GitError::CommandFailed("ls-files stdout not piped".into()))?;
-
-        kill_slot.lock().unwrap().extend([diff_child, ls_child]);
-
-        // Accumulate every emitted file so we can populate the cache once
-        // the scan finishes. The user's `on_file` callback also receives
-        // each file as before — caching is a side-channel.
-        let accumulator: Mutex<Vec<ChangedFile>> = Mutex::new(Vec::new());
-        // Two threads, one per stream, share `on_file` through a Mutex so
-        // emitted files don't interleave mid-record. Using std::thread::scope
-        // means we can borrow `on_file` directly without 'static or Arc.
-        let on_file_mutex: Mutex<&mut (dyn FnMut(ChangedFile) -> Result<(), GitError> + Send)> =
-            Mutex::new(on_file);
-
-        let (parse_diff, parse_ls) = std::thread::scope(|s| {
-            let diff_handle = s.spawn(|| {
-                let mut reader = BufReader::new(diff_stdout);
-                stream_parse_name_status(&mut reader, &mut |f| {
-                    accumulator.lock().unwrap().push(f.clone());
-                    on_file_mutex.lock().unwrap()(f)
-                })
-            });
-            let ls_handle = s.spawn(|| {
-                let mut reader = BufReader::new(ls_stdout);
-                stream_parse_ls_files(&mut reader, &mut |f| {
-                    accumulator.lock().unwrap().push(f.clone());
-                    on_file_mutex.lock().unwrap()(f)
-                })
-            });
-            (
-                diff_handle.join().unwrap_or_else(|_| {
-                    Err(GitError::CommandFailed("worktree diff thread panicked".into()))
-                }),
-                ls_handle.join().unwrap_or_else(|_| {
-                    Err(GitError::CommandFailed("worktree ls-files thread panicked".into()))
-                }),
-            )
-        });
-
-        // Reap whichever children are still ours. A newer call may have
-        // already drained the slot and killed them — that's fine.
-        for mut c in std::mem::take(&mut *kill_slot.lock().unwrap()) {
-            let _ = c.wait();
-        }
-        clear_worktree_slot_if_ours(&self.session, &kill_slot);
-
-        // Surface the diff error first if both failed — the tracked diff is
-        // the primary signal; an ls-files failure on top is usually noise.
-        let result = parse_diff.and(parse_ls);
-
-        // Cache the successful result. We only cache if BOTH passes ran
-        // cleanly AND no FS events fired between the pre-scan flag clear
-        // and now — otherwise the accumulated Vec doesn't match the latest
-        // FS state and we'd serve stale data on the next toggle.
-        if result.is_ok() && !flags.worktree.load(Ordering::Relaxed) {
-            let mut guard = self.worktree_caches.lock().unwrap();
-            if let Some(entry) = guard.get_mut(path) {
-                entry.cache = Some(WorktreeCache {
-                    files: accumulator.into_inner().unwrap(),
-                    ignore_whitespace,
-                });
-            }
-        }
-
-        result
-    }
-
-    fn worktree_file_diff(
-        &self,
-        path: &Path,
-        file_path: &str,
-        old_path: Option<&str>,
-        status: FileStatus,
-        force: bool,
-        uasset_cfg: &uasset::Config,
-    ) -> Result<FileDiff, GitError> {
-        validate_path(file_path)?;
-        if let Some(p) = old_path {
-            validate_path(p)?;
-        }
-
-        let mut guard = self.session.lock().unwrap();
-        ensure_session(&mut guard, path)?;
-        let session = guard.as_mut().expect("ensure_session populated guard");
-
-        let needs_head = !matches!(status, FileStatus::Added);
-        let needs_fs = !matches!(status, FileStatus::Deleted);
-
-        let head_target = old_path.unwrap_or(file_path);
-        let head_spec = format!("HEAD:{head_target}");
-        let old_size = if needs_head {
-            match session.batch_check.query_size(&head_spec)? {
-                BatchResponse::Found { size } => Some(size),
-                BatchResponse::Missing => None,
-            }
-        } else {
-            None
-        };
-
-        let fs_path = path.join(file_path);
-        let new_size = if needs_fs {
-            match fs::metadata(&fs_path) {
-                Ok(m) => Some(m.len()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(e) => return Err(GitError::Io(e)),
-            }
-        } else {
-            None
-        };
-
-        let derive_uasset = uasset_cfg.enabled && uasset::is_uasset_path(file_path);
-        let max_side = old_size.unwrap_or(0).max(new_size.unwrap_or(0));
-        if !force && !derive_uasset && max_side > LARGE_FILE_BYTES {
-            return Ok(FileDiff::TooLarge {
-                old_size: old_size.unwrap_or(0),
-                new_size: new_size.unwrap_or(0),
-            });
-        }
-        if derive_uasset && !force && max_side > uasset::UASSET_MAX_BYTES {
-            return Ok(FileDiff::Binary {
-                old_size: old_size.unwrap_or(0),
-                new_size: new_size.unwrap_or(0),
-                note: Some("Unreal asset header too large to preview.".to_string()),
-            });
-        }
-
-        let old_bytes = if old_size.is_some() {
-            match session.batch.query_content(&head_spec)? {
-                BatchContent::Found { bytes } => bytes,
-                BatchContent::Missing => Vec::new(),
-            }
-        } else {
-            Vec::new()
-        };
-        let new_bytes = if new_size.is_some() {
-            match fs::read(&fs_path) {
-                Ok(b) => b,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-                Err(e) => return Err(GitError::Io(e)),
-            }
-        } else {
-            Vec::new()
-        };
-
-        if derive_uasset {
-            // Old side from HEAD through the smudge filter (LFS → real bytes);
-            // new side is the working-tree file, already smudged on disk.
-            let old_asset = if needs_head {
-                cat_file_filtered(path, &head_spec).unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            let old_uexp = uasset::sibling_uexp(head_target)
-                .and_then(|sp| cat_file_filtered(path, &format!("HEAD:{sp}")));
-            let new_uexp =
-                uasset::sibling_uexp(file_path).and_then(|sp| fs::read(path.join(sp)).ok());
-            return Ok(uasset::derive_filediff(
-                uasset_cfg,
-                file_path,
-                &old_asset,
-                old_uexp.as_deref(),
-                &new_bytes,
                 new_uexp.as_deref(),
                 old_size.unwrap_or(0),
                 new_size.unwrap_or(0),
@@ -2034,59 +1729,33 @@ fn spawn_worktree_watcher(
     Ok(watcher)
 }
 
-/// References to the invalidation flags for a single watched path. Both
-/// caches share the same watcher but each tracks its own staleness so a
-/// concurrent scan in one cache can pre-clear its flag without disturbing
-/// the other.
+/// Reference to the invalidation flag for a single watched path's
+/// `list_repo_files` cache. The scan body pre-clears it so it can detect
+/// events that fire mid-scan.
 struct WatcherFlags {
-    worktree: Arc<AtomicBool>,
     repo_files: Arc<AtomicBool>,
 }
 
 impl GitCli {
-    /// Get-or-create the cache entry for `path` and return references to
-    /// its invalidation flags. Lazily spawns the FS watcher on first call;
-    /// subsequent calls reuse the existing one. The returned Arcs let the
-    /// scan body track "did anything change while we were scanning?"
+    /// Get-or-create the cache entry for `path` and return a reference to
+    /// its `repo_files` invalidation flag. Lazily spawns the FS watcher on
+    /// first call; subsequent calls reuse the existing one. The returned Arc
+    /// lets the scan body track "did anything change while we were scanning?"
     /// without re-locking the map.
     fn ensure_worktree_watcher(&self, path: &Path) -> WatcherFlags {
         let mut guard = self.worktree_caches.lock().unwrap();
         let entry = guard.entry(path.to_path_buf()).or_insert_with(|| {
-            let cache_invalid = Arc::new(AtomicBool::new(true));
             let repo_files_invalid = Arc::new(AtomicBool::new(true));
-            let watcher = spawn_worktree_watcher(
-                path,
-                vec![cache_invalid.clone(), repo_files_invalid.clone()],
-            )
-            .ok();
+            let watcher =
+                spawn_worktree_watcher(path, vec![repo_files_invalid.clone()]).ok();
             WorktreeCacheEntry {
-                cache: None,
-                cache_invalid,
                 repo_files: None,
                 repo_files_invalid,
                 _watcher: watcher,
             }
         });
         WatcherFlags {
-            worktree: entry.cache_invalid.clone(),
             repo_files: entry.repo_files_invalid.clone(),
-        }
-    }
-}
-
-fn clear_worktree_slot_if_ours(
-    session: &Mutex<Option<Session>>,
-    kill_slot: &Arc<Mutex<Vec<Child>>>,
-) {
-    let mut guard = session.lock().unwrap();
-    if let Some(s) = guard.as_mut() {
-        let still_ours = s
-            .worktree_files_child
-            .as_ref()
-            .map(|cur| Arc::ptr_eq(cur, kill_slot))
-            .unwrap_or(false);
-        if still_ours {
-            s.worktree_files_child = None;
         }
     }
 }
@@ -2163,27 +1832,6 @@ fn bytes_to_string(b: &[u8]) -> Result<String, GitError> {
     std::str::from_utf8(b)
         .map(|s| s.to_string())
         .map_err(|_| GitError::Parse("path not utf-8".into()))
-}
-
-/// Streaming parser for `git ls-files -z` output. Each NUL-terminated path is
-/// emitted as a `ChangedFile { status: Added, old_path: None }`.
-fn stream_parse_ls_files<R: BufRead>(
-    reader: &mut R,
-    emit: &mut dyn FnMut(ChangedFile) -> Result<(), GitError>,
-) -> Result<(), GitError> {
-    loop {
-        let Some(p) = read_nul_field(reader)? else {
-            return Ok(());
-        };
-        if p.is_empty() {
-            continue;
-        }
-        emit(ChangedFile {
-            path: bytes_to_string(&p)?,
-            old_path: None,
-            status: FileStatus::Added,
-        })?;
-    }
 }
 
 /// Parse `git ls-files -s -z` output. Each NUL-terminated record is
@@ -2329,36 +1977,6 @@ mod tests {
         assert!(validate_path("-rf").is_err());
         assert!(validate_path("src/main.rs").is_ok());
         assert!(validate_path("a b/c.txt").is_ok());
-    }
-
-    #[test]
-    fn parse_ls_files_untracked() {
-        let input = b"src/new.rs\0docs/draft.md\0";
-        let mut out = Vec::new();
-        let mut reader = Cursor::new(input);
-        stream_parse_ls_files(&mut reader, &mut |f| {
-            out.push(f);
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(out.len(), 2);
-        assert_eq!(out[0].path, "src/new.rs");
-        assert_eq!(out[0].status, FileStatus::Added);
-        assert!(out[0].old_path.is_none());
-        assert_eq!(out[1].path, "docs/draft.md");
-        assert_eq!(out[1].status, FileStatus::Added);
-    }
-
-    #[test]
-    fn parse_ls_files_empty() {
-        let mut out = Vec::new();
-        let mut reader = Cursor::new(b"");
-        stream_parse_ls_files(&mut reader, &mut |f| {
-            out.push(f);
-            Ok(())
-        })
-        .unwrap();
-        assert!(out.is_empty());
     }
 
     #[test]

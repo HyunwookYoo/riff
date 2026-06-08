@@ -122,42 +122,6 @@ fn bundled_uassetgui_path(app: &tauri::AppHandle) -> Option<String> {
 }
 
 #[tauri::command]
-fn worktree_files(
-    state: tauri::State<GitCli>,
-    path: String,
-    ignore_whitespace: bool,
-    on_file: tauri::ipc::Channel<ChangedFile>,
-) -> Result<(), GitError> {
-    state.worktree_files(Path::new(&path), ignore_whitespace, &mut |f| {
-        on_file
-            .send(f)
-            .map_err(|e| GitError::CommandFailed(e.to_string()))
-    })
-}
-
-#[tauri::command]
-fn worktree_file_diff(
-    app: tauri::AppHandle,
-    state: tauri::State<GitCli>,
-    path: String,
-    file_path: String,
-    old_path: Option<String>,
-    status: FileStatus,
-    force: bool,
-    ue_version: Option<String>,
-) -> Result<FileDiff, GitError> {
-    let cfg = uasset_config(&app, ue_version);
-    state.worktree_file_diff(
-        Path::new(&path),
-        &file_path,
-        old_path.as_deref(),
-        status,
-        force,
-        &cfg,
-    )
-}
-
-#[tauri::command]
 fn changes_file_diff(
     app: tauri::AppHandle,
     state: tauri::State<GitCli>,
@@ -568,8 +532,6 @@ pub fn run() {
             status,
             diff_files,
             file_diff,
-            worktree_files,
-            worktree_file_diff,
             changes_file_diff,
             stage,
             unstage,
