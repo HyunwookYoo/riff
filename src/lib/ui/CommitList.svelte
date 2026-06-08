@@ -17,6 +17,7 @@
   } from "$lib/git";
   import type { Commit } from "$lib/types";
   import { computeGraph } from "./graph";
+  import RefIcon from "./RefIcon.svelte";
 
   let busy = $state(false);
   // Run a commit-graph action, then reload the log + current-branch chip.
@@ -139,12 +140,75 @@
     return `${Math.floor(d / 86400 / 365)}y ago`;
   }
 
-  // Strip the "HEAD -> " prefix and "tag: " marker for a compact chip label.
-  function refLabel(ref: string): { text: string; kind: string } {
-    if (ref.startsWith("HEAD -> ")) return { text: ref.slice(8), kind: "head" };
-    if (ref === "HEAD") return { text: "HEAD", kind: "head" };
-    if (ref.startsWith("tag: ")) return { text: ref.slice(5), kind: "tag" };
-    return { text: ref, kind: "branch" };
+  type RefBadge = {
+    kind: "head" | "branch" | "remote" | "tag";
+    text: string; // display label
+    checkout: string; // name handed to confirmCheckoutRef (DWIMs remotes)
+    remotes: string[]; // remotes also pointing here — non-empty ⇒ show cloud
+  };
+
+  // Collapse a commit's raw decorations into display badges. A local branch
+  // and its remote-tracking branch(es) at the *same* commit fold into one
+  // badge marked with a cloud icon, instead of two independent chips. The
+  // remote default symref (origin/HEAD) is dropped as clutter. Local vs
+  // remote is resolved from the repo's ref list (kind), so a slash in a local
+  // name isn't mistaken for a remote prefix.
+  function mergeRefs(refs: string[]): RefBadge[] {
+    const refList = appState.branchesByRepoIdx[appState.changesRepoIdx] ?? [];
+    const kindOf = (name: string) =>
+      refList.find((r) => r.name === name)?.kind;
+
+    const locals = new Map<string, { kind: "head" | "branch"; remotes: string[] }>();
+    const remotes: { short: string; remote: string; full: string }[] = [];
+    const tags: string[] = [];
+
+    for (const ref of refs) {
+      if (ref.startsWith("tag: ")) {
+        tags.push(ref.slice(5));
+        continue;
+      }
+      if (ref === "HEAD") {
+        // Detached HEAD — a standalone marker, nothing to fold.
+        locals.set("HEAD", { kind: "head", remotes: [] });
+        continue;
+      }
+      let name = ref;
+      let isHead = false;
+      if (ref.startsWith("HEAD -> ")) {
+        name = ref.slice(8);
+        isHead = true;
+      }
+      const kind = kindOf(name);
+      // Drop the remote's default symref (e.g. origin/HEAD); keep real locals.
+      if (kind !== "local" && /^[^/]+\/HEAD$/.test(name)) continue;
+
+      if (kind === "remote") {
+        const short = name.replace(/^[^/]+\//, "");
+        const remote = name.slice(0, name.length - short.length - 1);
+        remotes.push({ short, remote, full: name });
+      } else {
+        const g = locals.get(name) ?? { kind: "branch" as const, remotes: [] };
+        if (isHead) g.kind = "head";
+        locals.set(name, g);
+      }
+    }
+
+    // Fold each remote into its same-named local; unmatched remotes stand alone.
+    const orphans: typeof remotes = [];
+    for (const r of remotes) {
+      const g = locals.get(r.short);
+      if (g) g.remotes.push(r.remote);
+      else orphans.push(r);
+    }
+
+    const badges: RefBadge[] = [];
+    for (const [name, g] of locals)
+      badges.push({ kind: g.kind, text: name, checkout: name, remotes: g.remotes });
+    for (const r of orphans)
+      badges.push({ kind: "remote", text: r.full, checkout: r.full, remotes: [] });
+    for (const t of tags)
+      badges.push({ kind: "tag", text: t, checkout: "", remotes: [] });
+    return badges;
   }
 
   function onScroll(e: Event) {
@@ -216,33 +280,61 @@
         </svg>
         <span class="info">
           <span class="line1">
-            {#each commit.refs as ref}
-              {@const r = refLabel(ref)}
-              {#if r.kind === "branch"}
+            {#each mergeRefs(commit.refs) as b}
+              {#if b.kind === "branch"}
                 <span
                   class="ref branch"
                   style={row ? `--c: ${color(row.color)}` : ""}
                   role="button"
                   tabindex="0"
-                  title="Double-click to checkout {r.text}"
+                  title={b.remotes.length
+                    ? `${b.text} · local + ${b.remotes.join(", ")} — double-click to checkout`
+                    : `Double-click to checkout ${b.text}`}
                   onclick={(e) => e.stopPropagation()}
                   ondblclick={(e) => {
                     e.stopPropagation();
-                    confirmCheckoutRef(r.text);
+                    confirmCheckoutRef(b.checkout);
                   }}
                   onkeydown={(e) => {
                     if (e.key === "Enter") {
                       e.stopPropagation();
-                      confirmCheckoutRef(r.text);
+                      confirmCheckoutRef(b.checkout);
                     }
-                  }}>{r.text}</span
+                  }}
+                  >{b.text}{#if b.remotes.length}<RefIcon kind="remote" />{/if}</span
                 >
-              {:else if r.kind === "head"}
-                <span class="ref head">
-                  <span class="check" aria-hidden="true">✓</span>{r.text}
+              {:else if b.kind === "head"}
+                <span
+                  class="ref head"
+                  title={b.remotes.length
+                    ? `${b.text} · local + ${b.remotes.join(", ")}`
+                    : b.text}
+                >
+                  <span class="check" aria-hidden="true">✓</span>{b.text}{#if b.remotes.length}<RefIcon
+                      kind="remote"
+                    />{/if}
                 </span>
+              {:else if b.kind === "remote"}
+                <span
+                  class="ref remote"
+                  style={row ? `--c: ${color(row.color)}` : ""}
+                  role="button"
+                  tabindex="0"
+                  title="Remote branch — double-click to checkout {b.text}"
+                  onclick={(e) => e.stopPropagation()}
+                  ondblclick={(e) => {
+                    e.stopPropagation();
+                    confirmCheckoutRef(b.checkout);
+                  }}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter") {
+                      e.stopPropagation();
+                      confirmCheckoutRef(b.checkout);
+                    }
+                  }}><RefIcon kind="remote" />{b.text}</span
+                >
               {:else}
-                <span class="ref tag">{r.text}</span>
+                <span class="ref tag">{b.text}</span>
               {/if}
             {/each}
             <span class="summary">{commit.summary}</span>
@@ -441,12 +533,20 @@
   }
   .ref {
     flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
     font-size: 0.85em;
     padding: 0 5px;
     border-radius: 8px;
     line-height: 1.5;
     font-family: var(--mono);
     border: 1px solid var(--border);
+  }
+  /* The cloud glyph marking a local branch that's also at its remote. */
+  .ref :global(svg.i) {
+    width: 12px;
+    height: 12px;
+    margin-left: 3px;
   }
   .ref.head {
     background: var(--accent);
@@ -467,6 +567,19 @@
     color: var(--c, inherit);
     border-color: var(--c, var(--border));
     font-weight: 600;
+  }
+  /* Remote-only branch (no local at this commit): same lane color as a local
+   * branch, with the cloud icon preceding the name to mark it as remote. */
+  .ref.remote {
+    background: transparent;
+    color: var(--c, inherit);
+    border-color: var(--c, var(--border));
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .ref.remote :global(svg.i) {
+    margin-left: 0;
+    margin-right: 3px;
   }
   .empty {
     padding: 16px;
