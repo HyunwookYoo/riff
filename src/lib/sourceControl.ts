@@ -203,9 +203,11 @@ export async function loadCurrentBranch(): Promise<void> {
   }
 }
 
-/// Reload the UI after a network op: status (Working) or current-branch +
-/// commits (Graph), and nudge the refs sidebar to re-list.
-async function reloadAfterSync(): Promise<void> {
+/// Refresh whichever source-control view is active — Changes status, or the
+/// graph + branch chip — and nudge the refs sidebar to re-list. Used after
+/// in-app network ops *and* on window-focus regain, so changes made elsewhere
+/// (e.g. an external `git checkout`) show up without a manual reload.
+export async function refreshActiveView(): Promise<void> {
   if (appState.appMode === "changes") {
     await loadStatus();
   } else {
@@ -227,7 +229,7 @@ async function runSync(op: Promise<void>): Promise<void> {
     appState.error = String(e);
   } finally {
     appState.syncing = false;
-    await reloadAfterSync();
+    await refreshActiveView();
     await loadPendingOp();
   }
 }
@@ -253,7 +255,7 @@ export async function doMergeBranch(branch: string): Promise<void> {
   } catch (e) {
     appState.error = String(e);
   }
-  await reloadAfterSync();
+  await refreshActiveView();
   await loadPendingOp();
 }
 
@@ -266,7 +268,7 @@ export async function abortOp(): Promise<void> {
   } catch (e) {
     appState.error = String(e);
   }
-  await reloadAfterSync();
+  await refreshActiveView();
   await loadPendingOp();
 }
 
@@ -279,7 +281,7 @@ export async function continueOp(): Promise<void> {
   } catch (e) {
     appState.error = String(e);
   }
-  await reloadAfterSync();
+  await refreshActiveView();
   await loadPendingOp();
 }
 
@@ -303,7 +305,7 @@ export async function doStashSave(message?: string): Promise<void> {
   } catch (e) {
     appState.error = String(e);
   }
-  await reloadAfterSync();
+  await refreshActiveView();
   await loadStashes();
 }
 
@@ -314,7 +316,7 @@ export async function doStashApply(index: number, pop: boolean): Promise<void> {
   } catch (e) {
     appState.error = String(e);
   }
-  await reloadAfterSync();
+  await refreshActiveView();
   await loadStashes();
 }
 

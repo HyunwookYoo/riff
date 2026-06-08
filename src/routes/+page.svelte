@@ -22,7 +22,11 @@
   import { loadMainRepo } from "$lib/workspace";
   import { cycleAppMode } from "$lib/compare";
   import { setHistoryRepo } from "$lib/commitHistory";
-  import { loadStatus, setChangesRepo } from "$lib/sourceControl";
+  import {
+    loadStatus,
+    refreshActiveView,
+    setChangesRepo,
+  } from "$lib/sourceControl";
   import { popHistory, redoHistory } from "$lib/history";
   import { exitFocus } from "$lib/focus";
   import { cycleTab, selectTab } from "$lib/tabs";
@@ -127,10 +131,12 @@
     }
   });
 
-  // Auto-refresh the Changes status when the window regains focus after a real
-  // blur — the user probably just edited files in another window. Silent.
-  // WebView2 on Windows emits blur/focus *pairs* during window drag/resize
-  // (<100ms); a 500ms threshold ignores those and only reacts to real switches.
+  // Auto-refresh the active source-control view when the window regains focus
+  // after a real blur — the user may have edited files or run git (e.g. an
+  // external checkout) in another window. Covers Changes (status) and Graph
+  // (branch chip + commits + refs). Silent. WebView2 on Windows emits
+  // blur/focus *pairs* during window drag/resize (<100ms); a 500ms threshold
+  // ignores those and only reacts to real switches.
   onMount(() => {
     let unlisten: (() => void) | undefined;
     let blurredAt = 0;
@@ -145,8 +151,10 @@
         const duration = Date.now() - blurredAt;
         blurredAt = 0;
         if (duration < MIN_BLUR_MS) return;
-        if (appState.appMode !== "changes" || !appState.repoPath) return;
-        void loadStatus();
+        if (!appState.repoPath) return;
+        if (appState.appMode === "changes" || appState.appMode === "history") {
+          void refreshActiveView();
+        }
       })
       .then((u) => (unlisten = u));
     return () => unlisten?.();
