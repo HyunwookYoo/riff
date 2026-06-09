@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { abortOp, continueOp } from "$lib/sourceControl";
+  import { abortOp, continueOp, conflictCount } from "$lib/sourceControl";
 
   const label = $derived(
     (
@@ -13,11 +13,7 @@
     )[appState.pendingOp] ?? "",
   );
   // Unmerged (conflicted) files, when the status is loaded for this repo.
-  const unresolved = $derived(
-    (appState.repoStatus?.entries ?? []).filter(
-      (e) => e.index_status === "U" || e.worktree_status === "U",
-    ).length,
-  );
+  const unresolved = $derived(conflictCount());
 </script>
 
 {#if appState.pendingOp !== "none"}

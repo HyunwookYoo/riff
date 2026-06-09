@@ -5,8 +5,8 @@ pub mod store;
 use std::path::Path;
 
 use git::{
-    Blame, Branch, ChangedFile, Commit, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer,
-    Hunk, RepoStatus, Stash, SubmoduleInfo,
+    Blame, Branch, ChangedFile, Commit, ConflictVersions, DiffMode, FileDiff, FileStatus, GitCli,
+    GitError, GitLayer, Hunk, RepoStatus, Stash, SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
@@ -235,12 +235,50 @@ fn force_checkout(
 }
 
 #[tauri::command]
+fn fast_forward(
+    state: tauri::State<GitCli>,
+    path: String,
+    ref_name: String,
+) -> Result<(), GitError> {
+    state.fast_forward(Path::new(&path), &ref_name)
+}
+
+#[tauri::command]
 fn stash_checkout(
     state: tauri::State<GitCli>,
     path: String,
     ref_name: String,
 ) -> Result<(), GitError> {
     state.stash_checkout(Path::new(&path), &ref_name)
+}
+
+#[tauri::command]
+fn conflict_versions(
+    state: tauri::State<GitCli>,
+    path: String,
+    file_path: String,
+) -> Result<ConflictVersions, GitError> {
+    state.conflict_versions(Path::new(&path), &file_path)
+}
+
+#[tauri::command]
+fn resolve_conflict(
+    state: tauri::State<GitCli>,
+    path: String,
+    file_path: String,
+    content: String,
+) -> Result<(), GitError> {
+    state.resolve_conflict(Path::new(&path), &file_path, &content)
+}
+
+#[tauri::command]
+fn checkout_conflict_side(
+    state: tauri::State<GitCli>,
+    path: String,
+    file_path: String,
+    side: String,
+) -> Result<(), GitError> {
+    state.checkout_conflict_side(Path::new(&path), &file_path, &side)
 }
 
 #[tauri::command]
@@ -565,7 +603,11 @@ pub fn run() {
             create_branch,
             checkout,
             force_checkout,
+            fast_forward,
             stash_checkout,
+            conflict_versions,
+            resolve_conflict,
+            checkout_conflict_side,
             rename_branch,
             delete_branch,
             set_upstream,

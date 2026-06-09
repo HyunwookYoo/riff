@@ -126,6 +126,25 @@ export async function loadBranchesFor(idx: number): Promise<Branch[]> {
   }
 }
 
+/// Force-refetch branches for `idx`, replacing any cached list. `loadBranchesFor`
+/// is a write-once cache, so call this after a branch-mutating op (create /
+/// checkout / delete / rename / fast-forward) so consumers that read
+/// `branchesByRepoIdx` — the graph badge merge, checkout DWIM, branch pickers —
+/// see fresh local/remote refs instead of stale ones.
+export async function reloadBranchesFor(idx: number): Promise<void> {
+  const repo = appState.repos[idx];
+  if (!repo) return;
+  try {
+    const branches = await listRefs(repo.path);
+    appState.branchesByRepoIdx = {
+      ...appState.branchesByRepoIdx,
+      [idx]: branches,
+    };
+  } catch (e) {
+    console.warn(`listRefs failed for ${repo.path}:`, e);
+  }
+}
+
 /**
  * Resolve a repo-qualified file target (§13.3 #23) to the absolute repo
  * path needed by `blameFile` / `readRepoFile`. Returns null when the

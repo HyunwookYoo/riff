@@ -15,6 +15,7 @@
     revert,
   } from "$lib/git";
   import { requestCheckout } from "$lib/checkout";
+  import { reloadBranchesFor } from "$lib/workspace";
   import type { Commit } from "$lib/types";
   import { computeGraph } from "./graph";
   import RefIcon from "./RefIcon.svelte";
@@ -39,6 +40,9 @@
     await loadCommits();
     void loadCurrentBranch();
     void loadPendingOp();
+    // Refresh the local/remote ref list so badge merging (mergeRefs) reflects
+    // the new/moved/deleted branch instead of the write-once cache.
+    void reloadBranchesFor(appState.changesRepoIdx);
   }
 
   // Right-click context menu on a commit.
@@ -83,7 +87,9 @@
     const refs = appState.branchesByRepoIdx[appState.changesRepoIdx] ?? [];
     const isRemote = refs.find((r) => r.name === name)?.kind === "remote";
     const target = isRemote ? name.replace(/^[^/]+\//, "") : name;
-    void requestCheckout(changesRepoPath(), target);
+    // Remote double-click: after landing on the local tracker, fast-forward it
+    // to the remote so a behind local catches up to what was double-clicked.
+    void requestCheckout(changesRepoPath(), target, isRemote ? name : undefined);
   }
   function doReset(sha: string, mode: "soft" | "mixed" | "hard") {
     if (

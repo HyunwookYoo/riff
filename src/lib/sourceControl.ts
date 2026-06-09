@@ -17,7 +17,7 @@ import {
   status,
   unstage as unstageCmd,
 } from "./git";
-import { loadCommits } from "./commitHistory";
+import { loadCommits, invalidateGraph } from "./commitHistory";
 import type { ChangedFile, FileStatus, StatusEntry } from "./types";
 
 /// Map a porcelain-v2 status code (X or Y for one side) to a `FileStatus` for
@@ -76,6 +76,21 @@ export function isStaged(e: StatusEntry): boolean {
 }
 export function isUnstaged(e: StatusEntry): boolean {
   return e.worktree_status !== ".";
+}
+
+// Porcelain v2 unmerged XY codes (both sides come from a `u` record).
+const CONFLICT_CODES = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
+function entryConflicted(e: StatusEntry): boolean {
+  return CONFLICT_CODES.has(e.index_status + e.worktree_status);
+}
+/// True when `path` is an unmerged (conflicted) entry in the current status.
+export function isPathConflicted(path: string): boolean {
+  const e = appState.repoStatus?.entries.find((x) => x.path === path);
+  return !!e && entryConflicted(e);
+}
+/// Count of unresolved (conflicted) files in the current status.
+export function conflictCount(): number {
+  return (appState.repoStatus?.entries ?? []).filter(entryConflicted).length;
 }
 
 export async function enterChangesMode(): Promise<void> {
@@ -210,6 +225,9 @@ export async function loadCurrentBranch(): Promise<void> {
 export async function refreshActiveView(): Promise<void> {
   if (appState.appMode === "changes") {
     await loadStatus();
+    // A HEAD-moving op (checkout, sync) ran while in Changes — drop the graph's
+    // cached log so it reflects the new HEAD on next visit.
+    invalidateGraph();
   } else {
     await loadCurrentBranch();
     if (appState.appMode === "history") await loadCommits();
@@ -408,6 +426,8 @@ export async function doCommit(): Promise<void> {
     appState.commitBody = "";
     appState.commitAmend = false;
     appState.commitCoauthors = [];
+    // HEAD moved — drop the graph's cached log so it refetches on next visit.
+    invalidateGraph();
   } catch (e) {
     appState.error = String(e);
   } finally {

@@ -27,7 +27,7 @@
     busy = true;
     err = null;
     try {
-      await runCheckout(p.repoPath, p.target, strategy);
+      await runCheckout(p.repoPath, p.target, strategy, p.ffTo);
       appState.checkoutPrompt = null;
     } catch (e) {
       // Keep the dialog open so the user can pick another strategy (e.g.

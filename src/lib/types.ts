@@ -125,6 +125,17 @@ export interface RepoStatus {
   behind: number;
 }
 
+/// The three index stages of a conflicted file plus the working-tree copy
+/// (with `<<<<<<<` markers). Mirrors Rust `ConflictVersions`. Absent stages
+/// come back as empty strings; `binary` flags a non-text merge.
+export interface ConflictVersions {
+  base: string;
+  ours: string;
+  theirs: string;
+  merged: string;
+  binary: boolean;
+}
+
 /// One hunk of a file's unified diff, for per-hunk stage/unstage. Mirrors Rust
 /// `Hunk`. `header` is the `@@ -a,b +c,d @@` line; `added`/`removed` are line
 /// counts for the badge. The hunk's index in the returned array identifies it

@@ -12,6 +12,7 @@
   import RepoTabs from "$lib/ui/RepoTabs.svelte";
   import RefsSidebar from "$lib/ui/RefsSidebar.svelte";
   import ConflictBanner from "$lib/ui/ConflictBanner.svelte";
+  import ConflictView from "$lib/ui/ConflictView.svelte";
   import CheckoutDialog from "$lib/ui/CheckoutDialog.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
@@ -24,6 +25,7 @@
   import { cycleAppMode } from "$lib/compare";
   import { setHistoryRepo } from "$lib/commitHistory";
   import {
+    isPathConflicted,
     loadStatus,
     refreshActiveView,
     setChangesRepo,
@@ -413,19 +415,26 @@
     {#snippet diffPane()}
       <main class="diff">
         {#if appState.selectedFile}
+          {@const conflicted =
+            appState.appMode === "changes" &&
+            isPathConflicted(appState.selectedFile.path)}
           <header>
             <span class="badge" data-status={appState.selectedFile.status}>
-              {appState.selectedFile.status}
+              {conflicted ? "conflict" : appState.selectedFile.status}
             </span>
             <span class="path">{appState.selectedFile.path}</span>
             {#if appState.selectedFile.old_path}
               <span class="from">(from {appState.selectedFile.old_path})</span>
             {/if}
           </header>
-          {#if appState.appMode === "changes"}
-            <HunkBar />
+          {#if conflicted}
+            <ConflictView />
+          {:else}
+            {#if appState.appMode === "changes"}
+              <HunkBar />
+            {/if}
+            <DiffView />
           {/if}
-          <DiffView />
         {:else if appState.loadingRepo}
           <div class="placeholder">Opening repository…</div>
         {:else if appState.loadingFiles}

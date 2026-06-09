@@ -12,8 +12,8 @@ use super::blame::{parse_porcelain, Blame};
 use super::diff;
 use super::uasset;
 use super::{
-    Branch, BranchKind, ChangedFile, Commit, DiffMode, FileDiff, FileStatus, GitError, GitLayer,
-    Hunk, RepoStatus, Stash, StatusEntry, SubmoduleInfo,
+    Branch, BranchKind, ChangedFile, Commit, ConflictVersions, DiffMode, FileDiff, FileStatus,
+    GitError, GitLayer, Hunk, RepoStatus, Stash, StatusEntry, SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -1306,6 +1306,13 @@ impl GitLayer for GitCli {
         Ok(())
     }
 
+    fn fast_forward(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
+        validate_ref(ref_name)?;
+        self.run(path, &["merge", "--ff-only", ref_name])?;
+        self.drop_session();
+        Ok(())
+    }
+
     fn stash_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
         validate_ref(ref_name)?;
         // Stash everything (tracked + untracked) so the tree is clean to switch.
@@ -1323,6 +1330,64 @@ impl GitLayer for GitCli {
         let reapply = self.run(path, &["stash", "pop"]);
         self.drop_session();
         reapply.map(|_| ())
+    }
+
+    fn conflict_versions(
+        &self,
+        path: &Path,
+        file_path: &str,
+    ) -> Result<ConflictVersions, GitError> {
+        validate_path(file_path)?;
+        // Index stages: 1 = merge base, 2 = ours (HEAD), 3 = theirs. Any stage
+        // can be absent (e.g. add/add has no base, delete/modify drops a side);
+        // cat-file fails for those and we surface an empty string.
+        let stage = |n: u8| {
+            cat_file_oneshot(path, &format!(":{n}:{file_path}"))
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default()
+        };
+        // The working copy carries git's <<<<<<< markers — the editor's starting
+        // point. Read raw so binary detection sees real bytes.
+        let merged_bytes = fs::read(path.join(file_path)).unwrap_or_default();
+        Ok(ConflictVersions {
+            base: stage(1),
+            ours: stage(2),
+            theirs: stage(3),
+            binary: is_binary(&merged_bytes),
+            merged: String::from_utf8_lossy(&merged_bytes).into_owned(),
+        })
+    }
+
+    fn resolve_conflict(
+        &self,
+        path: &Path,
+        file_path: &str,
+        content: &str,
+    ) -> Result<(), GitError> {
+        validate_path(file_path)?;
+        fs::write(path.join(file_path), content).map_err(GitError::Io)?;
+        // Staging a path with no conflict markers marks it resolved for the op.
+        self.run(path, &["add", "--", file_path])?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn checkout_conflict_side(
+        &self,
+        path: &Path,
+        file_path: &str,
+        side: &str,
+    ) -> Result<(), GitError> {
+        validate_path(file_path)?;
+        let flag = match side {
+            "ours" => "--ours",
+            "theirs" => "--theirs",
+            _ => return Err(GitError::CommandFailed("invalid conflict side".into())),
+        };
+        self.run(path, &["checkout", flag, "--", file_path])?;
+        self.run(path, &["add", "--", file_path])?;
+        self.drop_session();
+        Ok(())
     }
 
     fn rename_branch(&self, path: &Path, old: &str, new: &str) -> Result<(), GitError> {

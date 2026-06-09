@@ -91,6 +91,21 @@ pub struct Hunk {
     pub removed: u32,
 }
 
+/// The three index stages of a conflicted file (`base` = `:1:`, `ours` = `:2:`,
+/// `theirs` = `:3:`) plus the working-tree copy (`merged`, which carries git's
+/// `<<<<<<<` conflict markers). A stage absent from the index (e.g. add/add has
+/// no base) comes back empty. `binary` is true when the working copy looks
+/// binary — the 3-way text editor doesn't apply, so the UI offers a side-level
+/// take-ours / take-theirs instead.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictVersions {
+    pub base: String,
+    pub ours: String,
+    pub theirs: String,
+    pub merged: String,
+    pub binary: bool,
+}
+
 /// Submodule entry as declared in `.gitmodules`. `initialized` is true when
 /// the submodule's working tree has been checked out (i.e. `<repo>/<path>/.git`
 /// exists). Used by the multi-root workspace (§13) to populate the repo list.
@@ -270,10 +285,38 @@ pub trait GitLayer {
     /// Switch the working tree to `ref_name` (`git checkout`). Carries
     /// uncommitted changes over when they don't conflict; errors otherwise.
     fn checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
+    /// Fast-forward the current branch to `ref_name` (`git merge --ff-only`).
+    /// Used after checking out a remote branch's local tracker so the local
+    /// catches up to the remote. Errors (without moving HEAD) if the histories
+    /// have diverged.
+    fn fast_forward(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
     /// Switch to `ref_name`, discarding local modifications to tracked files
     /// (`git checkout -f`). Untracked files are left in place. Destructive —
     /// callers must obtain explicit user confirmation first.
     fn force_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
+    /// Read the three index stages (base `:1:`, ours `:2:`, theirs `:3:`) of a
+    /// conflicted file plus its working-tree copy (with conflict markers).
+    fn conflict_versions(
+        &self,
+        path: &Path,
+        file_path: &str,
+    ) -> Result<ConflictVersions, GitError>;
+    /// Write `content` as the resolved file and stage it (`git add`), clearing
+    /// the conflict for that path.
+    fn resolve_conflict(
+        &self,
+        path: &Path,
+        file_path: &str,
+        content: &str,
+    ) -> Result<(), GitError>;
+    /// Resolve a conflict by taking one whole side — `git checkout --ours` or
+    /// `--theirs` — then stage it. `side` is "ours" or "theirs".
+    fn checkout_conflict_side(
+        &self,
+        path: &Path,
+        file_path: &str,
+        side: &str,
+    ) -> Result<(), GitError>;
     /// Stash local changes (tracked + untracked), switch to `ref_name`, then
     /// reapply the stash (`git stash pop`). If reapplying conflicts, git keeps
     /// the stash and writes conflict markers; the error propagates so the UI

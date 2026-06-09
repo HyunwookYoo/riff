@@ -180,6 +180,16 @@ export async function loadMoreCommits(): Promise<void> {
   await loadCommits({ more: true });
 }
 
+/// Drop the cached commit log so the next graph entry refetches it. The graph
+/// reuses its cache (enterHistoryMode skips reload when commits are present), so
+/// after a HEAD-moving op done outside history mode — commit, checkout, sync —
+/// the cache must be cleared or the graph would miss the new state.
+export function invalidateGraph(): void {
+  appState.commits = [];
+  appState.selectedCommitSha = null;
+  appState.commitsHasMore = false;
+}
+
 /// Show one commit's diff: `parent..commit` as a two-dot branch compare, so the
 /// existing FileList/DiffView pipeline renders it unchanged. Merge commits diff
 /// against their first parent; root commits against the empty tree.

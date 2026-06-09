@@ -4,6 +4,7 @@ import type {
   Branch,
   ChangedFile,
   Commit,
+  ConflictVersions,
   DiffMode,
   FileDiff,
   FileStatus,
@@ -103,6 +104,37 @@ export function forceCheckout(path: string, refName: string): Promise<void> {
 /** Stash local changes, switch to `refName`, then reapply the stash. */
 export function stashCheckout(path: string, refName: string): Promise<void> {
   return invoke("stash_checkout", { path, refName });
+}
+
+/** Fast-forward the current branch to `refName` (`git merge --ff-only`). */
+export function fastForward(path: string, refName: string): Promise<void> {
+  return invoke("fast_forward", { path, refName });
+}
+
+/** Read a conflicted file's base/ours/theirs index stages + working copy. */
+export function conflictVersions(
+  path: string,
+  filePath: string,
+): Promise<ConflictVersions> {
+  return invoke("conflict_versions", { path, filePath });
+}
+
+/** Write `content` as the resolved file and stage it (clears the conflict). */
+export function resolveConflict(
+  path: string,
+  filePath: string,
+  content: string,
+): Promise<void> {
+  return invoke("resolve_conflict", { path, filePath, content });
+}
+
+/** Resolve a conflict by taking one whole side (`git checkout --ours|--theirs`). */
+export function checkoutConflictSide(
+  path: string,
+  filePath: string,
+  side: "ours" | "theirs",
+): Promise<void> {
+  return invoke("checkout_conflict_side", { path, filePath, side });
 }
 
 /** Rename a branch. */

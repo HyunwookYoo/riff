@@ -62,6 +62,12 @@
       const [refs, st] = await Promise.all([listRefs(p), status(p)]);
       if (s !== session) return;
       branches = refs;
+      // Keep the shared cache (used by the graph badge merge + checkout DWIM)
+      // in sync with this freshly-listed set.
+      appState.branchesByRepoIdx = {
+        ...appState.branchesByRepoIdx,
+        [repoIdx]: refs,
+      };
       current = st.branch;
       ahead = st.ahead;
       behind = st.behind;
@@ -91,13 +97,18 @@
     // A remote branch DWIMs into a tracking local of the same short name.
     return b.kind === "remote" ? b.name.replace(/^[^/]+\//, "") : b.name;
   }
+  // For a remote branch, fast-forward the local tracker to it after switching
+  // so a behind local catches up to the remote that was clicked.
+  function checkoutFf(b: Branch): string | undefined {
+    return b.kind === "remote" ? b.name : undefined;
+  }
   function doCheckout(b: Branch) {
-    void requestCheckout(repoPath, checkoutTarget(b));
+    void requestCheckout(repoPath, checkoutTarget(b), checkoutFf(b));
   }
   // A clean tree switches immediately; a dirty tree opens the CheckoutDialog
   // (stash / bring / discard) so local changes don't block the switch.
   function confirmCheckout(b: Branch) {
-    void requestCheckout(repoPath, checkoutTarget(b));
+    void requestCheckout(repoPath, checkoutTarget(b), checkoutFf(b));
   }
 
   async function doDelete(b: Branch) {
