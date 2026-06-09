@@ -53,6 +53,10 @@ export function setFileViewMode(mode: FileViewMode): Promise<void> {
   return invoke("set_file_view_mode", { mode });
 }
 
+export function setGraphRowHeight(height: number): Promise<void> {
+  return invoke("set_graph_row_height", { height });
+}
+
 export function setParseUnrealAssets(enabled: boolean): Promise<void> {
   return invoke("set_parse_unreal_assets", { enabled });
 }

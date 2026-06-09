@@ -106,12 +106,15 @@
     void act(rebase(changesRepoPath(), sha));
   }
 
-  // Lane gutter geometry. Row height is fixed so the SVG graph segments line
-  // up across rows (a lane at column j exits one row's bottom edge exactly
-  // where it enters the next row's top edge).
-  const ROW_H = 40;
+  // Lane gutter geometry. Row height is user-adjustable (graph density); the
+  // SVG graph segments line up across rows because every row shares the same
+  // ROW_H (a lane at column j exits one row's bottom edge exactly where it
+  // enters the next row's top edge). The node radius scales with the row so it
+  // stays visually proportionate at every density; the row's font-size scales
+  // too (see the inline style on `.row`), so all the em-based text grows with it.
+  const ROW_H = $derived(appState.graphRowHeight);
   const LANE_W = 14;
-  const NODE_R = 4;
+  const NODE_R = $derived(Math.max(3, Math.round(appState.graphRowHeight * 0.1)));
   // Lane colors, cycled by column. CSS vars so they track the theme palette,
   // with hard fallbacks for the few that may be unset.
   const COLORS = [
@@ -250,7 +253,7 @@
         type="button"
         class="row"
         class:selected={commit.sha === appState.selectedCommitSha}
-        style="height: {ROW_H}px;"
+        style="height: {ROW_H}px; font-size: {(ROW_H / 40).toFixed(3)}em;"
         onclick={() => openCommit(commit)}
         oncontextmenu={(e) => openMenu(e, commit)}
         title={commit.summary}

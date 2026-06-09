@@ -482,6 +482,11 @@ fn set_file_view_mode(app: tauri::AppHandle, mode: String) -> Result<(), StoreEr
 }
 
 #[tauri::command]
+fn set_graph_row_height(app: tauri::AppHandle, height: u32) -> Result<(), StoreError> {
+    store::set_graph_row_height(&app, height)
+}
+
+#[tauri::command]
 fn set_parse_unreal_assets(app: tauri::AppHandle, enabled: bool) -> Result<(), StoreError> {
     store::set_parse_unreal_assets(&app, enabled)
 }
@@ -574,6 +579,7 @@ pub fn run() {
             set_workspace_layout,
             set_blame_picker_width,
             set_file_view_mode,
+            set_graph_row_height,
             set_parse_unreal_assets,
             set_uassetgui_path,
             set_ue_version_for_repo,

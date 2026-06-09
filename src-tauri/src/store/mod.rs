@@ -42,6 +42,10 @@ pub struct PersistedState {
     /// of those two at write time.
     #[serde(default = "default_file_view_mode")]
     pub file_view_mode: String,
+    /// Commit-graph row height in px — a density control for the graph view.
+    /// Global, clamped at write time to [MIN_GRAPH_ROW_H, MAX_GRAPH_ROW_H].
+    #[serde(default = "default_graph_row_height")]
+    pub graph_row_height: u32,
     /// Master toggle for deriving Unreal asset (.uasset/.umap) property
     /// previews. Defaults on.
     #[serde(default = "default_true")]
@@ -59,6 +63,8 @@ pub struct PersistedState {
 
 const MIN_PICKER_WIDTH: u32 = 200;
 const MAX_PICKER_WIDTH: u32 = 600;
+const MIN_GRAPH_ROW_H: u32 = 28;
+const MAX_GRAPH_ROW_H: u32 = 72;
 
 fn default_theme() -> String {
     "system".into()
@@ -84,6 +90,10 @@ fn default_file_view_mode() -> String {
     "tree".into()
 }
 
+fn default_graph_row_height() -> u32 {
+    40
+}
+
 fn default_true() -> bool {
     true
 }
@@ -99,6 +109,7 @@ impl Default for PersistedState {
             workspace_layout: default_workspace_layout(),
             blame_picker_width: default_blame_picker_width(),
             file_view_mode: default_file_view_mode(),
+            graph_row_height: default_graph_row_height(),
             parse_unreal_assets: default_true(),
             uassetgui_path: None,
             ue_version_by_repo: HashMap::new(),
@@ -206,6 +217,12 @@ pub fn set_file_view_mode(app: &AppHandle, mode: String) -> Result<(), StoreErro
         "flat" => "flat".into(),
         _ => "tree".into(),
     };
+    save(app, &state)
+}
+
+pub fn set_graph_row_height(app: &AppHandle, height: u32) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    state.graph_row_height = height.clamp(MIN_GRAPH_ROW_H, MAX_GRAPH_ROW_H);
     save(app, &state)
 }
 

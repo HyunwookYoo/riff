@@ -98,6 +98,10 @@ class AppState {
   // PersistedState.blame_picker_width on load; written back (debounced) on
   // drag-handle release.
   blamePickerWidth = $state<number>(300);
+  // Commit-graph row height (px). A density control for the graph view.
+  // Mirrored from PersistedState.graph_row_height on load; written back when
+  // the user picks a size. Global.
+  graphRowHeight = $state<number>(40);
   // Unreal asset preview (§ uasset). Master toggle, global UAssetGUI.exe path,
   // and per-repo UE version map. Mirrored from PersistedState on load; written
   // back via git.ts setters.

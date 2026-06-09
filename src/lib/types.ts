@@ -157,6 +157,8 @@ export interface PersistedState {
   blame_picker_width: number;
   /// File list rendering mode (flat vs tree). Global. Defaults to "tree".
   file_view_mode: FileViewMode;
+  /// Commit-graph row height (px). Clamped 28-72 on the backend; defaults to 40.
+  graph_row_height: number;
   /// Master toggle for deriving Unreal asset (.uasset/.umap) previews.
   parse_unreal_assets: boolean;
   /// Absolute path to UAssetGUI.exe (global). null/empty disables previews.

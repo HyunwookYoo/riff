@@ -11,7 +11,22 @@
   import { enterChangesMode } from "$lib/sourceControl";
   import { loadBranchesFor } from "$lib/workspace";
   import { chooseTheme } from "$lib/theme";
+  import { setGraphRowHeight } from "$lib/git";
   import type { ThemeChoice } from "$lib/types";
+
+  // Graph density presets (row height in px). Persisted via setGraphRowHeight.
+  const rowSizeOptions = [
+    { value: "32", label: "Compact" },
+    { value: "40", label: "Normal" },
+    { value: "52", label: "Comfortable" },
+    { value: "64", label: "Spacious" },
+  ];
+  function changeRowSize(v: string) {
+    const h = parseInt(v, 10);
+    if (!Number.isFinite(h)) return;
+    appState.graphRowHeight = h;
+    setGraphRowHeight(h).catch(() => {});
+  }
   import { loadMainRepo } from "$lib/workspace";
   import BranchModeFields from "./BranchModeFields.svelte";
   import BranchPicker from "./BranchPicker.svelte";
@@ -136,6 +151,23 @@
       onchange={setHistoryRef}
       title="Limit the graph to one branch / tag / commit (empty = all branches)"
     />
+    {#if appState.historyRef}
+      <button
+        type="button"
+        class="reset-ref"
+        onclick={() => setHistoryRef("")}
+        title="Show all branches"
+      >
+        ✕ All
+      </button>
+    {/if}
+    <span class="hist-label">Rows</span>
+    <Dropdown
+      title="Graph row height"
+      value={String(appState.graphRowHeight)}
+      options={rowSizeOptions}
+      onchange={changeRowSize}
+    />
   {/if}
 
   {#if appState.appMode === "compare"}
@@ -230,6 +262,16 @@
   .hist-label {
     font-size: 0.85em;
     color: var(--muted);
+  }
+  .reset-ref {
+    font-size: 0.8em;
+    padding: 3px 8px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .reset-ref:hover {
+    color: inherit;
+    background: var(--hover);
   }
   .check {
     display: inline-flex;
