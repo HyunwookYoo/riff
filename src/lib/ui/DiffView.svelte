@@ -29,6 +29,19 @@
   // (rapid j/k, worktree-refresh swap, theme/mode changes).
   let loadSession = 0;
 
+  // VS Code-style responsive diff: side-by-side needs horizontal room, so when
+  // the diff pane is narrower than this (e.g. the graph mode's left detail
+  // column) it falls back to the unified inline view regardless of the user's
+  // Split/Unified preference. The preference re-applies once the pane is
+  // widened past the breakpoint. 0 = not yet measured → honor the preference.
+  const NARROW_BREAKPOINT = 720;
+  let containerW = $state(0);
+  const effectiveViewMode = $derived(
+    containerW > 0 && containerW < NARROW_BREAKPOINT
+      ? "unified"
+      : appState.viewMode,
+  );
+
   const langOptions = $derived([
     {
       value: "",
@@ -80,7 +93,7 @@
   // compare mode changes.
   $effect(() => {
     const file = appState.selectedFile;
-    const mode = appState.viewMode;
+    const mode = effectiveViewMode;
     const theme = appState.effectiveTheme;
     const ov = langOverride;
     const cm = appState.compareMode;
@@ -229,7 +242,7 @@
         : [];
     const diffConfig = { override: () => changes.slice() };
 
-    if (appState.viewMode === "side-by-side") {
+    if (effectiveViewMode === "side-by-side") {
       mergeView = new MergeView({
         a: {
           doc: oldText,
@@ -301,7 +314,7 @@
   }
 </script>
 
-<div class="diffview">
+<div class="diffview" bind:clientWidth={containerW}>
   <div class="toolbar">
     <div class="meta">
       {#if isDerived}
@@ -344,15 +357,20 @@
       </div>
       <button
         type="button"
-        class:active={appState.viewMode === "side-by-side"}
+        class:active={effectiveViewMode === "side-by-side"}
         onclick={() => (appState.viewMode = "side-by-side")}
+        title={appState.viewMode === "side-by-side" &&
+        effectiveViewMode === "unified"
+          ? "Inline shown — panel too narrow for side-by-side"
+          : "Side-by-side"}
       >
         Split
       </button>
       <button
         type="button"
-        class:active={appState.viewMode === "unified"}
+        class:active={effectiveViewMode === "unified"}
         onclick={() => (appState.viewMode = "unified")}
+        title="Unified inline"
       >
         Unified
       </button>
