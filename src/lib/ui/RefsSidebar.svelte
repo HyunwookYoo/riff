@@ -1,7 +1,6 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import {
-    checkout,
     createBranch,
     deleteBranch,
     listRefs,
@@ -16,6 +15,7 @@
     doStashSave,
     loadCurrentBranch,
   } from "$lib/sourceControl";
+  import { requestCheckout } from "$lib/checkout";
   import RefIcon from "./RefIcon.svelte";
   import type { Branch } from "$lib/types";
 
@@ -92,15 +92,12 @@
     return b.kind === "remote" ? b.name.replace(/^[^/]+\//, "") : b.name;
   }
   function doCheckout(b: Branch) {
-    void run(checkout(repoPath, checkoutTarget(b)));
+    void requestCheckout(repoPath, checkoutTarget(b));
   }
-  // Double-click is easy to trigger, so confirm before switching the tree.
+  // A clean tree switches immediately; a dirty tree opens the CheckoutDialog
+  // (stash / bring / discard) so local changes don't block the switch.
   function confirmCheckout(b: Branch) {
-    const target = checkoutTarget(b);
-    if (!confirm(`Check out '${target}'? This switches your working tree.`)) {
-      return;
-    }
-    void run(checkout(repoPath, target));
+    void requestCheckout(repoPath, checkoutTarget(b));
   }
 
   async function doDelete(b: Branch) {

@@ -7,7 +7,6 @@
     loadPendingOp,
   } from "$lib/sourceControl";
   import {
-    checkout,
     cherryPick,
     createBranch,
     createTag,
@@ -15,6 +14,7 @@
     reset,
     revert,
   } from "$lib/git";
+  import { requestCheckout } from "$lib/checkout";
   import type { Commit } from "$lib/types";
   import { computeGraph } from "./graph";
   import RefIcon from "./RefIcon.svelte";
@@ -71,21 +71,19 @@
   }
 
   function doCheckout(sha: string) {
-    void act(checkout(changesRepoPath(), sha));
+    void requestCheckout(changesRepoPath(), sha);
   }
-  // Double-click a branch label in the graph to check it out (with confirm).
-  // A remote-tracking label (origin/x) DWIMs into a local branch of the same
-  // short name — checking out "origin/x" verbatim would detach HEAD. Local
-  // branches (even "feature/foo") are checked out as-is; the kind comes from
-  // the repo's ref list so a slash in a local name isn't mis-stripped.
+  // Double-click a branch label in the graph to check it out. A clean tree
+  // switches immediately; a dirty tree opens the CheckoutDialog (stash / bring
+  // / discard). A remote-tracking label (origin/x) DWIMs into a local branch of
+  // the same short name — checking out "origin/x" verbatim would detach HEAD.
+  // Local branches (even "feature/foo") are checked out as-is; the kind comes
+  // from the repo's ref list so a slash in a local name isn't mis-stripped.
   function confirmCheckoutRef(name: string) {
     const refs = appState.branchesByRepoIdx[appState.changesRepoIdx] ?? [];
     const isRemote = refs.find((r) => r.name === name)?.kind === "remote";
     const target = isRemote ? name.replace(/^[^/]+\//, "") : name;
-    if (!confirm(`Check out '${target}'? This switches your working tree.`)) {
-      return;
-    }
-    void act(checkout(changesRepoPath(), target));
+    void requestCheckout(changesRepoPath(), target);
   }
   function doReset(sha: string, mode: "soft" | "mixed" | "hard") {
     if (

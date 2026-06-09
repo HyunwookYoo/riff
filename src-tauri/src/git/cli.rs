@@ -1299,6 +1299,32 @@ impl GitLayer for GitCli {
         Ok(())
     }
 
+    fn force_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
+        validate_ref(ref_name)?;
+        self.run(path, &["checkout", "-f", ref_name])?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn stash_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
+        validate_ref(ref_name)?;
+        // Stash everything (tracked + untracked) so the tree is clean to switch.
+        let msg = format!("riff: auto-stash before checkout {ref_name}");
+        self.run(path, &["stash", "push", "--include-untracked", "-m", &msg])?;
+        // Switch. If it fails, restore the stash before surfacing the error so
+        // the user's changes aren't left stranded on the stash stack.
+        if let Err(e) = self.run(path, &["checkout", ref_name]) {
+            let _ = self.run(path, &["stash", "pop"]);
+            self.drop_session();
+            return Err(e);
+        }
+        // Reapply. On conflict `git stash pop` exits non-zero but keeps the
+        // stash and writes conflict markers — propagate so the UI can report it.
+        let reapply = self.run(path, &["stash", "pop"]);
+        self.drop_session();
+        reapply.map(|_| ())
+    }
+
     fn rename_branch(&self, path: &Path, old: &str, new: &str) -> Result<(), GitError> {
         validate_ref(old)?;
         validate_ref(new)?;

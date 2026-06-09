@@ -124,6 +124,10 @@ class AppState {
   // The graph itself takes the remaining (majority) width. Drag-resizable,
   // session-only.
   graphDetailWidth = $state(460);
+  // Pending "switch with local changes" prompt. Set when a checkout is
+  // requested on a dirty working tree; the CheckoutDialog reads it to offer
+  // stash / bring / discard. null = no prompt open. Session-only.
+  checkoutPrompt = $state<{ repoPath: string; target: string } | null>(null);
   // The user's compare context, snapshotted when entering history mode (which
   // reuses start/target + per-repo overrides + focus to render parent..commit)
   // and restored when returning to compare — so peeking at history doesn't

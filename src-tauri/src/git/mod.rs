@@ -267,8 +267,18 @@ pub trait GitLayer {
         start_point: Option<&str>,
         checkout: bool,
     ) -> Result<(), GitError>;
-    /// Switch the working tree to `ref_name` (`git checkout`).
+    /// Switch the working tree to `ref_name` (`git checkout`). Carries
+    /// uncommitted changes over when they don't conflict; errors otherwise.
     fn checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
+    /// Switch to `ref_name`, discarding local modifications to tracked files
+    /// (`git checkout -f`). Untracked files are left in place. Destructive —
+    /// callers must obtain explicit user confirmation first.
+    fn force_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
+    /// Stash local changes (tracked + untracked), switch to `ref_name`, then
+    /// reapply the stash (`git stash pop`). If reapplying conflicts, git keeps
+    /// the stash and writes conflict markers; the error propagates so the UI
+    /// can report it. If the switch itself fails, the stash is restored first.
+    fn stash_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
     /// Rename branch `old` to `new` (`git branch -m`).
     fn rename_branch(&self, path: &Path, old: &str, new: &str) -> Result<(), GitError>;
     /// Delete branch `name`. `force` uses `-D` (drops unmerged commits) instead

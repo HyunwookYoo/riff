@@ -12,6 +12,7 @@
   import RepoTabs from "$lib/ui/RepoTabs.svelte";
   import RefsSidebar from "$lib/ui/RefsSidebar.svelte";
   import ConflictBanner from "$lib/ui/ConflictBanner.svelte";
+  import CheckoutDialog from "$lib/ui/CheckoutDialog.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
@@ -193,6 +194,10 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    // The checkout dialog is modal — let it own the keyboard (incl. Esc) and
+    // suppress every global shortcut while it's open.
+    if (appState.checkoutPrompt) return;
+
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName?.toLowerCase();
 
@@ -386,6 +391,7 @@
     </div>
   {/if}
   <ConflictBanner />
+  <CheckoutDialog />
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />
   {/if}

@@ -226,6 +226,24 @@ fn checkout(state: tauri::State<GitCli>, path: String, ref_name: String) -> Resu
 }
 
 #[tauri::command]
+fn force_checkout(
+    state: tauri::State<GitCli>,
+    path: String,
+    ref_name: String,
+) -> Result<(), GitError> {
+    state.force_checkout(Path::new(&path), &ref_name)
+}
+
+#[tauri::command]
+fn stash_checkout(
+    state: tauri::State<GitCli>,
+    path: String,
+    ref_name: String,
+) -> Result<(), GitError> {
+    state.stash_checkout(Path::new(&path), &ref_name)
+}
+
+#[tauri::command]
 fn rename_branch(
     state: tauri::State<GitCli>,
     path: String,
@@ -546,6 +564,8 @@ pub fn run() {
             apply_hunks,
             create_branch,
             checkout,
+            force_checkout,
+            stash_checkout,
             rename_branch,
             delete_branch,
             set_upstream,

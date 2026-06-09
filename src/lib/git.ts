@@ -94,6 +94,17 @@ export function checkout(path: string, refName: string): Promise<void> {
   return invoke("checkout", { path, refName });
 }
 
+/** Switch to `refName`, discarding local changes to tracked files
+ * (`git checkout -f`). Destructive — confirm with the user first. */
+export function forceCheckout(path: string, refName: string): Promise<void> {
+  return invoke("force_checkout", { path, refName });
+}
+
+/** Stash local changes, switch to `refName`, then reapply the stash. */
+export function stashCheckout(path: string, refName: string): Promise<void> {
+  return invoke("stash_checkout", { path, refName });
+}
+
 /** Rename a branch. */
 export function renameBranch(
   path: string,
