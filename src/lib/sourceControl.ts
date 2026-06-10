@@ -94,6 +94,10 @@ export function conflictCount(): number {
 }
 
 export async function enterChangesMode(): Promise<void> {
+  // Ordinary entry resets the WIP back/forward pair; the special WIP-node and
+  // mouse-forward steps re-arm the relevant flag after calling this.
+  appState.wipReturn = false;
+  appState.wipForward = false;
   // Returning from the graph (history) sub-view: keep the same repo selected.
   if (appState.appMode === "history") {
     appState.changesRepoIdx = appState.historyRepoIdx;

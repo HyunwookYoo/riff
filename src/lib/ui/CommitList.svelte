@@ -3,6 +3,7 @@
   import { openCommit, loadCommits, loadMoreCommits } from "$lib/commitHistory";
   import {
     changesRepoPath,
+    enterChangesMode,
     loadCurrentBranch,
     loadPendingOp,
   } from "$lib/sourceControl";
@@ -131,7 +132,40 @@
   ];
   const color = (i: number) => COLORS[((i % COLORS.length) + COLORS.length) % COLORS.length];
 
-  const layout = $derived(computeGraph(appState.commits));
+  // GitKraken-style WIP node: when the working tree is dirty, inject a synthetic
+  // commit (parent = HEAD) right above the HEAD row. computeGraph then draws its
+  // lane + connector to HEAD for free — no special layout code. Clicking it
+  // jumps to Changes. Only injected when HEAD is in the loaded page.
+  const WIP_SHA = "__wip__";
+  function headSha(commits: Commit[]): string | null {
+    const h = commits.find((c) =>
+      c.refs.some((r) => r === "HEAD" || r.startsWith("HEAD -> ")),
+    );
+    return h?.sha ?? null;
+  }
+  const displayCommits = $derived.by(() => {
+    const base = appState.commits;
+    if (appState.wipCount <= 0) return base;
+    const hSha = headSha(base);
+    if (!hSha) return base;
+    const idx = base.findIndex((c) => c.sha === hSha);
+    if (idx === -1) return base;
+    const n = appState.wipCount;
+    const wip: Commit = {
+      sha: WIP_SHA,
+      short_sha: "WIP",
+      parents: [hSha],
+      author: "",
+      time: base[idx].time,
+      summary: `Uncommitted — ${n} change${n === 1 ? "" : "s"}`,
+      refs: [],
+    };
+    const out = base.slice();
+    out.splice(idx, 0, wip);
+    return out;
+  });
+
+  const layout = $derived(computeGraph(displayCommits));
   const gutterW = $derived(Math.max(1, layout.maxLanes) * LANE_W);
 
   const laneX = (col: number) => col * LANE_W + LANE_W / 2;
@@ -251,16 +285,25 @@
   {:else if appState.commits.length === 0}
     <div class="empty">No commits.</div>
   {:else}
-    {#each appState.commits as commit, i (commit.sha)}
+    {#each displayCommits as commit, i (commit.sha)}
       {@const row = layout.rows[i]}
+      {@const isWip = commit.sha === WIP_SHA}
       <button
         type="button"
         class="row"
         class:selected={commit.sha === appState.selectedCommitSha}
+        class:wip={isWip}
         style="height: {ROW_H}px; font-size: {(ROW_H / 40).toFixed(3)}em;"
-        onclick={() => openCommit(commit)}
-        oncontextmenu={(e) => openMenu(e, commit)}
-        title={commit.summary}
+        onclick={() => {
+          if (isWip) {
+            void enterChangesMode();
+            appState.wipReturn = true;
+          } else {
+            openCommit(commit);
+          }
+        }}
+        oncontextmenu={(e) => !isWip && openMenu(e, commit)}
+        title={isWip ? "Go to uncommitted changes" : commit.summary}
       >
         <svg class="graph" width={gutterW} height={ROW_H} style="flex: 0 0 {gutterW}px;">
           {#each row?.segments ?? [] as seg}
@@ -279,13 +322,19 @@
               cx={laneX(row.col)}
               cy={ROW_H / 2}
               r={NODE_R}
-              fill={color(row.color)}
-              stroke="var(--bg)"
+              fill={isWip ? "var(--bg)" : color(row.color)}
+              stroke={isWip ? color(row.color) : "var(--bg)"}
               stroke-width="1.5"
+              stroke-dasharray={isWip ? "2 2" : null}
             />
           {/if}
         </svg>
         <span class="info">
+          {#if isWip}
+            <span class="line1">
+              <span class="wip-label">{commit.summary}</span>
+            </span>
+          {:else}
           <span class="line1">
             {#each mergeRefs(commit.refs) as b}
               {#if b.kind === "branch"}
@@ -351,6 +400,7 @@
             <span class="author">{commit.author}</span>
             <span class="time">{relTime(commit.time)}</span>
           </span>
+          {/if}
         </span>
       </button>
     {/each}
@@ -488,6 +538,14 @@
   }
   .row:hover {
     background: var(--hover);
+  }
+  .wip-label {
+    font-style: italic;
+    color: var(--accent);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .row.selected {
     background: var(--accent-soft);

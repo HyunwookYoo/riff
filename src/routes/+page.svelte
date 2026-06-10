@@ -24,8 +24,9 @@
   import { loadState, setBlamePickerWidth } from "$lib/git";
   import { loadMainRepo } from "$lib/workspace";
   import { cycleAppMode } from "$lib/compare";
-  import { setHistoryRepo } from "$lib/commitHistory";
+  import { setHistoryRepo, enterGraphView } from "$lib/commitHistory";
   import {
+    enterChangesMode,
     isPathConflicted,
     loadStatus,
     refreshActiveView,
@@ -366,7 +367,13 @@
   // preventDefault, Edge WebView2 may reload the dev server route.
   function onMouseDown(e: MouseEvent) {
     if (e.button === 3) {
-      if (appState.history.length > 0) {
+      if (appState.wipReturn && appState.appMode === "changes") {
+        // Came from the graph's WIP node into Changes — go back to the graph,
+        // and arm forward so X2 returns here.
+        void enterGraphView();
+        appState.wipForward = true;
+        e.preventDefault();
+      } else if (appState.history.length > 0) {
         popHistory();
         e.preventDefault();
       } else if (appState.activeRepoIdx !== null) {
@@ -374,7 +381,12 @@
         e.preventDefault();
       }
     } else if (e.button === 4) {
-      if (appState.forwardHistory.length > 0) {
+      if (appState.wipForward && appState.appMode === "history") {
+        // Forward from the graph back into the WIP changes view.
+        void enterChangesMode();
+        appState.wipReturn = true;
+        e.preventDefault();
+      } else if (appState.forwardHistory.length > 0) {
         redoHistory();
         e.preventDefault();
       }

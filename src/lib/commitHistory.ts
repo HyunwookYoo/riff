@@ -1,5 +1,5 @@
 import { appState } from "./store.svelte";
-import { commitLog } from "./git";
+import { commitLog, status } from "./git";
 import { compare } from "./compare";
 import { loadCurrentBranch, loadPendingOp, loadStashes } from "./sourceControl";
 import type { Commit } from "./types";
@@ -80,8 +80,10 @@ export async function enterHistoryMode(): Promise<void> {
     await loadCommits();
     return;
   }
-  // Returning with a cached log: re-render the previously selected commit's
+  // Returning with a cached log: refresh the WIP count (changes may have been
+  // staged/discarded meanwhile) and re-render the previously selected commit's
   // diff (the diff pane may have been replaced by another mode meanwhile).
+  void loadWipCount();
   const sel =
     appState.commits.find((c) => c.sha === appState.selectedCommitSha) ??
     appState.commits[0];
@@ -91,6 +93,10 @@ export async function enterHistoryMode(): Promise<void> {
 /// Enter the commit-graph sub-view of the source-control area. When coming
 /// from the working (Changes) view, point the graph at the same repo.
 export async function enterGraphView(): Promise<void> {
+  // Ordinary entry resets the WIP back/forward pair; mouse-back re-arms
+  // wipForward after calling this.
+  appState.wipReturn = false;
+  appState.wipForward = false;
   if (
     appState.appMode !== "history" &&
     appState.historyRepoIdx !== appState.changesRepoIdx
@@ -163,6 +169,8 @@ export async function loadCommits(opts: { more?: boolean } = {}): Promise<void> 
     appState.commits = more ? appState.commits.concat(page) : page;
     appState.commitsHasMore = page.length === PAGE_SIZE;
     if (!more && page.length > 0) openCommit(page[0]);
+    // Refresh the WIP node's change count alongside a fresh log load.
+    if (!more) void loadWipCount();
   } catch (e) {
     if (session === logSession && !more) {
       appState.error = String(e);
@@ -178,6 +186,19 @@ export async function loadCommits(opts: { more?: boolean } = {}): Promise<void> 
 export async function loadMoreCommits(): Promise<void> {
   if (appState.loadingCommits || !appState.commitsHasMore) return;
   await loadCommits({ more: true });
+}
+
+/// Refresh the uncommitted-change count for the graph's WIP node. Reads status
+/// for the history repo *without* the selection side effects of loadStatus, so
+/// it's safe to call while browsing the graph.
+export async function loadWipCount(): Promise<void> {
+  if (!appState.repoPath) return;
+  try {
+    const st = await status(historyRepoPath());
+    appState.wipCount = st.entries.length;
+  } catch {
+    appState.wipCount = 0;
+  }
 }
 
 /// Drop the cached commit log so the next graph entry refetches it. The graph

@@ -117,6 +117,16 @@ class AppState {
   loadingCommits = $state(false);
   commitsHasMore = $state(false);
   historyRef = $state("");
+  // Count of uncommitted changes in the graph repo, for the WIP node drawn
+  // above HEAD. Loaded alongside the commit log; 0 = clean (no node).
+  wipCount = $state(0);
+  // Mouse back/forward between the graph's WIP node and the Changes screen.
+  // `wipReturn`: in Changes, mouse-back returns to the graph. `wipForward`: in
+  // the graph, mouse-forward returns to Changes. Both are reset by any ordinary
+  // navigation (enterChangesMode / enterGraphView) and re-armed by the special
+  // WIP / back / forward steps.
+  wipReturn = $state(false);
+  wipForward = $state(false);
   // Which repo's history is being browsed: index into `repos`. 0 = main;
   // submodule/manual repos let you browse their own log + branches.
   historyRepoIdx = $state(0);
