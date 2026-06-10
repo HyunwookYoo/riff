@@ -14,6 +14,7 @@
   import ConflictBanner from "$lib/ui/ConflictBanner.svelte";
   import ConflictView from "$lib/ui/ConflictView.svelte";
   import CheckoutDialog from "$lib/ui/CheckoutDialog.svelte";
+  import CommandPalette from "$lib/ui/CommandPalette.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
@@ -196,9 +197,21 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
-    // The checkout dialog is modal — let it own the keyboard (incl. Esc) and
-    // suppress every global shortcut while it's open.
-    if (appState.checkoutPrompt) return;
+    // Ctrl/Cmd+Shift+P toggles the command palette — works whether it's open
+    // (so the same chord closes it) or closed.
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      e.shiftKey &&
+      e.key.toLowerCase() === "p"
+    ) {
+      appState.paletteOpen = !appState.paletteOpen;
+      e.preventDefault();
+      return;
+    }
+
+    // Modal surfaces own the keyboard — suppress every other global shortcut
+    // while one is open (each handles its own Esc).
+    if (appState.checkoutPrompt || appState.paletteOpen) return;
 
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName?.toLowerCase();
@@ -394,6 +407,7 @@
   {/if}
   <ConflictBanner />
   <CheckoutDialog />
+  <CommandPalette />
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />
   {/if}

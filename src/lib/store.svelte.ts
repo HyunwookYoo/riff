@@ -124,6 +124,8 @@ class AppState {
   // The graph itself takes the remaining (majority) width. Drag-resizable,
   // session-only.
   graphDetailWidth = $state(460);
+  // Command palette (Ctrl+Shift+P) visibility. Session-only.
+  paletteOpen = $state(false);
   // Pending "switch with local changes" prompt. Set when a checkout is
   // requested on a dirty working tree; the CheckoutDialog reads it to offer
   // stash / bring / discard. `ffTo` (a remote ref) fast-forwards the local to
