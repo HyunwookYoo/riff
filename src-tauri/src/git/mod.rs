@@ -167,6 +167,16 @@ pub enum FileDiff {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
     },
+    /// Renderable image, both sides as base64 (the payload of a `data:` URL).
+    /// An absent side (added → no old, deleted → no new) is an empty string.
+    Image {
+        old_b64: String,
+        new_b64: String,
+        /// MIME type for the data URL, from the file extension.
+        mime: String,
+        old_size: u64,
+        new_size: u64,
+    },
     TooLarge {
         old_size: u64,
         new_size: u64,

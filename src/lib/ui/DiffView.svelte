@@ -15,6 +15,7 @@
   import { setActiveDiffView } from "$lib/diff/activeView";
   import { adjustFontSize, resetFontSize } from "$lib/font";
   import Dropdown from "./Dropdown.svelte";
+  import ImageDiff from "./ImageDiff.svelte";
 
   let host: HTMLDivElement;
   let mergeView: MergeView | null = null;
@@ -71,6 +72,19 @@
   const isDerived = $derived(
     diff?.kind === "text" && !!diff.derived_label,
   );
+
+  // SVG is diffed as text (source) but can also be rendered. `svgPreview`
+  // toggles the rendered image view, reusing ImageDiff with data: URLs built
+  // from the text content — no backend round-trip.
+  const isSvg = $derived(
+    appState.selectedFile?.path.toLowerCase().endsWith(".svg") ?? false,
+  );
+  let svgPreview = $state(false);
+  const showSvgPreview = $derived(
+    diff?.kind === "text" && isSvg && svgPreview,
+  );
+  const svgUrl = (s: string): string | null =>
+    s ? `data:image/svg+xml;utf8,${encodeURIComponent(s)}` : null;
 
   function changeUeVersion(v: string) {
     const repo = selectedRepoPath;
@@ -342,7 +356,20 @@
         </span>
       {/if}
     </div>
+    {#if diff?.kind === "text"}
     <div class="modes">
+      {#if isSvg}
+        <button
+          type="button"
+          class="svg-toggle"
+          class:active={svgPreview}
+          onclick={() => (svgPreview = !svgPreview)}
+          title="Toggle rendered SVG preview"
+        >
+          {svgPreview ? "Source" : "Preview"}
+        </button>
+      {/if}
+      {#if !svgPreview}
       <div class="font-size" title="Diff font size (Ctrl +/- / 0)">
         <button type="button" onclick={() => adjustFontSize(-1)} aria-label="Decrease font size">A−</button>
         <button
@@ -374,7 +401,9 @@
       >
         Unified
       </button>
+      {/if}
     </div>
+    {/if}
   </div>
 
   {#if pending}
@@ -390,6 +419,20 @@
         <div class="binary-note">{diff.note}</div>
       {/if}
     </div>
+  {:else if diff.kind === "image"}
+    <ImageDiff
+      oldSrc={diff.old_b64 ? `data:${diff.mime};base64,${diff.old_b64}` : null}
+      newSrc={diff.new_b64 ? `data:${diff.mime};base64,${diff.new_b64}` : null}
+      oldSize={diff.old_size}
+      newSize={diff.new_size}
+    />
+  {:else if showSvgPreview && diff.kind === "text"}
+    <ImageDiff
+      oldSrc={svgUrl(diff.old_content)}
+      newSrc={svgUrl(diff.new_content)}
+      oldSize={diff.old_size}
+      newSize={diff.new_size}
+    />
   {:else if diff.kind === "too-large"}
     <div class="state muted">
       Large file ({fmt(diff.old_size)} → {fmt(diff.new_size)}). Collapsed for performance.
@@ -397,7 +440,11 @@
     </div>
   {/if}
 
-  <div class="host" bind:this={host} class:hidden={diff?.kind !== "text"}></div>
+  <div
+    class="host"
+    bind:this={host}
+    class:hidden={diff?.kind !== "text" || showSvgPreview}
+  ></div>
 </div>
 
 <style>

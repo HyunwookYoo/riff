@@ -591,6 +591,66 @@ fn is_binary(bytes: &[u8]) -> bool {
     head.contains(&0)
 }
 
+/// Max bytes (per side) we'll inline as base64 for an image preview. Above this
+/// the file falls back to the size-only binary view.
+const IMAGE_MAX_BYTES: u64 = 20_000_000;
+
+/// Browser-renderable raster image, by extension. SVG is text (diffed normally);
+/// formats CodeMirror/`<img>` can't show (tga, dds, psd) are left as binary.
+fn is_image_path(p: &str) -> bool {
+    let lower = p.to_ascii_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif"]
+        .iter()
+        .any(|e| lower.ends_with(e))
+}
+
+fn image_mime(p: &str) -> &'static str {
+    let lower = p.to_ascii_lowercase();
+    if lower.ends_with(".png") {
+        "image/png"
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if lower.ends_with(".gif") {
+        "image/gif"
+    } else if lower.ends_with(".webp") {
+        "image/webp"
+    } else if lower.ends_with(".bmp") {
+        "image/bmp"
+    } else if lower.ends_with(".ico") {
+        "image/x-icon"
+    } else if lower.ends_with(".avif") {
+        "image/avif"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+/// Standard base64 (RFC 4648) encode — small enough to vendor instead of taking
+/// a crate dependency. Used to inline image bytes for the data-URL preview.
+fn base64_encode(bytes: &[u8]) -> String {
+    const TBL: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = ((chunk[0] as u32) << 16)
+            | ((*chunk.get(1).unwrap_or(&0) as u32) << 8)
+            | (*chunk.get(2).unwrap_or(&0) as u32);
+        out.push(TBL[((n >> 18) & 63) as usize] as char);
+        out.push(TBL[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            TBL[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TBL[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 /// Fetch a blob's working-tree-smudged content for `spec` (`<ref>:<path>`),
 /// resolving Git LFS pointers to real bytes via `git cat-file --filters`.
 /// Unreal `.uasset` files are typically LFS-tracked, so the plain
@@ -883,11 +943,13 @@ impl GitLayer for GitCli {
             BatchResponse::Missing => None,
         };
 
-        // Unreal asset preview bypasses the raw too-large gate (the .uasset
-        // header is small; bulk lives in .uexp) but keeps its own safety cap.
+        // Unreal asset / image previews bypass the raw too-large gate (each
+        // keeps its own cap): the .uasset header is small, and images render
+        // their own way regardless of byte count.
         let derive_uasset = uasset_cfg.enabled && uasset::is_uasset_path(file_path);
+        let is_image = is_image_path(file_path);
         let max_side = old_size.unwrap_or(0).max(new_size.unwrap_or(0));
-        if !force && !derive_uasset && max_side > LARGE_FILE_BYTES {
+        if !force && !derive_uasset && !is_image && max_side > LARGE_FILE_BYTES {
             return Ok(FileDiff::TooLarge {
                 old_size: old_size.unwrap_or(0),
                 new_size: new_size.unwrap_or(0),
@@ -937,6 +999,37 @@ impl GitLayer for GitCli {
                 old_size.unwrap_or(0),
                 new_size.unwrap_or(0),
             ));
+        }
+
+        if is_image {
+            // Smudge-filter both sides so LFS-tracked images resolve to real
+            // bytes, then inline as base64 for the <img> preview.
+            let old_img = if old_size.is_some() {
+                cat_file_filtered(path, &old_spec).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let new_img = if new_size.is_some() {
+                cat_file_filtered(path, &new_spec).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let os = old_img.len() as u64;
+            let ns = new_img.len() as u64;
+            if !force && os.max(ns) > IMAGE_MAX_BYTES {
+                return Ok(FileDiff::Binary {
+                    old_size: os,
+                    new_size: ns,
+                    note: Some("Image too large to preview.".to_string()),
+                });
+            }
+            return Ok(FileDiff::Image {
+                old_b64: base64_encode(&old_img),
+                new_b64: base64_encode(&new_img),
+                mime: image_mime(file_path).to_string(),
+                old_size: os,
+                new_size: ns,
+            });
         }
 
         if is_binary(&old_bytes) || is_binary(&new_bytes) {
@@ -1080,6 +1173,39 @@ impl GitLayer for GitCli {
                 old_size,
                 new_size,
             ));
+        }
+
+        if is_image_path(file_path) {
+            // Smudge-filter the blob sides (LFS → real bytes); the working-tree
+            // side is already smudged on disk. Inline as base64 for <img>.
+            let old_img = if needs_old {
+                cat_file_filtered(path, &old_spec).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let new_img = if !needs_new {
+                Vec::new()
+            } else if staged {
+                cat_file_filtered(path, &format!(":{file_path}")).unwrap_or_default()
+            } else {
+                fs::read(&fs_path).unwrap_or_default()
+            };
+            let os = old_img.len() as u64;
+            let ns = new_img.len() as u64;
+            if !force && os.max(ns) > IMAGE_MAX_BYTES {
+                return Ok(FileDiff::Binary {
+                    old_size: os,
+                    new_size: ns,
+                    note: Some("Image too large to preview.".to_string()),
+                });
+            }
+            return Ok(FileDiff::Image {
+                old_b64: base64_encode(&old_img),
+                new_b64: base64_encode(&new_img),
+                mime: image_mime(file_path).to_string(),
+                old_size: os,
+                new_size: ns,
+            });
         }
 
         let old_bytes = if needs_old {

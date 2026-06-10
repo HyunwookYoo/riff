@@ -60,6 +60,15 @@ export type FileDiff =
       note?: string | null;
     }
   | {
+      kind: "image";
+      /// Base64 image bytes (data-URL payload); empty for an absent side.
+      old_b64: string;
+      new_b64: string;
+      mime: string;
+      old_size: number;
+      new_size: number;
+    }
+  | {
       kind: "too-large";
       old_size: number;
       new_size: number;
