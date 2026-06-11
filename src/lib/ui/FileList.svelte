@@ -132,12 +132,32 @@
     }
     return n;
   });
+
+  // Path filter. Matches against the path (and pre-rename path), case-insensitive.
+  let query = $state("");
+  function fileMatches(f: ChangedFile): boolean {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      f.path.toLowerCase().includes(q) ||
+      (f.old_path?.toLowerCase().includes(q) ?? false)
+    );
+  }
+  const filteredGroups = $derived(
+    groups.map((g) => ({ ...g, files: g.files.filter(fileMatches) })),
+  );
+  const filteredCount = $derived(
+    filteredGroups.reduce((n, g) => n + g.files.length, 0),
+  );
+  // While filtering, ignore directory collapse so every match is visible.
+  const noCollapse = new Set<string>();
+  const treeCollapsed = $derived(query.trim() ? noCollapse : collapsedDirs);
 </script>
 
 <aside class="file-list">
   <header>
     <span>Files</span>
-    <span class="count">{visibleFileCount}</span>
+    <span class="count">{filteredCount}{query.trim() ? `/${visibleFileCount}` : ""}</span>
     {#if appState.loadingFiles && appState.files.length > 0}
       <span class="scanning">Scanning…</span>
     {/if}
@@ -153,12 +173,35 @@
     </button>
   </header>
 
+  {#if visibleFileCount > 0}
+    <div class="search">
+      <input
+        type="text"
+        placeholder="Filter files…"
+        bind:value={query}
+        spellcheck="false"
+      />
+      {#if query}
+        <button
+          type="button"
+          class="clear"
+          aria-label="Clear filter"
+          onclick={() => (query = "")}
+        >
+          ×
+        </button>
+      {/if}
+    </div>
+  {/if}
+
   <div class="scroll">
     {#if visibleFileCount === 0 && !appState.loadingFiles}
       <div class="empty">No changed files.</div>
+    {:else if filteredCount === 0}
+      <div class="empty">No files match “{query.trim()}”.</div>
     {/if}
 
-    {#each groups as group (group.idx)}
+    {#each filteredGroups as group (group.idx)}
       {#if showGroups}
         {@const isFocused = appState.activeRepoIdx === group.idx}
         <div
@@ -213,7 +256,7 @@
           {#each buildTree(group.files) as node (node.kind === "dir" ? "d:" + group.idx + ":" + node.path : "f:" + group.idx + ":" + node.file.path)}
             <TreeNode
               {node}
-              collapsed={collapsedDirs}
+              collapsed={treeCollapsed}
               onToggle={(p) => toggleDir(group.idx + ":" + p)}
               repoIdx={group.idx}
             />
@@ -290,6 +333,34 @@
     letter-spacing: 0;
     font-weight: 500;
     opacity: 1;
+  }
+  .search {
+    position: relative;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .search input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 4px 24px 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: inherit;
+    font-size: 0.85em;
+  }
+  .search .clear {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1em;
+    line-height: 1;
+    padding: 0 4px;
   }
   ul {
     list-style: none;
