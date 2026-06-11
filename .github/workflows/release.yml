@@ -53,6 +53,28 @@ jobs:
             Copy-Item "$env:RUNNER_TEMP\uassetgui-src\LICENSE" src-tauri\resources\uassetgui\UAssetGUI-LICENSE.txt -Force
           }
 
+      # Use the top section of CHANGELOG.md as the release body. Falls back to a
+      # generic line if the file is missing/empty so the build can't break here.
+      - name: Extract release notes
+        id: notes
+        shell: pwsh
+        run: |
+          $body = "See assets below to download. The auto-updater will pick up the latest release once published."
+          if (Test-Path CHANGELOG.md) {
+            $lines = Get-Content CHANGELOG.md
+            $start = -1
+            for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^## ') { $start = $i; break } }
+            if ($start -ge 0) {
+              $end = $lines.Count
+              for ($i = $start + 1; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^## ') { $end = $i; break } }
+              $section = ($lines[($start + 1)..($end - 1)] -join "`n").Trim()
+              if ($section.Length -gt 0) { $body = $section }
+            }
+          }
+          "body<<RIFF_EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $body | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "RIFF_EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -61,8 +83,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Riff ${{ github.ref_name }}"
-          releaseBody: |
-            See assets below to download. The auto-updater will pick up `latest.json` once published.
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true

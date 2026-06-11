@@ -1,7 +1,7 @@
 [package]
 name = "riff"
-version = "0.5.0"
-description = "Lightweight Git diff viewer"
+version = "1.0.0"
+description = "Lightweight Git client: branch compare, source control, commit graph, and blame"
 authors = ["hyunw"]
 edition = "2021"
 

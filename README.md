@@ -1,6 +1,6 @@
 # Riff
 
-Windows 데스크톱용 경량 Git diff 뷰어. 두 ref(브랜치/태그/커밋) 비교, 작업 트리 변경 확인, 라인별 blame까지 한 앱에서 처리합니다.
+Windows 데스크톱용 경량 Git 클라이언트. 두 ref(브랜치/태그/커밋) 비교, 소스 컨트롤(스테이징·changelist·커밋), 커밋 그래프 + 브랜치 작업, fetch/pull/push, 머지·충돌 해결, stash, 라인별 blame + 파일 타임랩스까지 한 앱에서 처리합니다.
 
 [Tauri 2](https://tauri.app) + Svelte 5 + [CodeMirror 6](https://codemirror.net) (`@codemirror/merge`) + [Shiki](https://shiki.style) 기반.
 
@@ -16,15 +16,18 @@ Windows 데스크톱용 경량 Git diff 뷰어. 두 ref(브랜치/태그/커밋)
 
 ---
 
-## 워크스페이스 모드 (3가지)
+## 워크스페이스 모드
 
 상단 좌측의 토글에서 모드를 전환합니다. **`Ctrl+Shift+W`** 로 순환 전환할 수 있고, 입력 필드에 포커스가 있어도 동작합니다.
 
 | 모드 | 용도 |
 |---|---|
 | **Branch** | 두 ref를 골라 PR 스타일 비교 (브랜치 ↔ 브랜치 / 태그 / 커밋 해시) |
-| **Working Tree** | HEAD ↔ 현재 작업 트리(미커밋 변경 + untracked 포함) 비교 |
-| **Blame** | 파일 한 개를 골라 라인별 작성자/커밋 추적 (HEAD 기준, 미커밋 라인 표시) |
+| **Changes** | 작업 트리 변경을 changelist로 묶어 스테이징·커밋 (소스 컨트롤) |
+| **Graph** | 커밋 그래프 + 브랜치/태그 배지 + 커밋별 액션 + fetch/pull/push |
+| **Blame** | 파일 한 개를 골라 라인별 작성자/커밋 추적 + 파일 타임랩스 |
+
+Changes와 Graph는 좌측 사이드바의 **Working Copy / Graph** 네비(Fork식)로도 오갈 수 있습니다. 커맨드 팔레트(**`Ctrl+Shift+P`**)로도 어디서든 빠르게 전환·실행할 수 있습니다.
 
 ---
 
@@ -93,6 +96,7 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 - 자동 언어 감지 + 드롭다운에서 **수동 override** 가능 (Shiki 200+ 언어).
 - 라인 번호 표시.
 - 큰 변경 사이의 **변경 없는 라인은 자동 축소**(`collapseUnchanged`); 클릭으로 펼침.
+- **이미지 파일**: side-by-side / swipe / onion 모드 + 줌·팬으로 시각 비교.
 - **이진 파일**: 메타(크기 변화)만 표시, diff 생략.
 - **너무 큰 파일**: 자동 축소 + **Load anyway** 버튼으로 강제 로드.
 - 단축키:
@@ -102,14 +106,28 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 
 ---
 
-## 3. Working Tree 모드 — 미커밋 변경 확인
+## 3. Changes 모드 — 소스 컨트롤
 
-`HEAD` 와 현재 작업 트리를 비교합니다. ref 입력 없이 바로 동작합니다.
+`git status --porcelain=v2` 기반의 작업 트리 변경 화면입니다. 변경 파일을 **changelist**(Perforce/JetBrains식 명명 버킷)로 묶어 버킷 단위로 커밋합니다.
 
-- 액션 버튼이 **Refresh** 로 바뀝니다.
-- **`F5`** 또는 **`Ctrl+R`** 로 새로고침.
-- **창 포커스 복귀 시 자동 새로고침**: 다른 에디터에서 파일을 편집하고 Riff로 돌아오면 silent refresh가 실행돼 자동으로 최신 상태 반영. 일시적 git 에러는 배너로 표시하지 않고 콘솔에만 로그.
-- Untracked 파일도 `Added` 로 표시.
+- **Changelist**: `+ New changelist` 로 버킷을 만들고, 파일을 **드래그**하거나 **우클릭 → Move to** 로 분류. 기본 버킷은 **Default**. 배정은 repo별로 영속됩니다(`.git/riff-changelists.json`).
+- **버킷 커밋**: 버킷을 활성화하고 메시지(subject/body, sign-off, co-author)를 입력해 **그 버킷의 파일만** 커밋. git 인덱스 스테이징은 커밋 순간에만 일시적으로 사용되어 사용자가 따로 stage/unstage 할 필요가 없습니다.
+- 파일 클릭 → diff(HEAD ↔ 작업 트리). Unreal `.uasset`/`.umap` 은 번들된 UAssetGUI로 파싱한 **속성 뷰**로 표시.
+- **창 포커스 복귀 시 자동 새로고침** + **`F5`/`Ctrl+R`**. Untracked 파일도 표시됩니다.
+- 머지/리베이스 중 충돌 파일은 클릭 시 **인앱 3-way 충돌 해결기**(ours/base/theirs + 편집 결과)로 열립니다.
+
+---
+
+## 3b. Graph 모드 — 커밋 그래프 & 동기화
+
+GitKraken/Fork식 커밋 그래프 워크스페이스입니다.
+
+- **그래프**: 레인 + 커밋 노드 + 브랜치/태그 배지. 같은 위치의 로컬+리모트 브랜치는 하나의 배지로 합쳐지고, 미커밋 변경은 HEAD 위 **WIP 노드**로 표시됩니다. 행 높이 조절 + all-branches 리셋 버튼 제공.
+- **커밋별 액션**: checkout / merge / rebase / reset / cherry-pick / revert / tag 등. 배지를 **드래그&드롭**해 머지/리베이스도 가능.
+- **브랜치 사이드바**: checkout, 생성/이름변경/삭제. 로컬에 변경이 있으면 checkout 시 stash-and-reapply / 그대로 / 폐기 선택. 리모트 더블클릭은 checkout + fast-forward.
+- **동기화 툴바**: fetch / pull / push (ahead/behind 카운트 표시).
+- **Merge**: abort / continue, 충돌은 3-way 해결기로.
+- **Stash**: save / apply / pop / drop.
 
 ---
 
@@ -156,6 +174,14 @@ Blame 모드는 독립된 3-pane 워크스페이스입니다:
 ### 미커밋 라인 처리
 Worktree 편집은 `git blame --contents <fs_path> HEAD` 로 처리되어 `00000000` SHA로 표기됩니다 → 팝오버에 `Not Committed Yet (uncommitted edits — not yet in HEAD)` 표시.
 
+### 파일 타임랩스 (🎞 Timelapse)
+툴바의 **🎞 Timelapse** 버튼으로 그 파일의 모든 리비전을 영상처럼 재생/스크럽합니다.
+
+- **하이브리드 표시**: 각 리비전의 내용을 제자리에 고정하고, 직전 대비 **변경 줄만 강조**(추가=녹색, 삭제=빨강) → 재생이 출렁임 없이 흐릅니다.
+- **VS식 미니맵**: 파일 전체를 우측 strip에 축소 렌더 + 추가/삭제 막대 + 뷰포트 박스(클릭·드래그로 스크롤). 변경이 여러 곳에 흩어져도 한눈에.
+- **구문 색**: 프레임이 멈출 때(settle)만 Shiki 적용 — 빠른 재생은 매끄럽게, 머무를 땐 풀 컬러.
+- 컨트롤: ⏮ ▶/⏸ ⏭ · 타임라인 슬라이더 · 1×~8× 속도. 키보드: Space 재생/정지, ←/→ 스텝, Esc 닫기.
+
 ---
 
 ## 5. Commit Drill-in & 히스토리
@@ -177,7 +203,8 @@ Blame 팝오버 또는 커밋 패널에서 **View commit →** / **`→`** 를 �
 ### 전역
 | 키 | 동작 |
 |---|---|
-| `Ctrl+Shift+W` | 워크스페이스 순환 전환 (Branch → Working Tree → Blame → Branch …) |
+| `Ctrl+Shift+W` | 워크스페이스 순환 전환 |
+| `Ctrl+Shift+P` | 커맨드 팔레트 (모드 전환 / 테마 / 동기화 / stash / 브랜치 checkout 등) |
 | `Ctrl` + `+` / `-` / `0` | 에디터 폰트 크기 증가 / 감소 / 기본값 복귀 |
 | `Esc` | drill-in 히스토리 pop → Focus 모드 해제 → 검색 패널 닫기 순으로 처리 |
 
@@ -315,14 +342,15 @@ PLAN.md                         설계 문서 (의사결정 트레이스 포함)
 
 ### 릴리스 컷
 ```sh
-# 버전을 4곳에서 동일하게 bump: package.json, package-lock.json,
-# src-tauri/Cargo.toml, src-tauri/Cargo.lock, src-tauri/tauri.conf.json
-git commit -am "release: v0.X.Y"
-git tag v0.X.Y
+# 1) CHANGELOG.md 최상단에 새 ## vX.Y.Z 섹션 추가 (릴리스 본문으로 자동 사용됨)
+# 2) 버전을 5곳에서 동일하게 bump: package.json, package-lock.json,
+#    src-tauri/Cargo.toml, src-tauri/Cargo.lock, src-tauri/tauri.conf.json
+git commit -am "release: vX.Y.Z"
+git tag vX.Y.Z
 git push origin main --tags
 ```
 
-워크플로가 **draft** Release를 생성합니다. 릴리스 노트를 작성/편집 후 **Publish** 누르면 설치된 클라이언트들이 다음 시작 시 새 `latest.json` 을 감지해 업데이트 배너를 띄웁니다.
+워크플로가 `CHANGELOG.md` 최상단 섹션을 릴리스 본문으로 추출해 **draft** Release를 생성합니다. 노트를 검토/편집 후 **Publish** 누르면 설치된 클라이언트들이 다음 시작 시 새 `latest.json` 을 감지해 업데이트 배너를 띄웁니다.
 
 ---
 
