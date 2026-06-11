@@ -8,9 +8,11 @@
     loadPendingOp,
   } from "$lib/sourceControl";
   import {
+    checkout,
     cherryPick,
     createBranch,
     createTag,
+    merge,
     rebase,
     reset,
     revert,
@@ -51,6 +53,119 @@
   function openMenu(e: MouseEvent, commit: Commit) {
     e.preventDefault();
     menu = { x: e.clientX, y: e.clientY, sha: commit.sha };
+  }
+
+  // ─ Drag-and-drop branch ops ─ drag a branch badge onto another to merge or
+  // rebase. The drop opens a small menu to pick the operation (direction alone
+  // is ambiguous). Conflicts flow into the existing pending-op banner via act().
+  type DragRef = { name: string; isRemote: boolean };
+  let dragSrc = $state<DragRef | null>(null);
+  let dropOn = $state<string | null>(null); // target name highlighted under drag
+  let dropMenu = $state<{
+    x: number;
+    y: number;
+    source: DragRef;
+    target: DragRef;
+  } | null>(null);
+
+  // Resolve a ref to a checkout-able local name (remote → strip its prefix).
+  // Floating label following the cursor while dragging a badge.
+  let ghost = $state<{ x: number; y: number; label: string } | null>(null);
+  // A pending press that becomes a drag once it moves past the threshold —
+  // pointer-based (not HTML5 draggable) because Tauri's file-drop intercepts
+  // webview drag events, and a draggable inside a <button> is unreliable.
+  let pending: { ref: DragRef; x: number; y: number } | null = null;
+  // Swallow the click that fires right after a drop so it doesn't close the
+  // drop menu we just opened.
+  let suppressClick = false;
+  const DRAG_THRESHOLD = 5;
+
+  const dwim = (r: DragRef) =>
+    r.isRemote ? r.name.replace(/^[^/]+\//, "") : r.name;
+
+  // Locate the branch badge under the cursor via its data- attributes.
+  function badgeUnder(x: number, y: number): { name: string; kind: string } | null {
+    const el = document
+      .elementFromPoint(x, y)
+      ?.closest<HTMLElement>("[data-ref]");
+    if (!el) return null;
+    return { name: el.dataset.ref ?? "", kind: el.dataset.kind ?? "" };
+  }
+  function validTarget(t: { name: string; kind: string } | null): boolean {
+    return !!t && !!dragSrc && t.kind !== "tag" && t.name !== dragSrc.name;
+  }
+  function onBadgePointerDown(e: PointerEvent, name: string, isRemote: boolean) {
+    if (e.button !== 0) return;
+    suppressClick = false;
+    pending = { ref: { name, isRemote }, x: e.clientX, y: e.clientY };
+  }
+  function onWinPointerMove(e: PointerEvent) {
+    if (dragSrc) {
+      ghost = { x: e.clientX, y: e.clientY, label: dragSrc.name };
+      const t = badgeUnder(e.clientX, e.clientY);
+      dropOn = validTarget(t) ? t!.name : null;
+      return;
+    }
+    if (!pending) return;
+    const dx = e.clientX - pending.x;
+    const dy = e.clientY - pending.y;
+    if (dx * dx + dy * dy >= DRAG_THRESHOLD * DRAG_THRESHOLD) {
+      dragSrc = pending.ref;
+      ghost = { x: e.clientX, y: e.clientY, label: pending.ref.name };
+      pending = null;
+    }
+  }
+  function onWinPointerUp(e: PointerEvent) {
+    if (dragSrc) {
+      const t = badgeUnder(e.clientX, e.clientY);
+      if (validTarget(t)) {
+        dropMenu = {
+          x: e.clientX,
+          y: e.clientY,
+          source: dragSrc,
+          target: { name: t!.name, isRemote: t!.kind === "remote" },
+        };
+        suppressClick = true;
+      }
+      dragSrc = null;
+      ghost = null;
+      dropOn = null;
+    }
+    pending = null;
+  }
+  function onWinClick() {
+    if (suppressClick) {
+      suppressClick = false;
+      return;
+    }
+    menu = null;
+    dropMenu = null;
+  }
+  function dropMerge() {
+    const m = dropMenu;
+    if (!m) return;
+    dropMenu = null;
+    const p = changesRepoPath();
+    // Merge source into target: check out target, then merge source.
+    void act(
+      (async () => {
+        await checkout(p, dwim(m.target));
+        await merge(p, m.source.name);
+      })(),
+    );
+  }
+  function dropRebase() {
+    const m = dropMenu;
+    if (!m) return;
+    dropMenu = null;
+    const p = changesRepoPath();
+    // Rebase source onto target: check out source, then rebase onto target.
+    void act(
+      (async () => {
+        await checkout(p, dwim(m.source));
+        await rebase(p, m.target.name);
+      })(),
+    );
   }
 
   // Inline name entry for "new branch here" / "tag here".
@@ -260,7 +375,11 @@
   }
 </script>
 
-<svelte:window onclick={() => (menu = null)} />
+<svelte:window
+  onclick={onWinClick}
+  onpointermove={onWinPointerMove}
+  onpointerup={onWinPointerUp}
+/>
 
 <div class="cl-wrap">
   {#if editor}
@@ -340,12 +459,16 @@
               {#if b.kind === "branch"}
                 <span
                   class="ref branch"
+                  class:drop-target={dropOn === b.text}
                   style={row ? `--c: ${color(row.color)}` : ""}
                   role="button"
                   tabindex="0"
+                  data-ref={b.text}
+                  data-kind="branch"
                   title={b.remotes.length
-                    ? `${b.text} · local + ${b.remotes.join(", ")} — double-click to checkout`
-                    : `Double-click to checkout ${b.text}`}
+                    ? `${b.text} · local + ${b.remotes.join(", ")} — double-click to checkout, drag onto another branch to merge/rebase`
+                    : `Double-click to checkout ${b.text} · drag onto another branch to merge/rebase`}
+                  onpointerdown={(e) => onBadgePointerDown(e, b.text, false)}
                   onclick={(e) => e.stopPropagation()}
                   ondblclick={(e) => {
                     e.stopPropagation();
@@ -360,11 +483,16 @@
                   >{b.text}{#if b.remotes.length}<RefIcon kind="remote" />{/if}</span
                 >
               {:else if b.kind === "head"}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <span
                   class="ref head"
+                  class:drop-target={dropOn === b.text}
+                  data-ref={b.text}
+                  data-kind="head"
                   title={b.remotes.length
-                    ? `${b.text} · local + ${b.remotes.join(", ")}`
-                    : b.text}
+                    ? `${b.text} · local + ${b.remotes.join(", ")} — drag onto another branch to merge/rebase`
+                    : `${b.text} — drag onto another branch to merge/rebase`}
+                  onpointerdown={(e) => onBadgePointerDown(e, b.text, false)}
                 >
                   <span class="check" aria-hidden="true">✓</span>{b.text}{#if b.remotes.length}<RefIcon
                       kind="remote"
@@ -373,10 +501,14 @@
               {:else if b.kind === "remote"}
                 <span
                   class="ref remote"
+                  class:drop-target={dropOn === b.text}
                   style={row ? `--c: ${color(row.color)}` : ""}
                   role="button"
                   tabindex="0"
-                  title="Remote branch — double-click to checkout {b.text}"
+                  data-ref={b.text}
+                  data-kind="remote"
+                  title="Remote branch — double-click to checkout {b.text} · drag onto another branch to merge/rebase"
+                  onpointerdown={(e) => onBadgePointerDown(e, b.text, true)}
                   onclick={(e) => e.stopPropagation()}
                   ondblclick={(e) => {
                     e.stopPropagation();
@@ -451,6 +583,25 @@
   </div>
 {/if}
 
+{#if dropMenu}
+  {@const d = dropMenu}
+  <div class="ctxmenu" style="left: {d.x}px; top: {d.y}px" role="menu">
+    <div class="dm-head">{d.source.name} → {d.target.name}</div>
+    <button type="button" role="menuitem" onclick={dropMerge}>
+      Merge <b>{d.source.name}</b> into <b>{d.target.name}</b>
+    </button>
+    <button type="button" role="menuitem" onclick={dropRebase}>
+      Rebase <b>{d.source.name}</b> onto <b>{d.target.name}</b>
+    </button>
+  </div>
+{/if}
+
+{#if ghost}
+  <div class="drag-ghost" style="left: {ghost.x}px; top: {ghost.y}px">
+    {ghost.label}
+  </div>
+{/if}
+
 <style>
   .cl-wrap {
     display: flex;
@@ -517,6 +668,35 @@
   }
   .ctxmenu button.danger {
     color: var(--error-fg, #f85149);
+  }
+  .ctxmenu button b {
+    font-weight: 700;
+  }
+  .dm-head {
+    padding: 4px 10px;
+    font-size: 0.74em;
+    color: var(--muted);
+    font-family: var(--mono);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2px;
+  }
+  /* Branch badge highlighted as a valid drop target during a drag. */
+  .ref.drop-target {
+    outline: 2px dashed var(--accent);
+    outline-offset: 1px;
+  }
+  .drag-ghost {
+    position: fixed;
+    z-index: 1500;
+    transform: translate(12px, 10px);
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.78em;
+    font-family: var(--mono);
+    pointer-events: none;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
   }
   .ctxmenu .sep {
     height: 1px;
@@ -606,6 +786,8 @@
     line-height: 1.5;
     font-family: var(--mono);
     border: 1px solid var(--border);
+    user-select: none;
+    touch-action: none;
   }
   /* The cloud glyph marking a local branch that's also at its remote. */
   .ref :global(svg.i) {
