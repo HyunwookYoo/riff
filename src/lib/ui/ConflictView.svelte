@@ -43,6 +43,24 @@
   let busy = $state(false);
   let loadSession = 0;
 
+  // git swaps the meaning of stage-2 (ours) / stage-3 (theirs) depending on the
+  // operation. Most notably, in a rebase "ours" is the branch being replayed
+  // ONTO (the target), and "theirs" is your commit being replayed — the reverse
+  // of a merge. Label the sides by the in-progress op so the user doesn't pick
+  // the wrong one.
+  const sideLabels = $derived.by(() => {
+    switch (appState.pendingOp) {
+      case "rebase":
+        return { ours: "rebase target (onto)", theirs: "your commit (replayed)" };
+      case "cherry-pick":
+        return { ours: "current branch", theirs: "picked commit" };
+      case "revert":
+        return { ours: "current branch", theirs: "being reverted" };
+      default: // merge (or none)
+        return { ours: "current branch", theirs: "incoming branch" };
+    }
+  });
+
   // A floating Ours/Theirs/Both toolbar rendered above each conflict's
   // `<<<<<<<` marker. Clicking replaces the whole region [from, to] with the
   // chosen side, dropping the markers. Positions are captured at build time and
@@ -54,12 +72,16 @@
     to: number;
     ours: string;
     theirs: string;
+    oursLabel: string;
+    theirsLabel: string;
     constructor(
       view: EditorView,
       from: number,
       to: number,
       ours: string,
       theirs: string,
+      oursLabel: string,
+      theirsLabel: string,
     ) {
       super();
       this.view = view;
@@ -67,6 +89,8 @@
       this.to = to;
       this.ours = ours;
       this.theirs = theirs;
+      this.oursLabel = oursLabel;
+      this.theirsLabel = theirsLabel;
     }
     eq(o: AcceptWidget) {
       return (
@@ -86,11 +110,12 @@
         this.ours && this.theirs
           ? `${this.ours}\n${this.theirs}`
           : this.ours + this.theirs;
-      const mk = (label: string, cls: string, insert: string) => {
+      const mk = (label: string, cls: string, insert: string, title: string) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = cls;
         btn.textContent = label;
+        btn.title = title;
         btn.onmousedown = (e) => e.preventDefault();
         btn.onclick = (e) => {
           e.preventDefault();
@@ -100,9 +125,11 @@
         };
         return btn;
       };
-      wrap.appendChild(mk("Ours", "ours", this.ours));
-      wrap.appendChild(mk("Theirs", "theirs", this.theirs));
-      wrap.appendChild(mk("Both", "both", both));
+      wrap.appendChild(mk("Ours", "ours", this.ours, `Keep ours — ${this.oursLabel}`));
+      wrap.appendChild(
+        mk("Theirs", "theirs", this.theirs, `Keep theirs — ${this.theirsLabel}`),
+      );
+      wrap.appendChild(mk("Both", "both", both, "Keep both, ours then theirs"));
       return wrap;
     }
   }
@@ -175,6 +202,8 @@
                 line.to,
                 ours,
                 theirs,
+                sideLabels.ours,
+                sideLabels.theirs,
               ),
               block: true,
               side: -1,
@@ -345,10 +374,20 @@
         ✓ No markers left — ready to mark resolved
       {/if}
     </span>
-    <button type="button" disabled={busy} onclick={() => takeSide("ours")}>
+    <button
+      type="button"
+      disabled={busy}
+      title="Use the whole ours side — {sideLabels.ours}"
+      onclick={() => takeSide("ours")}
+    >
       Take ours
     </button>
-    <button type="button" disabled={busy} onclick={() => takeSide("theirs")}>
+    <button
+      type="button"
+      disabled={busy}
+      title="Use the whole theirs side — {sideLabels.theirs}"
+      onclick={() => takeSide("theirs")}
+    >
       Take theirs
     </button>
     {#if !binary}
@@ -380,7 +419,7 @@
   {:else}
     <div class="cv-panes">
       <div class="cv-col">
-        <header class="cv-h ours">Ours · current</header>
+        <header class="cv-h ours">Ours · {sideLabels.ours}</header>
         <div class="cv-host" bind:this={oursHost}></div>
       </div>
       <div class="cv-col" class:empty={!hasBase}>
@@ -388,7 +427,7 @@
         <div class="cv-host" bind:this={baseHost}></div>
       </div>
       <div class="cv-col">
-        <header class="cv-h theirs">Theirs · incoming</header>
+        <header class="cv-h theirs">Theirs · {sideLabels.theirs}</header>
         <div class="cv-host" bind:this={theirsHost}></div>
       </div>
     </div>
