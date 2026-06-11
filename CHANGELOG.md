@@ -1,57 +1,68 @@
 # Changelog
 
-All notable changes to Riff are documented here. The top section is published
-as the GitHub Release body by `.github/workflows/release.yml`.
+Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
+`.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
 ## v1.0.0
 
-Riff grows from a two-branch diff viewer into a full Git client. Everything
-from the 0.x line is still here; 1.0.0 adds a complete source-control
-workspace alongside it.
+Riff가 **2-브랜치 diff 뷰어**에서 **완전한 Git 클라이언트**로 도약했습니다.
+기존 브랜치 비교·blame은 그대로, 여기에 소스 컨트롤·커밋 그래프·동기화·
+머지/충돌 해결·stash·파일 타임랩스가 더해졌습니다.
 
-### Source control (Changes)
-- A dedicated **Changes** workspace driven by `git status --porcelain=v2`.
-- **Changelists** (Perforce / JetBrains style): group changed files into named
-  buckets and commit each independently. Drag files between lists or use the
-  right-click menu; assignments persist per repo.
-- Commit box with subject/body, sign-off, and co-author trailers.
-- Unreal `.uasset` / `.umap` property views derived via the bundled UAssetGUI,
-  right in the Changes diff.
+### ✨ 하이라이트
 
-### Branches & graph history
-- A **Graph** history workspace with a commit graph, branch/tag badges, and
-  per-commit actions.
-- Refs sidebar with checkout, create, rename, delete, and Fork-style
-  Working Copy / Graph navigation.
-- Co-located local + remote branches merge into one badge; adjustable row
-  density and a reset-to-all-branches control.
-- **Drag-and-drop merge / rebase** between branch badges.
-- A **WIP node** surfaces uncommitted changes above HEAD; the graph refreshes
-  on window-focus regain.
+- **소스 컨트롤 (Changes)** — 변경 파일을 *changelist*(Perforce/JetBrains식
+  명명 버킷)로 묶어 버킷 단위로 커밋. 드래그·우클릭으로 파일 분류, repo별 영속.
+- **커밋 그래프 (Graph)** — 브랜치/태그 배지, 커밋별 액션, 배지 **드래그&드롭
+  머지/리베이스**, 미커밋을 표시하는 WIP 노드.
+- **동기화 & 머지** — fetch / pull / push, 인앱 **3-way 충돌 해결기**, stash.
+- **파일 타임랩스** — blame에서 파일의 전 리비전을 영상처럼 재생. 변경 줄 강조 +
+  VS식 미니맵 + (정지 시) 구문 색.
+- **이미지 diff** — side-by-side / swipe / onion + 줌·팬.
+- **커맨드 팔레트** (`Ctrl+Shift+P`).
 
-### Sync, merge & stash
-- Toolbar **fetch / pull / push** with ahead/behind counts.
-- **Merge** with an in-app **3-way conflict resolver**, plus abort / continue.
-- Checkout with local changes (stash-and-reapply / leave / discard), and
-  remote checkout with fast-forward.
-- **Stash** save / apply / pop / drop.
+### 소스 컨트롤 (Changes)
+- `git status --porcelain=v2` 기반 변경 화면
+- Changelist: 명명 버킷 + 드래그/우클릭 이동 + repo별 영속(`.git/riff-changelists.json`)
+- 버킷 단위 커밋(subject/body, sign-off, co-author)
+- Unreal `.uasset`/`.umap` 속성 뷰(번들 UAssetGUI)
 
-### Diff & navigation
-- **Image diff**: side-by-side / swipe / onion modes with zoom and pan.
-- Diff falls back to inline when the pane is narrow.
-- **Command palette** (`Ctrl+Shift+P`).
-- Filter box in the file picker.
+### 브랜치 & 그래프
+- 커밋 그래프 + 브랜치/태그 배지 + 커밋별 액션
+- refs 사이드바: checkout / 생성 / 이름변경 / 삭제, Fork식 Working Copy / Graph 네비
+- 로컬+리모트 동일 위치 배지 통합, 행 높이 조절, all-branches 리셋
+- 배지 드래그&드롭 머지/리베이스, WIP 노드, 포커스 복귀 시 그래프 새로고침
 
-### Blame
-- **File timelapse**: play or scrub through every revision of a file, with a
-  hybrid view (content anchored, changed lines highlighted), a VS-style minimap
-  with add/delete bars, and syntax highlighting on settled frames.
+### 동기화 · 머지 · stash
+- fetch / pull / push (ahead/behind 카운트)
+- 머지 + 인앱 3-way 충돌 해결기 (abort / continue)
+- 로컬 변경 보유 시 checkout(stash-reapply / 유지 / 폐기), 리모트 checkout + fast-forward
+- stash save / apply / pop / drop
 
-### Packaging
-- A self-contained, single-file **UAssetGUI** is bundled at release time, so
-  Unreal asset previews work with zero setup.
+### diff & 탐색
+- 이미지 diff (side-by-side / swipe / onion + 줌·팬)
+- 좁은 패널에선 인라인 diff로 폴백
+- 커맨드 팔레트(`Ctrl+Shift+P`), 파일 피커 필터 박스
+
+### blame
+- 파일 타임랩스: 하이브리드 표시(내용 고정 + 변경 줄 강조), VS식 미니맵,
+  settle 시 구문 색
+
+### 패키징
+- 셀프컨테인 단일 파일 **UAssetGUI** 번들 → Unreal 에셋 프리뷰 제로 설정
+
+### 📦 설치 / 업그레이드
+- **신규 설치**: 아래 assets에서 `Riff_1.0.0_x64-setup.exe` 다운로드 → 실행.
+  코드 서명 인증서가 없어 SmartScreen 경고가 뜨면 **추가 정보 → 실행**.
+- **기존 0.x 사용자**: 자동 업데이터가 다음 실행 시 배너를 띄웁니다 →
+  **Install and restart** 클릭으로 갱신.
+
+### ⚠️ 알려진 제한
+- 파일 타임랩스는 v1에서 **리네임 추적 안 함** — 현재 경로가 도입된 지점에서
+  히스토리가 멈춥니다.
+- Windows 전용 빌드입니다.
 
 ---
 
-Earlier releases (0.x) are tracked in the
-[GitHub releases](https://github.com/HyunwookYoo/riff/releases) history.
+이전 릴리스(0.x)는
+[GitHub releases](https://github.com/HyunwookYoo/riff/releases) 기록을 참고하세요.
