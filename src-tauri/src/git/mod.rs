@@ -267,6 +267,23 @@ pub trait GitLayer {
     /// The full message of HEAD (`git log -1 --format=%B`), used to pre-fill the
     /// commit box when the user toggles "Amend".
     fn head_commit_message(&self, path: &Path) -> Result<String, GitError>;
+    /// Commit exactly `paths` (a changelist) from the working tree, leaving
+    /// other changes uncommitted. Stages the paths first (so untracked files
+    /// commit too), then `git commit -- <paths>` (only those paths).
+    fn commit_paths(
+        &self,
+        path: &Path,
+        paths: &[String],
+        subject: &str,
+        body: &str,
+        signoff: bool,
+        coauthors: &[String],
+    ) -> Result<(), GitError>;
+    /// Read this repo's persisted changelist assignments (`.git/riff-
+    /// changelists.json`). Empty string when absent.
+    fn load_changelists(&self, path: &Path) -> Result<String, GitError>;
+    /// Persist the changelist assignments JSON to `.git/riff-changelists.json`.
+    fn save_changelists(&self, path: &Path, data: &str) -> Result<(), GitError>;
     /// Parse one file's unified diff into hunks for per-hunk staging. `staged`
     /// true → `git diff --cached` (HEAD↔index); false → `git diff`
     /// (index↔worktree). Empty for untracked/binary files.

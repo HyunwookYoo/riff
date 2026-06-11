@@ -1,388 +1,475 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
+  import { entryToChangedFile, selectChange } from "$lib/sourceControl";
   import {
-    entryToChangedFile,
-    isStaged,
-    isUnstaged,
-    selectChange,
-    stageAll,
-    stagePath,
-    unstageAll,
-    unstagePath,
-  } from "$lib/sourceControl";
-  import { buildTree, type TreeNode } from "./tree";
-  import type { ChangedFile, FileStatus } from "$lib/types";
+    DEFAULT_CHANGELIST,
+    commitChangelist,
+    createChangelist,
+    deleteChangelist,
+    moveFileToChangelist,
+    renameChangelist,
+  } from "$lib/changelists";
+  import type { ChangedFile, FileStatus, StatusEntry } from "$lib/types";
 
-  type Side = "staged" | "unstaged";
+  // path → status entry, to resolve a file's badge/diff from its changelist.
+  const byPath = $derived.by(() => {
+    const m = new Map<string, StatusEntry>();
+    for (const e of appState.repoStatus?.entries ?? []) m.set(e.path, e);
+    return m;
+  });
 
-  const entries = $derived(appState.repoStatus?.entries ?? []);
-  const unstagedFiles = $derived(
-    entries.filter(isUnstaged).map((e) => entryToChangedFile(e, "unstaged")),
-  );
-  const stagedFiles = $derived(
-    entries.filter(isStaged).map((e) => entryToChangedFile(e, "staged")),
-  );
-  const isTree = $derived(appState.fileViewMode === "tree");
-
-  // Flattened tree rows (dirs + files) with depth, respecting collapsed dirs.
-  type Row =
-    | { kind: "dir"; name: string; path: string; depth: number }
-    | { kind: "file"; file: ChangedFile; depth: number };
-
-  // Directory collapse state, keyed `<side>:<dirPath>` so the two panes are
-  // independent.
-  let collapsedDirs = $state(new Set<string>());
-  function toggleDir(side: Side, path: string) {
-    const key = side + ":" + path;
-    const next = new Set(collapsedDirs);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    collapsedDirs = next;
+  function badge(s: FileStatus): string {
+    return { added: "A", modified: "M", deleted: "D", renamed: "R", copied: "C", typechanged: "T" }[s];
   }
 
-  function flatten(nodes: TreeNode[], side: Side, depth: number, out: Row[]): Row[] {
-    for (const n of nodes) {
-      if (n.kind === "dir") {
-        out.push({ kind: "dir", name: n.name, path: n.path, depth });
-        if (!collapsedDirs.has(side + ":" + n.path)) {
-          flatten(n.children, side, depth + 1, out);
-        }
-      } else {
-        out.push({ kind: "file", file: n.file, depth });
-      }
+  function isSel(path: string): boolean {
+    return appState.appMode === "changes" && appState.selectedFile?.path === path;
+  }
+  function pick(path: string) {
+    const e = byPath.get(path);
+    if (e) selectChange(entryToChangedFile(e, "unstaged"), "unstaged");
+  }
+
+  let collapsed = $state(new Set<string>());
+  function toggle(id: string) {
+    const n = new Set(collapsed);
+    n.has(id) ? n.delete(id) : n.add(id);
+    collapsed = n;
+  }
+
+  // Inline create / rename editors.
+  let creating = $state(false);
+  let createName = $state("");
+  function submitCreate() {
+    const n = createName.trim();
+    creating = false;
+    createName = "";
+    if (n) appState.activeChangelistId = createChangelist(n);
+  }
+  let editingId = $state<string | null>(null);
+  let editName = $state("");
+  function startRename(id: string, name: string) {
+    editingId = id;
+    editName = name;
+  }
+  function submitRename() {
+    if (editingId) renameChangelist(editingId, editName);
+    editingId = null;
+  }
+
+  function doDelete(id: string) {
+    if (confirm("Delete this changelist? Its files move to Default.")) deleteChangelist(id);
+  }
+
+  // Move a file to another changelist via a right-click menu (HTML5 drag is
+  // intercepted by Tauri's file-drop; a menu is reliable for v1).
+  let moveMenu = $state<{ x: number; y: number; path: string } | null>(null);
+  function openMove(e: MouseEvent, path: string) {
+    e.preventDefault();
+    moveMenu = { x: e.clientX, y: e.clientY, path };
+  }
+  function moveTo(targetId: string) {
+    if (moveMenu) moveFileToChangelist(moveMenu.path, targetId);
+    moveMenu = null;
+  }
+  function currentListOf(path: string): string {
+    return (
+      appState.changelists.find((l) => l.files.includes(path))?.id ??
+      DEFAULT_CHANGELIST
+    );
+  }
+
+  // Pointer-based drag to move a file onto a changelist group (HTML5 drag is
+  // intercepted by Tauri's file-drop). A press becomes a drag past a threshold;
+  // the group under the cursor is found via its data-cl attribute.
+  let dragPath = $state<string | null>(null);
+  let ghost = $state<{ x: number; y: number; label: string } | null>(null);
+  let dropList = $state<string | null>(null);
+  let pending: { path: string; x: number; y: number } | null = null;
+  const DRAG_THRESHOLD = 5;
+
+  function groupUnder(x: number, y: number): string | null {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-cl]");
+    return el?.dataset.cl ?? null;
+  }
+  function onFilePointerDown(e: PointerEvent, path: string) {
+    if (e.button !== 0) return;
+    pending = { path, x: e.clientX, y: e.clientY };
+  }
+  function onWinPointerMove(e: PointerEvent) {
+    if (dragPath) {
+      ghost = { x: e.clientX, y: e.clientY, label: basename(dragPath) };
+      dropList = groupUnder(e.clientX, e.clientY);
+      return;
     }
-    return out;
+    if (!pending) return;
+    const dx = e.clientX - pending.x;
+    const dy = e.clientY - pending.y;
+    if (dx * dx + dy * dy >= DRAG_THRESHOLD * DRAG_THRESHOLD) {
+      dragPath = pending.path;
+      ghost = { x: e.clientX, y: e.clientY, label: basename(pending.path) };
+      pending = null;
+    }
   }
-  const unstagedRows = $derived(flatten(buildTree(unstagedFiles), "unstaged", 0, []));
-  const stagedRows = $derived(flatten(buildTree(stagedFiles), "staged", 0, []));
-
+  function onWinPointerUp(e: PointerEvent) {
+    if (dragPath) {
+      const target = groupUnder(e.clientX, e.clientY);
+      if (target) moveFileToChangelist(dragPath, target);
+      dragPath = null;
+      ghost = null;
+      dropList = null;
+    }
+    pending = null;
+  }
   function basename(p: string): string {
     const i = p.lastIndexOf("/");
     return i < 0 ? p : p.slice(i + 1);
   }
-
-  function badge(s: FileStatus): string {
-    switch (s) {
-      case "added":
-        return "A";
-      case "modified":
-        return "M";
-      case "deleted":
-        return "D";
-      case "renamed":
-        return "R";
-      case "copied":
-        return "C";
-      case "typechanged":
-        return "T";
-    }
-  }
-
-  function selFile(f: ChangedFile, side: Side): boolean {
-    return (
-      appState.appMode === "changes" &&
-      appState.changesSide === side &&
-      appState.selectedFile?.path === f.path
-    );
-  }
-
-  // Draggable divider between the Unstaged (top) and Staged (bottom) panes.
-  let rootEl = $state<HTMLDivElement | null>(null);
-  let resizing = $state(false);
-  function onSplitStart(e: PointerEvent) {
-    if (e.button !== 0 || !rootEl) return;
-    e.preventDefault();
-    resizing = true;
-    const rect = rootEl.getBoundingClientRect();
-    const onMove = (ev: PointerEvent) => {
-      const f = (ev.clientY - rect.top) / rect.height;
-      appState.changesPaneFraction = Math.min(0.85, Math.max(0.15, f));
-    };
-    const onUp = () => {
-      resizing = false;
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }
 </script>
 
-{#snippet fileRow(f: ChangedFile, side: Side, depth: number, name: string)}
-  <div class="row" class:active={selFile(f, side)}>
-    <button
-      type="button"
-      class="select"
-      style="padding-left: {10 + depth * 14}px"
-      onclick={() => selectChange(f, side)}
-      title={f.old_path ? `${f.old_path} → ${f.path}` : f.path}
-    >
-      <span class="badge" data-status={f.status}>{badge(f.status)}</span>
-      <span class="path">{name}</span>
-    </button>
-    <button
-      type="button"
-      class="action"
-      title={side === "staged" ? "Unstage this file" : "Stage this file"}
-      aria-label={side === "staged" ? `Unstage ${f.path}` : `Stage ${f.path}`}
-      onclick={() => void (side === "staged" ? unstagePath(f.path) : stagePath(f.path))}
-    >
-      {side === "staged" ? "−" : "+"}
-    </button>
+<svelte:window
+  onclick={() => (moveMenu = null)}
+  onpointermove={onWinPointerMove}
+  onpointerup={onWinPointerUp}
+/>
+
+<div class="cl-root">
+  <div class="cl-toolbar">
+    {#if creating}
+      <form class="cl-create" onsubmit={(e) => (e.preventDefault(), submitCreate())}>
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          autofocus
+          bind:value={createName}
+          placeholder="Changelist name…"
+          onblur={submitCreate}
+          onkeydown={(e) => e.key === "Escape" && ((creating = false), (createName = ""))}
+        />
+      </form>
+    {:else}
+      <button type="button" class="new-cl" onclick={() => (creating = true)}>
+        + New changelist
+      </button>
+    {/if}
   </div>
-{/snippet}
 
-{#snippet dirRow(side: Side, path: string, name: string, depth: number)}
-  <button
-    type="button"
-    class="dir"
-    style="padding-left: {8 + depth * 14}px"
-    onclick={() => toggleDir(side, path)}
-  >
-    <span class="caret" aria-hidden="true">
-      {collapsedDirs.has(side + ":" + path) ? "▸" : "▾"}
-    </span>
-    <span class="dir-name">{name}</span>
-  </button>
-{/snippet}
+  <div class="cl-scroll">
+    {#each appState.changelists as cl (cl.id)}
+      {@const isActive = cl.id === appState.activeChangelistId}
+      <div class="cl-group" class:drop={dropList === cl.id} data-cl={cl.id} role="group">
+        <div class="cl-head" class:active={isActive}>
+          <button type="button" class="caret" onclick={() => toggle(cl.id)} aria-label="Collapse">
+            {collapsed.has(cl.id) ? "▸" : "▾"}
+          </button>
+          <button
+            type="button"
+            class="cl-name"
+            title="Make active (commit box targets this)"
+            onclick={() => (appState.activeChangelistId = cl.id)}
+          >
+            <span class="dot" class:on={isActive} aria-hidden="true"></span>
+            {#if editingId === cl.id}
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                class="rename"
+                autofocus
+                bind:value={editName}
+                onclick={(e) => e.stopPropagation()}
+                onblur={submitRename}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") submitRename();
+                  else if (e.key === "Escape") editingId = null;
+                }}
+              />
+            {:else}
+              <span class="nm">{cl.name}</span>
+            {/if}
+            <span class="cnt">{cl.files.length}</span>
+          </button>
+          <div class="cl-actions">
+            {#if cl.files.length > 0}
+              <button
+                type="button"
+                title="Commit this changelist (uses the message box below)"
+                disabled={appState.committing || !appState.commitSubject.trim()}
+                onclick={() => void commitChangelist(cl.id)}
+              >
+                ✓
+              </button>
+            {/if}
+            {#if cl.id !== DEFAULT_CHANGELIST}
+              <button type="button" title="Rename" onclick={() => startRename(cl.id, cl.name)}>✎</button>
+              <button type="button" class="del" title="Delete" onclick={() => doDelete(cl.id)}>🗑</button>
+            {/if}
+          </div>
+        </div>
 
-{#snippet paneBody(files: ChangedFile[], rows: Row[], side: Side, loading: boolean)}
-  {#if loading && files.length === 0}
-    <div class="empty">Loading…</div>
-  {:else if files.length === 0}
-    <div class="empty">
-      {side === "staged" ? "No staged changes" : "No unstaged changes"}
-    </div>
-  {:else if isTree}
-    {#each rows as row (row.kind === "dir" ? "d:" + row.path : "f:" + row.file.path)}
-      {#if row.kind === "dir"}
-        {@render dirRow(side, row.path, row.name, row.depth)}
-      {:else}
-        {@render fileRow(row.file, side, row.depth, basename(row.file.path))}
-      {/if}
+        {#if !collapsed.has(cl.id)}
+          {#if cl.files.length === 0}
+            <div class="cl-empty">No files{cl.id === DEFAULT_CHANGELIST ? "" : " — drag here"}</div>
+          {:else}
+            {#each cl.files as path (path)}
+              {@const e = byPath.get(path)}
+              {#if e}
+                {@const cf = entryToChangedFile(e, "unstaged") as ChangedFile}
+                <div class="cl-file" class:active={isSel(path)}>
+                  <button
+                    type="button"
+                    class="cl-pick"
+                    onclick={() => pick(path)}
+                    onpointerdown={(ev) => onFilePointerDown(ev, path)}
+                    oncontextmenu={(ev) => openMove(ev, path)}
+                    title={cf.old_path
+                      ? `${cf.old_path} → ${path}`
+                      : `${path} · drag onto a changelist to move`}
+                  >
+                    <span class="fbadge" data-status={cf.status}>{badge(cf.status)}</span>
+                    <span class="fpath">{path}</span>
+                  </button>
+                </div>
+              {/if}
+            {/each}
+          {/if}
+        {/if}
+      </div>
     {/each}
-  {:else}
-    {#each files as f (f.path)}
-      {@render fileRow(f, side, 0, f.path)}
-    {/each}
-  {/if}
-{/snippet}
-
-<div
-  class="changes"
-  class:resizing
-  bind:this={rootEl}
-  style="--top: {appState.changesPaneFraction};"
->
-  <section class="pane unstaged-pane">
-    <header>
-      <span class="title">Unstaged</span>
-      <span class="count">{unstagedFiles.length}</span>
-      {#if unstagedFiles.length > 0}
-        <button type="button" class="bulk" onclick={() => void stageAll()}>
-          Stage all
-        </button>
-      {/if}
-    </header>
-    <div class="rows">
-      {@render paneBody(
-        unstagedFiles,
-        unstagedRows,
-        "unstaged",
-        appState.loadingStatus,
-      )}
-    </div>
-  </section>
-
-  <div
-    class="vsplit"
-    role="separator"
-    aria-orientation="horizontal"
-    aria-label="Resize unstaged / staged"
-    onpointerdown={onSplitStart}
-  ></div>
-
-  <section class="pane staged-pane">
-    <header>
-      <span class="title">Staged</span>
-      <span class="count">{stagedFiles.length}</span>
-      {#if stagedFiles.length > 0}
-        <button type="button" class="bulk" onclick={() => void unstageAll()}>
-          Unstage all
-        </button>
-      {/if}
-    </header>
-    <div class="rows">
-      {@render paneBody(stagedFiles, stagedRows, "staged", false)}
-    </div>
-  </section>
+  </div>
 </div>
 
+{#if moveMenu}
+  {@const cur = currentListOf(moveMenu.path)}
+  <div class="cl-menu" style="left: {moveMenu.x}px; top: {moveMenu.y}px" role="menu">
+    <div class="cl-menu-head">Move to changelist</div>
+    {#each appState.changelists as l (l.id)}
+      <button
+        type="button"
+        role="menuitem"
+        disabled={l.id === cur}
+        onclick={() => moveTo(l.id)}
+      >
+        {l.id === cur ? "● " : ""}{l.name}
+      </button>
+    {/each}
+  </div>
+{/if}
+
+{#if ghost}
+  <div class="cl-drag-ghost" style="left: {ghost.x}px; top: {ghost.y}px">
+    {ghost.label}
+  </div>
+{/if}
+
 <style>
-  .changes {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    height: 100%;
-    overflow: hidden;
+  .cl-drag-ghost {
+    position: fixed;
+    z-index: 1500;
+    transform: translate(12px, 10px);
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.78em;
+    font-family: var(--mono);
+    pointer-events: none;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
   }
-  .changes.resizing {
-    cursor: row-resize;
-    user-select: none;
-  }
-  .pane {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
-  }
-  .unstaged-pane {
-    flex: 0 0 calc(var(--top, 0.5) * 100%);
-  }
-  .staged-pane {
-    flex: 1 1 0;
-  }
-  header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    flex-shrink: 0;
-    background: var(--bar-bg);
-    border-bottom: 1px solid var(--border);
-    font-size: 0.82em;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-  }
-  header .count {
-    font-variant-numeric: tabular-nums;
-    opacity: 0.7;
-  }
-  header .bulk {
-    margin-left: auto;
-    padding: 2px 9px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
+  .cl-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 160px;
     background: var(--input-bg);
-    color: inherit;
-    cursor: pointer;
-    font-size: 0.95em;
-    text-transform: none;
-    letter-spacing: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
   }
-  header .bulk:hover {
+  .cl-menu-head {
+    padding: 4px 8px;
+    font-size: 0.72em;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2px;
+  }
+  .cl-menu button {
+    border: none;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.85em;
+  }
+  .cl-menu button:hover:not(:disabled) {
+    background: var(--hover);
+  }
+  .cl-menu button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .cl-root {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .cl-toolbar {
+    flex-shrink: 0;
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bar-bg);
+  }
+  .new-cl {
+    width: 100%;
+    padding: 4px 8px;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.85em;
+  }
+  .new-cl:hover {
     border-color: var(--accent);
     color: var(--accent);
   }
-  .rows {
+  .cl-create input,
+  .rename {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 4px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: inherit;
+    font-size: 0.85em;
+  }
+  .cl-scroll {
     flex: 1 1 0;
     min-height: 0;
     overflow-y: auto;
   }
-  .empty {
-    padding: 10px 12px;
-    color: var(--muted);
-    font-size: 0.9em;
+  .cl-group.drop {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
   }
-  .vsplit {
-    flex: 0 0 7px;
-    margin: -3px 0;
-    z-index: 5;
-    cursor: row-resize;
-    background: transparent;
-    position: relative;
-  }
-  .vsplit::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 3px;
-    height: 1px;
-    width: 100%;
-    background: var(--border);
-    transition: background 0.1s ease;
-  }
-  .vsplit:hover::after,
-  .changes.resizing .vsplit::after {
-    background: var(--accent);
-  }
-  .row {
+  .cl-head {
     display: flex;
-    align-items: stretch;
+    align-items: center;
+    gap: 2px;
+    background: var(--bar-bg);
+    border-bottom: 1px solid var(--border);
+    border-top: 1px solid var(--border);
   }
-  .row:hover {
-    background: var(--hover);
-  }
-  .row.active {
+  .cl-head.active {
     background: var(--accent-soft);
   }
-  .row.active .path {
+  .cl-head .caret {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 4px 2px 4px 8px;
+    font-size: 0.8em;
+  }
+  .cl-name {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    padding: 5px 4px;
+    text-align: left;
+    font-size: 0.85em;
+    font-weight: 600;
+  }
+  .cl-name .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    border: 1px solid var(--muted);
+    flex-shrink: 0;
+  }
+  .cl-name .dot.on {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .cl-name .nm {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cl-name .cnt {
+    opacity: 0.6;
+    font-weight: 400;
+  }
+  .cl-actions {
+    display: flex;
+    flex-shrink: 0;
+  }
+  .cl-actions button {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 4px 7px;
+    font-size: 0.85em;
+  }
+  .cl-actions button:hover:not(:disabled) {
     color: var(--accent);
   }
-  .select {
+  .cl-actions button:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+  .cl-actions .del:hover {
+    color: var(--error-fg, #f85149);
+  }
+  .cl-empty {
+    padding: 6px 12px 6px 28px;
+    color: var(--muted);
+    font-size: 0.8em;
+    font-style: italic;
+  }
+  .cl-file {
+    display: flex;
+  }
+  .cl-file:hover {
+    background: var(--hover);
+  }
+  .cl-file.active {
+    background: var(--accent-soft);
+  }
+  .cl-file.active .fpath {
+    color: var(--accent);
+  }
+  .cl-pick {
     display: flex;
     align-items: center;
     gap: 9px;
     flex: 1;
     min-width: 0;
-    padding: 7px 10px;
     border: none;
     background: transparent;
     color: inherit;
     cursor: pointer;
     text-align: left;
-    font-size: 0.95em;
-  }
-  .dir {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    padding: 6px 10px;
-    border: none;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-    text-align: left;
-    font-size: 0.92em;
-    user-select: none;
-  }
-  .dir:hover {
-    background: var(--hover);
-  }
-  .dir .caret {
-    width: 12px;
-    flex-shrink: 0;
-    opacity: 0.6;
+    padding: 5px 10px 5px 26px;
     font-size: 0.85em;
+    user-select: none;
+    touch-action: none;
   }
-  .dir .dir-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    opacity: 0.85;
-  }
-  .action {
-    flex: 0 0 auto;
-    width: 30px;
-    border: none;
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-    font-size: 1.25em;
-    line-height: 1;
-    opacity: 0;
-  }
-  .row:hover .action,
-  .row.active .action {
-    opacity: 1;
-  }
-  .action:hover {
-    color: var(--accent);
-  }
-  .badge {
+  .fbadge {
     flex: 0 0 auto;
     width: 18px;
     height: 18px;
@@ -394,29 +481,18 @@
     font-size: 0.72em;
     color: white;
   }
-  .badge[data-status="added"] {
-    background: #16a34a;
-  }
-  .badge[data-status="modified"] {
-    background: #ca8a04;
-  }
-  .badge[data-status="deleted"] {
-    background: #dc2626;
-  }
-  .badge[data-status="renamed"] {
-    background: #2563eb;
-  }
-  .badge[data-status="copied"] {
-    background: #0891b2;
-  }
-  .badge[data-status="typechanged"] {
-    background: #7c3aed;
-  }
-  .path {
+  .fbadge[data-status="added"] { background: #16a34a; }
+  .fbadge[data-status="modified"] { background: #ca8a04; }
+  .fbadge[data-status="deleted"] { background: #dc2626; }
+  .fbadge[data-status="renamed"] { background: #2563eb; }
+  .fbadge[data-status="copied"] { background: #0891b2; }
+  .fbadge[data-status="typechanged"] { background: #7c3aed; }
+  .fpath {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     direction: rtl;
     text-align: left;
+    min-width: 0;
   }
 </style>

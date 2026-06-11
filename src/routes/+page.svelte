@@ -8,7 +8,6 @@
   import CommitList from "$lib/ui/CommitList.svelte";
   import ChangesList from "$lib/ui/ChangesList.svelte";
   import CommitBox from "$lib/ui/CommitBox.svelte";
-  import HunkBar from "$lib/ui/HunkBar.svelte";
   import RepoTabs from "$lib/ui/RepoTabs.svelte";
   import RefsSidebar from "$lib/ui/RefsSidebar.svelte";
   import ConflictBanner from "$lib/ui/ConflictBanner.svelte";
@@ -456,9 +455,6 @@
           {#if conflicted}
             <ConflictView />
           {:else}
-            {#if appState.appMode === "changes"}
-              <HunkBar />
-            {/if}
             <DiffView />
           {/if}
         {:else if appState.loadingRepo}

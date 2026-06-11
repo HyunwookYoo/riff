@@ -586,6 +586,14 @@ fn validate_path(s: &str) -> Result<(), GitError> {
     Ok(())
 }
 
+/// Path to this repo's changelist store, inside the resolved git dir (handles
+/// worktrees / submodules where `.git` may be a file).
+fn changelists_file(cli: &GitCli, path: &Path) -> Result<PathBuf, GitError> {
+    let out = cli.run(path, &["rev-parse", "--git-dir"])?;
+    let gitdir = path.join(String::from_utf8_lossy(&out).trim());
+    Ok(gitdir.join("riff-changelists.json"))
+}
+
 fn is_binary(bytes: &[u8]) -> bool {
     let head = &bytes[..bytes.len().min(BINARY_SNIFF_BYTES)];
     head.contains(&0)
@@ -1347,6 +1355,66 @@ impl GitLayer for GitCli {
     fn head_commit_message(&self, path: &Path) -> Result<String, GitError> {
         let out = self.run(path, &["log", "-1", "--format=%B"])?;
         Ok(String::from_utf8_lossy(&out).trim_end().to_string())
+    }
+
+    fn commit_paths(
+        &self,
+        path: &Path,
+        paths: &[String],
+        subject: &str,
+        body: &str,
+        signoff: bool,
+        coauthors: &[String],
+    ) -> Result<(), GitError> {
+        if subject.trim().is_empty() {
+            return Err(GitError::CommandFailed("commit subject is empty".into()));
+        }
+        if paths.is_empty() {
+            return Err(GitError::CommandFailed("no files to commit".into()));
+        }
+        for p in paths {
+            validate_path(p)?;
+        }
+        // Stage the listed paths so untracked files become committable; `git
+        // add` also records deletions.
+        let mut add_args: Vec<&str> = vec!["add", "--"];
+        add_args.extend(paths.iter().map(String::as_str));
+        self.run(path, &add_args)?;
+
+        let trailers: Vec<String> = coauthors
+            .iter()
+            .filter(|c| !c.trim().is_empty())
+            .map(|c| format!("Co-authored-by: {}", c.trim()))
+            .collect();
+        // `git commit -- <paths>` does a path-limited commit (working-tree
+        // content of just those paths), leaving everything else untouched.
+        let mut args: Vec<&str> = vec!["commit"];
+        if signoff {
+            args.push("-s");
+        }
+        args.push("-m");
+        args.push(subject);
+        if !body.trim().is_empty() {
+            args.push("-m");
+            args.push(body);
+        }
+        for t in &trailers {
+            args.push("--trailer");
+            args.push(t);
+        }
+        args.push("--");
+        args.extend(paths.iter().map(String::as_str));
+        self.run(path, &args)?;
+        self.drop_session();
+        Ok(())
+    }
+
+    fn load_changelists(&self, path: &Path) -> Result<String, GitError> {
+        Ok(fs::read_to_string(changelists_file(self, path)?).unwrap_or_default())
+    }
+
+    fn save_changelists(&self, path: &Path, data: &str) -> Result<(), GitError> {
+        fs::write(changelists_file(self, path)?, data).map_err(GitError::Io)
     }
 
     fn file_hunks(&self, path: &Path, file_path: &str, staged: bool) -> Result<Vec<Hunk>, GitError> {

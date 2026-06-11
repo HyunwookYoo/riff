@@ -18,6 +18,10 @@ import {
   unstage as unstageCmd,
 } from "./git";
 import { loadCommits, invalidateGraph } from "./commitHistory";
+import {
+  loadChangelistsForRepo,
+  reconcileChangelists,
+} from "./changelists";
 import type { ChangedFile, FileStatus, StatusEntry } from "./types";
 
 /// Map a porcelain-v2 status code (X or Y for one side) to a `FileStatus` for
@@ -65,6 +69,9 @@ export function setChangesRepo(idx: number): void {
   appState.commitBody = "";
   appState.commitAmend = false;
   appState.commitCoauthors = [];
+  // Drop the old repo's changelists so the new repo's load fresh on loadStatus.
+  appState.changelists = [];
+  appState.activeChangelistId = "default";
   void loadStatus();
 }
 
@@ -121,6 +128,9 @@ export async function loadStatus(): Promise<void> {
     appState.currentUpstream = st.upstream;
     appState.currentAhead = st.ahead;
     appState.currentBehind = st.behind;
+    // Load changelists on the first status, then re-bucket on later ones.
+    if (appState.changelists.length === 0) void loadChangelistsForRepo();
+    else reconcileChangelists();
     const unstaged = st.entries.filter(isUnstaged);
     const staged = st.entries.filter(isStaged);
     // Keep the current selection if it still has changes on its side (so

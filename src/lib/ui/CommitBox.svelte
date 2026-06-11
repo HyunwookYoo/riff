@@ -1,32 +1,20 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { doCommit, loadAmendMessage, stagedCount } from "$lib/sourceControl";
+  import { commitChangelist } from "$lib/changelists";
 
-  const stagedN = $derived(stagedCount());
   const branch = $derived(appState.repoStatus?.branch ?? null);
   const subjectLen = $derived(appState.commitSubject.trim().length);
-  const canCommit = $derived(
-    subjectLen > 0 &&
-      (appState.commitAmend || stagedN > 0) &&
-      !appState.committing,
+  // The commit box targets the active changelist.
+  const activeCl = $derived(
+    appState.changelists.find((l) => l.id === appState.activeChangelistId),
   );
-  // Amending when HEAD is already up to date with its upstream likely rewrites
-  // a pushed commit — soft, non-blocking warning.
-  const amendPushedWarning = $derived(
-    appState.commitAmend &&
-      !!appState.repoStatus?.upstream &&
-      (appState.repoStatus?.ahead ?? 0) === 0,
+  const activeCount = $derived(activeCl?.files.length ?? 0);
+  const canCommit = $derived(
+    subjectLen > 0 && activeCount > 0 && !appState.committing,
   );
 
-  function onAmend(e: Event & { currentTarget: HTMLInputElement }) {
-    const checked = e.currentTarget.checked;
-    appState.commitAmend = checked;
-    if (checked) {
-      void loadAmendMessage();
-    } else {
-      appState.commitSubject = "";
-      appState.commitBody = "";
-    }
+  function commit() {
+    void commitChangelist(appState.activeChangelistId);
   }
 
   function addCoauthor() {
@@ -42,7 +30,7 @@
   function onKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
-      void doCommit();
+      commit();
     }
   }
 </script>
@@ -84,14 +72,6 @@
   {/each}
 
   <div class="opts">
-    <label title="Amend the last commit (loads its message)">
-      <input
-        type="checkbox"
-        checked={appState.commitAmend}
-        onchange={onAmend}
-      />
-      <span>Amend</span>
-    </label>
     <label title="Add a Signed-off-by trailer (-s)">
       <input type="checkbox" bind:checked={appState.commitSignoff} />
       <span>Sign-off</span>
@@ -101,23 +81,19 @@
     </button>
   </div>
 
-  {#if amendPushedWarning}
-    <div class="warn">⚠ This commit may already be pushed — amending rewrites it.</div>
-  {/if}
-
   <button
     type="button"
     class="commit primary"
     disabled={!canCommit}
-    onclick={() => void doCommit()}
+    onclick={commit}
     title="Ctrl+Enter"
   >
     {#if appState.committing}
       Committing…
-    {:else if branch}
-      Commit to {branch}
     {:else}
-      Commit (detached HEAD)
+      Commit “{activeCl?.name ?? "Default"}” ({activeCount}){branch
+        ? ` to ${branch}`
+        : ""}
     {/if}
   </button>
 </div>
@@ -209,10 +185,6 @@
   .opts .add-co:hover {
     border-color: var(--accent);
     color: var(--accent);
-  }
-  .warn {
-    font-size: 0.78em;
-    color: #d29922;
   }
   .commit {
     padding: 6px 10px;

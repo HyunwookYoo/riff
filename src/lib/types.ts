@@ -145,6 +145,14 @@ export interface ConflictVersions {
   binary: boolean;
 }
 
+/// A named bucket of changed files (Perforce/JetBrains-style changelist).
+/// Persisted per-repo; "default" is always present and non-deletable.
+export interface Changelist {
+  id: string;
+  name: string;
+  files: string[];
+}
+
 /// One hunk of a file's unified diff, for per-hunk stage/unstage. Mirrors Rust
 /// `Hunk`. `header` is the `@@ -a,b +c,d @@` line; `added`/`removed` are line
 /// counts for the badge. The hunk's index in the returned array identifies it

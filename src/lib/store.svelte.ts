@@ -2,6 +2,7 @@ import type {
   AppMode,
   Branch,
   ChangedFile,
+  Changelist,
   Commit,
   CompareCtx,
   CompareMode,
@@ -166,6 +167,11 @@ class AppState {
   // "unstaged" (index↔worktree) or "staged" (HEAD↔index). DiffView reads this
   // to pick the per-side diff. Session-only.
   changesSide = $state<"staged" | "unstaged">("unstaged");
+  // Changelists (Perforce/JetBrains-style named buckets) for the changes repo,
+  // loaded + reconciled against status. `activeChangelistId` is the bucket the
+  // commit box targets. Persisted per-repo via the backend. Session mirror.
+  changelists = $state<Changelist[]>([]);
+  activeChangelistId = $state("default");
   // Which repo the Changes screen stages/commits against: index into `repos`.
   // 0 = main; submodule/manual repos let you stage & commit inside them. Like
   // History's `historyRepoIdx`, independent of the compare Focus. Session-only.

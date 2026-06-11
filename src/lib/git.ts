@@ -406,6 +406,28 @@ export function headCommitMessage(path: string): Promise<string> {
   return invoke("head_commit_message", { path });
 }
 
+/** Commit exactly `paths` (a changelist), leaving other changes uncommitted. */
+export function commitPaths(
+  path: string,
+  paths: string[],
+  subject: string,
+  body: string,
+  signoff: boolean,
+  coauthors: string[],
+): Promise<void> {
+  return invoke("commit_paths", { path, paths, subject, body, signoff, coauthors });
+}
+
+/** Read this repo's persisted changelist JSON ("" when absent). */
+export function loadChangelists(path: string): Promise<string> {
+  return invoke("load_changelists", { path });
+}
+
+/** Persist the changelist JSON for this repo. */
+export function saveChangelists(path: string, data: string): Promise<void> {
+  return invoke("save_changelists", { path, data });
+}
+
 /**
  * Parse one file's unified diff into hunks. `staged` true → HEAD↔index
  * (`git diff --cached`); false → index↔worktree. Empty for untracked/binary.

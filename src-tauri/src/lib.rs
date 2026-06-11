@@ -189,6 +189,33 @@ fn head_commit_message(state: tauri::State<GitCli>, path: String) -> Result<Stri
 }
 
 #[tauri::command]
+fn commit_paths(
+    state: tauri::State<GitCli>,
+    path: String,
+    paths: Vec<String>,
+    subject: String,
+    body: String,
+    signoff: bool,
+    coauthors: Vec<String>,
+) -> Result<(), GitError> {
+    state.commit_paths(Path::new(&path), &paths, &subject, &body, signoff, &coauthors)
+}
+
+#[tauri::command]
+fn load_changelists(state: tauri::State<GitCli>, path: String) -> Result<String, GitError> {
+    state.load_changelists(Path::new(&path))
+}
+
+#[tauri::command]
+fn save_changelists(
+    state: tauri::State<GitCli>,
+    path: String,
+    data: String,
+) -> Result<(), GitError> {
+    state.save_changelists(Path::new(&path), &data)
+}
+
+#[tauri::command]
 fn file_hunks(
     state: tauri::State<GitCli>,
     path: String,
@@ -598,6 +625,9 @@ pub fn run() {
             unstage,
             commit,
             head_commit_message,
+            commit_paths,
+            load_changelists,
+            save_changelists,
             file_hunks,
             apply_hunks,
             create_branch,
