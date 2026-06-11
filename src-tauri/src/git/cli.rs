@@ -1933,6 +1933,54 @@ impl GitLayer for GitCli {
         parse_porcelain(&buf)
     }
 
+    fn file_revisions(&self, path: &Path, file_path: &str) -> Result<Vec<Commit>, GitError> {
+        validate_path(file_path)?;
+        let out = self.run(path, &["log", "-z", COMMIT_LOG_FORMAT, "--", file_path])?;
+        Ok(parse_commit_log(&String::from_utf8_lossy(&out)))
+    }
+
+    fn timelapse_frame(
+        &self,
+        path: &Path,
+        sha: &str,
+        prev_sha: Option<&str>,
+        file_path: &str,
+    ) -> Result<FileDiff, GitError> {
+        validate_path(file_path)?;
+        validate_ref(sha)?;
+        if let Some(p) = prev_sha {
+            validate_ref(p)?;
+        }
+        // Content at this revision; missing blob (e.g. a deletion frame) → empty.
+        let new_bytes =
+            cat_file_oneshot(path, &format!("{sha}:{file_path}")).unwrap_or_default();
+        let old_bytes = prev_sha
+            .and_then(|p| cat_file_oneshot(path, &format!("{p}:{file_path}")))
+            .unwrap_or_default();
+        let old_size = old_bytes.len() as u64;
+        let new_size = new_bytes.len() as u64;
+
+        if new_size > LARGE_FILE_BYTES || old_size > LARGE_FILE_BYTES {
+            return Ok(FileDiff::TooLarge { old_size, new_size });
+        }
+        if is_binary(&new_bytes) || is_binary(&old_bytes) {
+            return Ok(FileDiff::Binary { old_size, new_size, note: None });
+        }
+
+        let old_content = diff::normalize_eol(&String::from_utf8_lossy(&old_bytes));
+        let new_content = diff::normalize_eol(&String::from_utf8_lossy(&new_bytes));
+        let changes = diff::compute_changes(&old_content, &new_content);
+        Ok(FileDiff::Text {
+            old_content,
+            new_content,
+            old_size,
+            new_size,
+            derived_label: None,
+            ue_version: None,
+            changes,
+        })
+    }
+
     fn list_submodules(&self, path: &Path) -> Result<Vec<SubmoduleInfo>, GitError> {
         // No `.gitmodules` → no submodules. Skip even spawning git.
         let gitmodules = path.join(".gitmodules");

@@ -1119,6 +1119,19 @@
         {/if}
       </span>
       <div class="actions">
+        {#if appState.blameTarget}
+          <button
+            type="button"
+            class="timelapse-btn"
+            title="Play this file's history (timelapse)"
+            onclick={() => {
+              appState.timelapseTarget = appState.blameTarget;
+              appState.timelapseOpen = true;
+            }}
+          >
+            🎞 Timelapse
+          </button>
+        {/if}
         <div class="font-size" title="Editor font size (Ctrl +/- / 0)">
           <button type="button" onclick={() => adjustFontSize(-1)}>A−</button>
           <button type="button" class="size-reset" onclick={() => resetFontSize()}>
@@ -1443,6 +1456,20 @@
     display: flex;
     gap: 8px;
     align-items: center;
+  }
+  .timelapse-btn {
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--input-bg);
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.85em;
+    white-space: nowrap;
+  }
+  .timelapse-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
   }
   .font-size {
     display: inline-flex;

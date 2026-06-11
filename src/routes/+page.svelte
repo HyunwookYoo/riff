@@ -14,6 +14,7 @@
   import ConflictView from "$lib/ui/ConflictView.svelte";
   import CheckoutDialog from "$lib/ui/CheckoutDialog.svelte";
   import CommandPalette from "$lib/ui/CommandPalette.svelte";
+  import Timelapse from "$lib/ui/Timelapse.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
@@ -419,6 +420,7 @@
   <ConflictBanner />
   <CheckoutDialog />
   <CommandPalette />
+  <Timelapse />
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />
   {/if}

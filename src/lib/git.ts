@@ -488,6 +488,25 @@ export function blameFile(
   });
 }
 
+/** Commits that touched `filePath` (newest first) — the file-timelapse timeline. */
+export function fileRevisions(path: string, filePath: string): Promise<Commit[]> {
+  return invoke("file_revisions", { path, filePath });
+}
+
+/**
+ * One timelapse frame: the file at `sha` plus change ranges vs `prevSha` (the
+ * older adjacent revision; null → diff against empty). Same `FileDiff` shape as
+ * the diff viewer; only the `text` variant is playable.
+ */
+export function timelapseFrame(
+  path: string,
+  sha: string,
+  prevSha: string | null,
+  filePath: string,
+): Promise<FileDiff> {
+  return invoke("timelapse_frame", { path, sha, prevSha, filePath });
+}
+
 /**
  * Parse `.gitmodules` (via `git config -z`) and return declared submodules.
  * Empty list when there is no `.gitmodules` or it has no entries.

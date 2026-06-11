@@ -425,6 +425,22 @@ pub trait GitLayer {
         rev: &str,
         use_contents: bool,
     ) -> Result<Blame, GitError>;
+    /// Commits that touched `file_path` (newest first) — the timeline for the
+    /// file timelapse. No rename-follow in v1, so history stops where the
+    /// current path was introduced.
+    fn file_revisions(&self, path: &Path, file_path: &str) -> Result<Vec<Commit>, GitError>;
+    /// One timelapse frame: the file's content at `sha` plus the change ranges
+    /// versus `prev_sha` (the older adjacent revision; `None` diffs against
+    /// empty, i.e. the file's first appearance). Returns the diff viewer's
+    /// `FileDiff` shape — `Text` carries `new_content` + `changes` for the
+    /// single-pane highlight; `Binary` / `TooLarge` mark an un-playable frame.
+    fn timelapse_frame(
+        &self,
+        path: &Path,
+        sha: &str,
+        prev_sha: Option<&str>,
+        file_path: &str,
+    ) -> Result<FileDiff, GitError>;
     /// Read `.gitmodules` (if present) and return the declared submodules.
     /// Empty list when there is no `.gitmodules` or it contains no
     /// `submodule.<name>.path` entries. Used to auto-populate the multi-root

@@ -502,6 +502,26 @@ fn blame_file(
 }
 
 #[tauri::command]
+fn file_revisions(
+    state: tauri::State<GitCli>,
+    path: String,
+    file_path: String,
+) -> Result<Vec<Commit>, GitError> {
+    state.file_revisions(Path::new(&path), &file_path)
+}
+
+#[tauri::command]
+fn timelapse_frame(
+    state: tauri::State<GitCli>,
+    path: String,
+    sha: String,
+    prev_sha: Option<String>,
+    file_path: String,
+) -> Result<FileDiff, GitError> {
+    state.timelapse_frame(Path::new(&path), &sha, prev_sha.as_deref(), &file_path)
+}
+
+#[tauri::command]
 fn list_submodules(
     state: tauri::State<GitCli>,
     path: String,
@@ -658,6 +678,8 @@ pub fn run() {
             stash_apply,
             stash_drop,
             blame_file,
+            file_revisions,
+            timelapse_frame,
             list_repo_files,
             read_repo_file,
             list_submodules,

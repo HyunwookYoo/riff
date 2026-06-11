@@ -63,6 +63,10 @@ class AppState {
   // drill-in/back so returning to blame mode lands you on the same file.
   // Session-only.
   blameTarget = $state<RepoFile | null>(null);
+  // File timelapse overlay (launched from the blame toolbar). `timelapseTarget`
+  // is the repo-qualified file being played back. Session-only.
+  timelapseOpen = $state(false);
+  timelapseTarget = $state<RepoFile | null>(null);
   // Cached `git ls-files` results for every repo in the workspace (§13.3 #20).
   // Each entry is `{ repoIdx, path }`; the blame picker fuzzy-searches the
   // whole union. Cleared on repo switch by InputBar.
