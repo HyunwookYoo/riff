@@ -117,7 +117,7 @@
 </div>
 
 <div class="bar">
-  {#if appState.appMode === "changes" || appState.appMode === "history"}
+  {#if (appState.appMode === "changes" || appState.appMode === "history") && !appState.sidebarOpen}
     <div class="subtoggle" role="group" aria-label="Source control view">
       <button
         type="button"

@@ -13,8 +13,10 @@
     doStashApply,
     doStashDrop,
     doStashSave,
+    enterChangesMode,
     loadCurrentBranch,
   } from "$lib/sourceControl";
+  import { enterGraphView } from "$lib/commitHistory";
   import { requestCheckout } from "$lib/checkout";
   import RefIcon from "./RefIcon.svelte";
   import type { Branch } from "$lib/types";
@@ -36,6 +38,7 @@
   let current = $state<string | null>(null);
   let ahead = $state(0);
   let behind = $state(0);
+  let changeCount = $state(0); // uncommitted files, for the Working nav badge
   let busy = $state(false);
   let session = 0;
 
@@ -71,6 +74,7 @@
       current = st.branch;
       ahead = st.ahead;
       behind = st.behind;
+      changeCount = st.entries.length;
     } catch {
       if (s === session) {
         branches = [];
@@ -326,6 +330,57 @@
     </button>
   </header>
 
+  {#if appState.appMode === "changes" || appState.appMode === "history"}
+    <nav class="views" aria-label="Source control view">
+      <button
+        type="button"
+        class="view"
+        class:active={appState.appMode === "changes"}
+        onclick={() => void enterChangesMode()}
+      >
+        <svg
+          class="vi"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
+        <span class="v-label">Working Copy</span>
+        {#if changeCount > 0}<span class="v-badge">{changeCount}</span>{/if}
+      </button>
+      <button
+        type="button"
+        class="view"
+        class:active={appState.appMode === "history"}
+        onclick={() => void enterGraphView()}
+      >
+        <svg
+          class="vi"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="5" cy="6" r="2.5" />
+          <circle cx="5" cy="18" r="2.5" />
+          <path d="M5 8.5v7" />
+          <circle cx="17" cy="12" r="2.5" />
+          <path d="M5 12h9.5" />
+        </svg>
+        <span class="v-label">Graph</span>
+      </button>
+    </nav>
+  {/if}
+
   <div class="search">
     <input
       type="text"
@@ -540,6 +595,56 @@
     border-bottom: 1px solid var(--border);
     font-size: 0.85em;
     font-weight: 600;
+  }
+  /* Fork-style view nav: Working Copy / Graph. */
+  .views {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .view {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.92em;
+    text-align: left;
+  }
+  .view:hover {
+    background: var(--hover);
+  }
+  .view.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .view .vi {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+  .view .v-label {
+    flex: 1;
+  }
+  .view .v-badge {
+    flex: 0 0 auto;
+    min-width: 18px;
+    padding: 0 6px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.72em;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1.5;
   }
   header .title {
     flex: 1;

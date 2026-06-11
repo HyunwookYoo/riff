@@ -173,9 +173,10 @@ class AppState {
   // Top (Unstaged) share of the Changes list area; the draggable divider
   // between the Unstaged and Staged panes adjusts it. Session-only.
   changesPaneFraction = $state(0.5);
-  // refs sidebar (branches/tags) visibility. Toggleable (Ctrl+B), hidden by
-  // default. Session-only.
-  sidebarOpen = $state(false);
+  // refs sidebar (Working/Graph nav + branches/tags) visibility. Toggleable
+  // (Ctrl+B); shown by default so the Fork-style view nav is visible.
+  // Session-only.
+  sidebarOpen = $state(true);
   // refs sidebar width (px), drag-resizable. Session-only.
   sidebarWidth = $state(240);
   // Current branch of the source-control repo, shown by the toolbar branch
