@@ -1,6 +1,11 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { abortOp, continueOp, conflictCount } from "$lib/sourceControl";
+  import {
+    abortOp,
+    conflictCount,
+    continueOp,
+    enterConflictResolution,
+  } from "$lib/sourceControl";
 
   const label = $derived(
     (
@@ -23,6 +28,16 @@
         — {unresolved} unresolved file{unresolved === 1 ? "" : "s"}{/if}. Resolve
       conflicts in Working, stage them, then Continue.
     </span>
+    {#if unresolved > 0}
+      <button
+        type="button"
+        class="resolve"
+        title="Open the conflicted files in Working and resolve them"
+        onclick={() => void enterConflictResolution()}
+      >
+        Resolve ({unresolved})
+      </button>
+    {/if}
     <button
       type="button"
       class="continue"
@@ -63,6 +78,12 @@
     color: var(--fg);
     cursor: pointer;
     font-size: 0.95em;
+  }
+  .conflict-banner .resolve {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
   }
   .conflict-banner .continue {
     background: var(--accent);

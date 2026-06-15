@@ -1,78 +1,66 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { applyHunks, fileHunks } from "$lib/git";
-  import { changesRepoPath, loadStatus } from "$lib/sourceControl";
+  import { fileHunks } from "$lib/git";
+  import { changesRepoPath } from "$lib/sourceControl";
+  import { assignHunk, hunkChangelistId } from "$lib/changelists";
   import type { Hunk } from "$lib/types";
 
   let hunks = $state<Hunk[]>([]);
-  let busy = $state(false);
-  // Monotonic guard so a slower fileHunks() for an older file/side can't
-  // overwrite a newer one's result.
+  // Monotonic guard so a slower fileHunks() for an older file can't overwrite a
+  // newer one's result.
   let session = 0;
 
-  const verb = $derived(appState.changesSide === "staged" ? "Unstage" : "Stage");
-
   $effect(() => {
-    // Re-list whenever the selected file or side changes.
+    // Re-list whenever the selected file or the status (a re-diff) changes.
     void appState.selectedFile;
     void appState.changesSide;
+    void appState.repoStatus;
     void loadHunks();
   });
 
   async function loadHunks() {
     const file = appState.selectedFile;
     const s = ++session;
-    if (!file || appState.appMode !== "changes") {
+    // Only the unstaged side of the Changes screen — that's the working-tree
+    // change a changelist commits.
+    if (
+      !file ||
+      appState.appMode !== "changes" ||
+      appState.changesSide !== "unstaged"
+    ) {
       hunks = [];
       return;
     }
     try {
-      const h = await fileHunks(
-        changesRepoPath(),
-        file.path,
-        appState.changesSide === "staged",
-      );
-      if (s === session) hunks = h;
+      const h = await fileHunks(changesRepoPath(), file.path, false);
+      if (s !== session) return;
+      hunks = h;
+      // Cache (with ids) so the changelist list can show per-list hunk counts
+      // and the commit can resolve ids → indices.
+      appState.hunksByFile = { ...appState.hunksByFile, [file.path]: h };
     } catch {
       if (s === session) hunks = [];
     }
   }
-
-  async function apply(i: number) {
-    const file = appState.selectedFile;
-    if (!file || busy) return;
-    busy = true;
-    try {
-      await applyHunks(
-        changesRepoPath(),
-        file.path,
-        appState.changesSide === "staged",
-        [i],
-      );
-    } catch (e) {
-      appState.error = String(e);
-    } finally {
-      busy = false;
-      // Refresh lists + diff; the $effect re-lists the remaining hunks once
-      // loadStatus re-selects the (new) file object.
-      await loadStatus();
-    }
-  }
 </script>
 
-{#if hunks.length > 1}
+{#if hunks.length > 1 && appState.selectedFile}
+  {@const file = appState.selectedFile.path}
   <div class="hunkbar">
-    {#each hunks as h, i (i)}
-      <div class="hunk">
-        <button
-          type="button"
-          class="apply"
-          disabled={busy}
-          onclick={() => apply(i)}
-          title="{verb} this hunk"
+    <div class="hb-head">Assign hunks to a changelist</div>
+    {#each hunks as h, i (h.id + ":" + i)}
+      {@const cl = hunkChangelistId(file, h.id)}
+      <div class="hunk" class:moved={cl !== appState.activeChangelistId}>
+        <select
+          class="hb-list"
+          value={cl}
+          onchange={(e) => assignHunk(file, h.id, e.currentTarget.value)}
+          title="Changelist for this hunk"
         >
-          {verb}
-        </button>
+          {#each appState.changelists as l (l.id)}
+            <option value={l.id}>{l.name}</option>
+          {/each}
+        </select>
         <span class="stat">
           <span class="add">+{h.added}</span>
           <span class="del">−{h.removed}</span>
@@ -87,10 +75,22 @@
   .hunkbar {
     display: flex;
     flex-direction: column;
-    max-height: 30%;
+    max-height: 32%;
     overflow-y: auto;
     border-bottom: 1px solid var(--border);
     background: var(--bar-bg);
+    flex-shrink: 0;
+  }
+  .hb-head {
+    position: sticky;
+    top: 0;
+    padding: 3px 10px;
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    background: var(--bar-bg);
+    border-bottom: 1px solid var(--border);
   }
   .hunk {
     display: flex;
@@ -101,26 +101,26 @@
     font-family: var(--mono);
     border-top: 1px solid var(--border);
   }
-  .hunk:first-child {
+  .hunk:first-of-type {
     border-top: none;
   }
-  .apply {
+  .hunk.moved {
+    background: var(--accent-soft);
+  }
+  .hb-list {
     flex: 0 0 auto;
-    padding: 1px 8px;
+    max-width: 42%;
+    padding: 1px 4px;
     border: 1px solid var(--border);
     border-radius: 3px;
     background: var(--input-bg);
     color: inherit;
     cursor: pointer;
     font-size: 0.95em;
+    font-family: inherit;
   }
-  .apply:hover:not(:disabled) {
+  .hb-list:hover {
     border-color: var(--accent);
-    color: var(--accent);
-  }
-  .apply:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
   .stat {
     flex: 0 0 auto;

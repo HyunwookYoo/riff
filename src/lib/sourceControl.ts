@@ -1,6 +1,7 @@
 import { appState } from "./store.svelte";
 import {
   commit as commitCmd,
+  discardPaths as discardCmd,
   fetch as fetchCmd,
   headCommitMessage,
   merge as mergeCmd,
@@ -87,7 +88,7 @@ export function isUnstaged(e: StatusEntry): boolean {
 
 // Porcelain v2 unmerged XY codes (both sides come from a `u` record).
 const CONFLICT_CODES = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
-function entryConflicted(e: StatusEntry): boolean {
+export function entryConflicted(e: StatusEntry): boolean {
   return CONFLICT_CODES.has(e.index_status + e.worktree_status);
 }
 /// True when `path` is an unmerged (conflicted) entry in the current status.
@@ -98,6 +99,20 @@ export function isPathConflicted(path: string): boolean {
 /// Count of unresolved (conflicted) files in the current status.
 export function conflictCount(): number {
   return (appState.repoStatus?.entries ?? []).filter(entryConflicted).length;
+}
+
+/// The conflicted (unmerged) entries in the current status.
+export function conflictedEntries(): StatusEntry[] {
+  return (appState.repoStatus?.entries ?? []).filter(entryConflicted);
+}
+
+/// Jump to conflict resolution: enter the Working (Changes) view and open the
+/// first conflicted file in the 3-way resolver. Used by the banner's Resolve
+/// button.
+export async function enterConflictResolution(): Promise<void> {
+  await enterChangesMode();
+  const conflicts = conflictedEntries();
+  if (conflicts.length > 0) openChange(conflicts[0], "unstaged");
 }
 
 export async function enterChangesMode(): Promise<void> {
@@ -208,6 +223,14 @@ export function stagePath(path: string): Promise<void> {
 }
 export function unstagePath(path: string): Promise<void> {
   return applyAndReload(unstageCmd(changesRepoPath(), [path]));
+}
+/// Discard a file's local changes (revert tracked → HEAD, delete new). Pass
+/// `origPath` for a rename so its original is restored too. Destructive — the
+/// caller confirms first. Reloads status, which re-buckets the changelists so
+/// the discarded path drops out.
+export function discardPath(path: string, origPath: string | null): Promise<void> {
+  const paths = origPath ? [path, origPath] : [path];
+  return applyAndReload(discardCmd(changesRepoPath(), paths));
 }
 export function stageAll(): Promise<void> {
   return applyAndReload(stageCmd(changesRepoPath(), null));

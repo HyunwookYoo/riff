@@ -1,14 +1,24 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { entryToChangedFile, selectChange } from "$lib/sourceControl";
+  import {
+    conflictedEntries,
+    discardPath,
+    entryToChangedFile,
+    selectChange,
+  } from "$lib/sourceControl";
+  import { setFileViewMode } from "$lib/git";
+  import { confirmAction } from "$lib/dialogs";
   import {
     DEFAULT_CHANGELIST,
     commitChangelist,
     createChangelist,
     deleteChangelist,
+    fileHunksInList,
+    filesInChangelist,
     moveFileToChangelist,
     renameChangelist,
   } from "$lib/changelists";
+  import { buildPathTree, type TreePathNode } from "./pathTree";
   import type { ChangedFile, FileStatus, StatusEntry } from "$lib/types";
 
   // path → status entry, to resolve a file's badge/diff from its changelist.
@@ -18,8 +28,19 @@
     return m;
   });
 
+  // Unmerged files, surfaced in a dedicated group above the changelists.
+  const conflicts = $derived(conflictedEntries());
+
   function badge(s: FileStatus): string {
     return { added: "A", modified: "M", deleted: "D", renamed: "R", copied: "C", typechanged: "T" }[s];
+  }
+
+  // "k/n" when a file's hunks are split — only k of its n hunks are in `clId`.
+  // Empty when the whole file is in this list (or it has no hunk data).
+  function hunkBadge(path: string, clId: string): string {
+    const sub = fileHunksInList(path, clId);
+    if (!sub || sub.ids.length === sub.total) return "";
+    return `${sub.ids.length}/${sub.total}`;
   }
 
   function isSel(path: string): boolean {
@@ -30,11 +51,44 @@
     if (e) selectChange(entryToChangedFile(e, "unstaged"), "unstaged");
   }
 
+  // Discard a file's changes (destructive) after confirming. A new file (staged-
+  // add or untracked) is deleted; everything else reverts to HEAD.
+  async function confirmDiscard(path: string) {
+    const e = byPath.get(path);
+    const isNew =
+      !!e &&
+      (e.index_status === "A" ||
+        (e.index_status === "?" && e.worktree_status === "?"));
+    const msg = isNew
+      ? `Delete this new file? It is permanently removed from disk and can't be undone.\n\n${path}`
+      : `Discard changes to this file? It reverts to HEAD and can't be undone.\n\n${path}`;
+    const ok = await confirmAction(msg, {
+      title: isNew ? "Delete file" : "Discard changes",
+    });
+    if (!ok) return;
+    void discardPath(path, e?.orig_path ?? null);
+  }
+
   let collapsed = $state(new Set<string>());
   function toggle(id: string) {
     const n = new Set(collapsed);
     n.has(id) ? n.delete(id) : n.add(id);
     collapsed = n;
+  }
+
+  // Tree-view directory collapse, keyed `<changelistId>:<dirPath>` so the same
+  // directory in two changelists collapses independently.
+  let collapsedDirs = $state(new Set<string>());
+  function toggleDir(key: string) {
+    const n = new Set(collapsedDirs);
+    n.has(key) ? n.delete(key) : n.add(key);
+    collapsedDirs = n;
+  }
+  // Flat ⇄ tree, shared with the global file-view setting (FileList's toggle).
+  function toggleViewMode() {
+    const next = appState.fileViewMode === "flat" ? "tree" : "flat";
+    appState.fileViewMode = next;
+    void setFileViewMode(next);
   }
 
   // Inline create / rename editors.
@@ -57,8 +111,13 @@
     editingId = null;
   }
 
-  function doDelete(id: string) {
-    if (confirm("Delete this changelist? Its files move to Default.")) deleteChangelist(id);
+  async function doDelete(id: string) {
+    if (
+      await confirmAction("Delete this changelist? Its files move to Default.", {
+        title: "Delete changelist",
+      })
+    )
+      deleteChangelist(id);
   }
 
   // Move a file to another changelist via a right-click menu (HTML5 drag is
@@ -133,6 +192,75 @@
   onpointerup={onWinPointerUp}
 />
 
+<!-- One file row. `depth = null` → flat (full path); a number → tree (leaf name
+     + indent). Drag / right-click move + selection are identical either way. -->
+{#snippet fileRow(
+  path: string,
+  label: string | null,
+  depth: number | null,
+  clId: string,
+)}
+  {@const e = byPath.get(path)}
+  {#if e}
+    {@const cf = entryToChangedFile(e, "unstaged") as ChangedFile}
+    {@const hb = hunkBadge(path, clId)}
+    <div class="cl-file" class:active={isSel(path)}>
+      <button
+        type="button"
+        class="cl-pick"
+        style={depth === null ? "" : `padding-left: ${18 + depth * 12}px`}
+        onclick={() => pick(path)}
+        onpointerdown={(ev) => onFilePointerDown(ev, path)}
+        oncontextmenu={(ev) => openMove(ev, path)}
+        title={cf.old_path
+          ? `${cf.old_path} → ${path}`
+          : `${path} · drag onto a changelist to move`}
+      >
+        <span class="fbadge" data-status={cf.status}>{badge(cf.status)}</span>
+        <span class="fpath" class:leaf={depth !== null}>{label ?? path}</span>
+      </button>
+      {#if hb}
+        <span class="hunks" title="{hb} hunks of this file are in this changelist">
+          {hb}
+        </span>
+      {/if}
+      <button
+        type="button"
+        class="cl-discard"
+        title="Discard changes (revert to HEAD)"
+        aria-label="Discard changes to {path}"
+        onclick={() => confirmDiscard(path)}
+      >
+        ↩
+      </button>
+    </div>
+  {/if}
+{/snippet}
+
+<!-- Recursive tree of one changelist's files (dirs collapsible). -->
+{#snippet fileTree(nodes: TreePathNode[], clId: string, depth: number)}
+  {#each nodes as node (node.kind === "dir" ? "d:" + node.path : "f:" + node.path)}
+    {#if node.kind === "dir"}
+      {@const key = clId + ":" + node.path}
+      {@const open = !collapsedDirs.has(key)}
+      <button
+        type="button"
+        class="cl-dir"
+        style="padding-left: {18 + depth * 12}px"
+        onclick={() => toggleDir(key)}
+      >
+        <span class="chev" class:open>▸</span>
+        <span class="dname">{node.name}</span>
+      </button>
+      {#if open}
+        {@render fileTree(node.children, clId, depth + 1)}
+      {/if}
+    {:else}
+      {@render fileRow(node.path, node.name, depth, clId)}
+    {/if}
+  {/each}
+{/snippet}
+
 <div class="cl-root">
   <div class="cl-toolbar">
     {#if creating}
@@ -151,11 +279,44 @@
         + New changelist
       </button>
     {/if}
+    <button
+      type="button"
+      class="view-toggle"
+      title={appState.fileViewMode === "flat"
+        ? "Switch to tree view"
+        : "Switch to flat view"}
+      onclick={toggleViewMode}
+    >
+      {appState.fileViewMode === "flat" ? "Tree" : "Flat"}
+    </button>
   </div>
 
   <div class="cl-scroll">
+    {#if conflicts.length > 0}
+      <div class="cl-group" role="group">
+        <div class="cl-head conflict-head">
+          <span class="warn" aria-hidden="true">⚠</span>
+          <span class="conflict-label">Conflicts</span>
+          <span class="cnt">{conflicts.length}</span>
+        </div>
+        {#each conflicts as e (e.path)}
+          <div class="cl-file" class:active={isSel(e.path)}>
+            <button
+              type="button"
+              class="cl-pick"
+              onclick={() => pick(e.path)}
+              title="Resolve {e.path}"
+            >
+              <span class="fbadge conflict" title="Conflicted">!</span>
+              <span class="fpath">{e.path}</span>
+            </button>
+          </div>
+        {/each}
+      </div>
+    {/if}
     {#each appState.changelists as cl (cl.id)}
       {@const isActive = cl.id === appState.activeChangelistId}
+      {@const clFiles = filesInChangelist(cl.id)}
       <div class="cl-group" class:drop={dropList === cl.id} data-cl={cl.id} role="group">
         <div class="cl-head" class:active={isActive}>
           <button type="button" class="caret" onclick={() => toggle(cl.id)} aria-label="Collapse">
@@ -184,10 +345,10 @@
             {:else}
               <span class="nm">{cl.name}</span>
             {/if}
-            <span class="cnt">{cl.files.length}</span>
+            <span class="cnt">{clFiles.length}</span>
           </button>
           <div class="cl-actions">
-            {#if cl.files.length > 0}
+            {#if clFiles.length > 0}
               <button
                 type="button"
                 title="Commit this changelist (uses the message box below)"
@@ -205,29 +366,17 @@
         </div>
 
         {#if !collapsed.has(cl.id)}
-          {#if cl.files.length === 0}
+          {#if clFiles.length === 0}
             <div class="cl-empty">No files{cl.id === DEFAULT_CHANGELIST ? "" : " — drag here"}</div>
+          {:else if appState.fileViewMode === "tree"}
+            {@render fileTree(
+              buildPathTree(clFiles.map((f) => f.path).filter((p) => byPath.has(p))),
+              cl.id,
+              0,
+            )}
           {:else}
-            {#each cl.files as path (path)}
-              {@const e = byPath.get(path)}
-              {#if e}
-                {@const cf = entryToChangedFile(e, "unstaged") as ChangedFile}
-                <div class="cl-file" class:active={isSel(path)}>
-                  <button
-                    type="button"
-                    class="cl-pick"
-                    onclick={() => pick(path)}
-                    onpointerdown={(ev) => onFilePointerDown(ev, path)}
-                    oncontextmenu={(ev) => openMove(ev, path)}
-                    title={cf.old_path
-                      ? `${cf.old_path} → ${path}`
-                      : `${path} · drag onto a changelist to move`}
-                  >
-                    <span class="fbadge" data-status={cf.status}>{badge(cf.status)}</span>
-                    <span class="fpath">{path}</span>
-                  </button>
-                </div>
-              {/if}
+            {#each clFiles as f (f.path)}
+              {@render fileRow(f.path, null, null, cl.id)}
             {/each}
           {/if}
         {/if}
@@ -321,12 +470,19 @@
   }
   .cl-toolbar {
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     padding: 5px 8px;
     border-bottom: 1px solid var(--border);
     background: var(--bar-bg);
   }
+  .cl-create {
+    flex: 1;
+    min-width: 0;
+  }
   .new-cl {
-    width: 100%;
+    flex: 1;
     padding: 4px 8px;
     border: 1px dashed var(--border);
     border-radius: 4px;
@@ -334,6 +490,20 @@
     color: var(--muted);
     cursor: pointer;
     font-size: 0.85em;
+  }
+  .view-toggle {
+    flex-shrink: 0;
+    padding: 3px 9px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.78em;
+  }
+  .view-toggle:hover {
+    color: var(--accent);
+    border-color: var(--accent);
   }
   .new-cl:hover {
     border-color: var(--accent);
@@ -369,6 +539,27 @@
   }
   .cl-head.active {
     background: var(--accent-soft);
+  }
+  .cl-head.conflict-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: var(--error-bg, #3a1d1d);
+    color: var(--error-fg, #f0b4b4);
+    font-size: 0.85em;
+    font-weight: 600;
+  }
+  .conflict-head .warn {
+    flex: 0 0 auto;
+  }
+  .conflict-head .conflict-label {
+    flex: 1;
+  }
+  .conflict-head .cnt {
+    flex: 0 0 auto;
+    opacity: 0.8;
+    font-weight: 400;
   }
   .cl-head .caret {
     border: none;
@@ -443,9 +634,38 @@
   }
   .cl-file {
     display: flex;
+    align-items: center;
   }
   .cl-file:hover {
     background: var(--hover);
+  }
+  .cl-discard {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 4px 9px;
+    font-size: 0.95em;
+    line-height: 1;
+    opacity: 0;
+  }
+  .cl-file:hover .cl-discard,
+  .cl-discard:focus-visible {
+    opacity: 1;
+  }
+  .cl-discard:hover {
+    color: var(--error-fg, #f85149);
+  }
+  .hunks {
+    flex: 0 0 auto;
+    font-size: 0.72em;
+    font-family: var(--mono);
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 7px;
+    padding: 0 6px;
+    margin-right: 2px;
   }
   .cl-file.active {
     background: var(--accent-soft);
@@ -487,6 +707,7 @@
   .fbadge[data-status="renamed"] { background: #2563eb; }
   .fbadge[data-status="copied"] { background: #0891b2; }
   .fbadge[data-status="typechanged"] { background: #7c3aed; }
+  .fbadge.conflict { background: var(--error-fg, #f85149); }
   .fpath {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -494,5 +715,44 @@
     direction: rtl;
     text-align: left;
     min-width: 0;
+  }
+  /* Tree-view leaf name: short, left-to-right (no rtl ellipsis). */
+  .fpath.leaf {
+    direction: ltr;
+  }
+  .cl-dir {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+    padding: 4px 10px;
+    font-size: 0.84em;
+    font-family: var(--mono);
+    user-select: none;
+  }
+  .cl-dir:hover {
+    background: var(--hover);
+  }
+  .cl-dir .chev {
+    display: inline-block;
+    width: 10px;
+    flex-shrink: 0;
+    opacity: 0.6;
+    font-size: 0.7em;
+    transition: transform 0.12s ease;
+  }
+  .cl-dir .chev.open {
+    transform: rotate(90deg);
+  }
+  .cl-dir .dname {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.85;
   }
 </style>

@@ -195,6 +195,14 @@ class AppState {
   // commit box targets. Persisted per-repo via the backend. Session mirror.
   changelists = $state<Changelist[]>([]);
   activeChangelistId = $state("default");
+  // Hunk-level changelist assignment (session-only). `hunkAssignments` maps a
+  // file path → (hunk id → changelist id) for hunks reassigned away from the
+  // file's home changelist; an absent hunk follows its file's home. `hunksByFile`
+  // caches a file's current hunks (with ids) — populated when the diff's HunkBar
+  // loads them — so the changelist list can show per-list hunk counts and the
+  // commit can resolve ids → indices. Both reset on reload / repo switch.
+  hunkAssignments = $state<Record<string, Record<string, string>>>({});
+  hunksByFile = $state<Record<string, Hunk[]>>({});
   // Which repo the Changes screen stages/commits against: index into `repos`.
   // 0 = main; submodule/manual repos let you stage & commit inside them. Like
   // History's `historyRepoIdx`, independent of the compare Focus. Session-only.

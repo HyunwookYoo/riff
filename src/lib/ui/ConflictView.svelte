@@ -226,6 +226,47 @@
     return (doc.match(/^<<<<<<</gm) ?? []).length;
   }
 
+  // Positions of each conflict's `<<<<<<<` line in the result doc.
+  function conflictPositions(): number[] {
+    if (!resultView) return [];
+    const doc = resultView.state.doc;
+    const out: number[] = [];
+    for (let i = 1; i <= doc.lines; i++) {
+      if (doc.line(i).text.startsWith("<<<<<<<")) out.push(doc.line(i).from);
+    }
+    return out;
+  }
+
+  // Scroll the result editor to the conflict before/after the cursor (wraps).
+  function goConflict(dir: 1 | -1) {
+    const view = resultView;
+    if (!view) return;
+    const pos = conflictPositions();
+    if (pos.length === 0) return;
+    const head = view.state.selection.main.head;
+    const target =
+      dir === 1
+        ? (pos.find((p) => p > head) ?? pos[0])
+        : ([...pos].reverse().find((p) => p < head) ?? pos[pos.length - 1]);
+    view.dispatch({
+      selection: { anchor: target },
+      effects: EditorView.scrollIntoView(target, { y: "center" }),
+    });
+    view.focus();
+  }
+
+  // Reveal the first conflict on load so the user lands right on it.
+  function scrollToFirstConflict() {
+    const view = resultView;
+    if (!view) return;
+    const pos = conflictPositions();
+    if (pos.length === 0) return;
+    view.dispatch({
+      selection: { anchor: pos[0] },
+      effects: EditorView.scrollIntoView(pos[0], { y: "center" }),
+    });
+  }
+
   function teardown() {
     oursView?.destroy();
     baseView?.destroy();
@@ -330,6 +371,8 @@
         }),
         parent: resultHost,
       });
+
+    if (resultView) requestAnimationFrame(() => scrollToFirstConflict());
   }
 
   async function markResolved() {
@@ -374,6 +417,26 @@
         ✓ No markers left — ready to mark resolved
       {/if}
     </span>
+    {#if !binary && conflictsLeft > 0}
+      <div class="cv-nav">
+        <button
+          type="button"
+          title="Jump to the previous conflict"
+          aria-label="Previous conflict"
+          onclick={() => goConflict(-1)}
+        >
+          ↑ Prev
+        </button>
+        <button
+          type="button"
+          title="Jump to the next conflict"
+          aria-label="Next conflict"
+          onclick={() => goConflict(1)}
+        >
+          Next ↓
+        </button>
+      </div>
+    {/if}
     <button
       type="button"
       disabled={busy}
@@ -474,6 +537,14 @@
     opacity: 0.5;
     cursor: default;
   }
+  .cv-nav {
+    display: inline-flex;
+    gap: 2px;
+  }
+  .cv-nav button {
+    font-family: var(--mono);
+    font-size: 0.92em;
+  }
   .cv-toolbar .resolve {
     background: var(--accent);
     border-color: var(--accent);
@@ -543,19 +614,24 @@
   .cv-host :global(.cm-editor) {
     height: 100%;
   }
-  /* Conflict-region shading in the result editor. */
+  /* Conflict-region shading in the result editor — a colored left stripe makes
+     each block easy to spot at a glance. */
   .cv-host :global(.cv-ours) {
-    background: rgba(74, 157, 91, 0.14);
+    background: rgba(74, 157, 91, 0.18);
+    box-shadow: inset 3px 0 #4a9d5b;
   }
   .cv-host :global(.cv-theirs) {
-    background: rgba(90, 155, 212, 0.14);
+    background: rgba(90, 155, 212, 0.18);
+    box-shadow: inset 3px 0 #5a9bd4;
   }
   .cv-host :global(.cv-base) {
-    background: rgba(140, 140, 140, 0.12);
+    background: rgba(140, 140, 140, 0.14);
+    box-shadow: inset 3px 0 #8c8c8c;
   }
   .cv-host :global(.cv-marker) {
-    background: rgba(210, 153, 34, 0.22);
+    background: rgba(210, 153, 34, 0.3);
     font-weight: 700;
+    box-shadow: inset 3px 0 #d29922;
   }
   /* Per-conflict accept toolbar, rendered above each `<<<<<<<` marker. */
   .cv-host :global(.cv-accept) {

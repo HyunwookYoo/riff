@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { commitChangelist } from "$lib/changelists";
+  import { commitChangelist, filesInChangelist } from "$lib/changelists";
 
   const branch = $derived(appState.repoStatus?.branch ?? null);
   const subjectLen = $derived(appState.commitSubject.trim().length);
@@ -8,7 +8,11 @@
   const activeCl = $derived(
     appState.changelists.find((l) => l.id === appState.activeChangelistId),
   );
-  const activeCount = $derived(activeCl?.files.length ?? 0);
+  // Effective file count = home files still here + foreign files with hunks
+  // reassigned here (so a hunk-only changelist is still committable).
+  const activeCount = $derived(
+    filesInChangelist(appState.activeChangelistId).length,
+  );
   const canCommit = $derived(
     subjectLen > 0 && activeCount > 0 && !appState.committing,
   );

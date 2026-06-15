@@ -17,6 +17,7 @@
   import CommandPalette from "$lib/ui/CommandPalette.svelte";
   import Timelapse from "$lib/ui/Timelapse.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
+  import HunkBar from "$lib/ui/HunkBar.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
   import TabBar from "$lib/ui/TabBar.svelte";
@@ -458,6 +459,9 @@
           {#if conflicted}
             <ConflictView />
           {:else}
+            {#if appState.appMode === "changes"}
+              <HunkBar />
+            {/if}
             <DiffView />
           {/if}
         {:else if appState.loadingRepo}

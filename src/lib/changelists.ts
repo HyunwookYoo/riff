@@ -1,10 +1,15 @@
 import { appState } from "./store.svelte";
 import {
+  applyHunks,
+  commit,
+  commitPaths,
+  fileHunks,
   loadChangelists as loadCl,
   saveChangelists as saveCl,
-  commitPaths,
+  stage,
+  unstage,
 } from "./git";
-import { changesRepoPath, loadStatus } from "./sourceControl";
+import { changesRepoPath, entryConflicted, loadStatus } from "./sourceControl";
 import { invalidateGraph } from "./commitHistory";
 import type { Changelist } from "./types";
 
@@ -15,7 +20,11 @@ function emptyDefault(): Changelist {
 }
 
 function currentPaths(): string[] {
-  return (appState.repoStatus?.entries ?? []).map((e) => e.path);
+  // Conflicted (unmerged) files live in the dedicated Conflicts group, not in
+  // changelists — exclude them so they don't double-show.
+  return (appState.repoStatus?.entries ?? [])
+    .filter((e) => !entryConflicted(e))
+    .map((e) => e.path);
 }
 
 /// Drop paths no longer changed; route any unassigned changed path to Default.
@@ -55,6 +64,7 @@ export async function loadChangelistsForRepo(): Promise<void> {
     // Malformed store → start fresh with just Default.
   }
   appState.changelists = reconcile(lists);
+  pruneHunkAssignments();
   if (!appState.changelists.some((l) => l.id === appState.activeChangelistId)) {
     appState.activeChangelistId = DEFAULT_CHANGELIST;
   }
@@ -65,7 +75,116 @@ export async function loadChangelistsForRepo(): Promise<void> {
 export function reconcileChangelists(): void {
   if (appState.changelists.length === 0) return;
   appState.changelists = reconcile(appState.changelists);
+  pruneHunkAssignments();
   void persist();
+}
+
+// ── Hunk-level assignment (session-only) ───────────────────────────────────
+
+/// The changelist a file currently lives in (its "home"). Files are disjoint
+/// across lists post-reconcile; an unassigned file is in Default.
+export function homeChangelistOf(file: string): string {
+  return (
+    appState.changelists.find((l) => l.files.includes(file))?.id ??
+    DEFAULT_CHANGELIST
+  );
+}
+
+/// The changelist a specific hunk belongs to: an explicit assignment, else the
+/// file's home list.
+export function hunkChangelistId(file: string, hunkId: string): string {
+  return appState.hunkAssignments[file]?.[hunkId] ?? homeChangelistOf(file);
+}
+
+/// Assign a hunk to a changelist (session-only). Assigning back to the file's
+/// home list clears the override.
+export function assignHunk(file: string, hunkId: string, targetId: string): void {
+  const home = homeChangelistOf(file);
+  const cur = { ...(appState.hunkAssignments[file] ?? {}) };
+  if (targetId === home) delete cur[hunkId];
+  else cur[hunkId] = targetId;
+  const next = { ...appState.hunkAssignments };
+  if (Object.keys(cur).length === 0) delete next[file];
+  else next[file] = cur;
+  appState.hunkAssignments = next;
+}
+
+/// The cached hunk ids of `file` that belong to `clId`, plus the file's total
+/// hunk count. `null` when the file has no cached hunks (binary, or never
+/// opened) — callers treat it as a whole-file member of its home list.
+export function fileHunksInList(
+  file: string,
+  clId: string,
+): { ids: string[]; total: number } | null {
+  const hunks = appState.hunksByFile[file];
+  if (!hunks || hunks.length === 0) return null;
+  const ids = hunks
+    .filter((h) => hunkChangelistId(file, h.id) === clId)
+    .map((h) => h.id);
+  return { ids, total: hunks.length };
+}
+
+/// Files shown under changelist `clId`: its home files that still have ≥1 hunk
+/// here, plus foreign files with hunks reassigned here. `partial` marks a file
+/// split across lists (drives the "k/n hunks" badge).
+export function filesInChangelist(
+  clId: string,
+): Array<{ path: string; inCount: number; total: number; partial: boolean }> {
+  const out = new Map<
+    string,
+    { path: string; inCount: number; total: number; partial: boolean }
+  >();
+  const cl = appState.changelists.find((l) => l.id === clId);
+  for (const f of cl?.files ?? []) {
+    const sub = fileHunksInList(f, clId);
+    if (!sub) {
+      out.set(f, { path: f, inCount: 0, total: 0, partial: false });
+    } else if (sub.ids.length > 0) {
+      out.set(f, {
+        path: f,
+        inCount: sub.ids.length,
+        total: sub.total,
+        partial: sub.ids.length < sub.total,
+      });
+    }
+    // else: every hunk reassigned away → don't show in its home list.
+  }
+  for (const [file, map] of Object.entries(appState.hunkAssignments)) {
+    if (homeChangelistOf(file) === clId) continue; // handled above as a home file
+    if (!Object.values(map).some((c) => c === clId)) continue;
+    const sub = fileHunksInList(file, clId);
+    if (sub && sub.ids.length > 0) {
+      out.set(file, {
+        path: file,
+        inCount: sub.ids.length,
+        total: sub.total,
+        partial: true,
+      });
+    }
+  }
+  return [...out.values()];
+}
+
+/// Drop assignments / cache for files no longer changed and assignments to
+/// changelists that no longer exist. Keeps the session maps from growing stale.
+function pruneHunkAssignments(): void {
+  const paths = new Set(currentPaths());
+  const clIds = new Set(appState.changelists.map((l) => l.id));
+  const nextAssign: Record<string, Record<string, string>> = {};
+  for (const [file, map] of Object.entries(appState.hunkAssignments)) {
+    if (!paths.has(file)) continue;
+    const m: Record<string, string> = {};
+    for (const [hid, cl] of Object.entries(map)) {
+      if (clIds.has(cl)) m[hid] = cl;
+    }
+    if (Object.keys(m).length) nextAssign[file] = m;
+  }
+  appState.hunkAssignments = nextAssign;
+  const nextCache: Record<string, (typeof appState.hunksByFile)[string]> = {};
+  for (const [file, hunks] of Object.entries(appState.hunksByFile)) {
+    if (paths.has(file)) nextCache[file] = hunks;
+  }
+  appState.hunksByFile = nextCache;
 }
 
 export function moveFileToChangelist(filePath: string, targetId: string): void {
@@ -112,25 +231,62 @@ export function deleteChangelist(id: string): void {
     .filter((l) => l.id !== id);
   if (appState.activeChangelistId === id)
     appState.activeChangelistId = DEFAULT_CHANGELIST;
+  // Hunks assigned to the deleted list fall back to their file's home.
+  pruneHunkAssignments();
   void persist();
 }
 
-/// Commit one changelist's files with the current commit-box message.
+/// Commit one changelist with the current commit-box message. A whole-file
+/// changelist uses the atomic path-scoped commit; a hunk-split one stages
+/// exactly its content (whole files + selected hunks) into a clean index, then
+/// commits the index, leaving the unselected hunks uncommitted.
 export async function commitChangelist(id: string): Promise<void> {
-  const cl = appState.changelists.find((l) => l.id === id);
   const subject = appState.commitSubject.trim();
-  if (!cl || cl.files.length === 0 || !subject || appState.committing) return;
+  if (!subject || appState.committing) return;
+  const files = filesInChangelist(id);
+  if (files.length === 0) return;
+  const repo = changesRepoPath();
+  const coauthors = appState.commitCoauthors
+    .map((c) => c.trim())
+    .filter(Boolean);
+  const whole = files.filter((f) => !f.partial).map((f) => f.path);
+  const partial = files.filter((f) => f.partial);
   appState.committing = true;
   appState.error = null;
   try {
-    await commitPaths(
-      changesRepoPath(),
-      cl.files,
-      subject,
-      appState.commitBody,
-      appState.commitSignoff,
-      appState.commitCoauthors.map((c) => c.trim()).filter(Boolean),
-    );
+    if (partial.length === 0) {
+      await commitPaths(
+        repo,
+        whole,
+        subject,
+        appState.commitBody,
+        appState.commitSignoff,
+        coauthors,
+      );
+    } else {
+      // Clean index, then stage exactly this changelist's content.
+      await unstage(repo, null);
+      if (whole.length > 0) await stage(repo, whole);
+      for (const f of partial) {
+        const sub = fileHunksInList(f.path, id);
+        if (!sub || sub.ids.length === 0) continue;
+        // Resolve hunk ids → current indices against the (index==HEAD) diff.
+        const cur = await fileHunks(repo, f.path, false);
+        const idx: number[] = [];
+        cur.forEach((h, i) => {
+          if (sub.ids.includes(h.id)) idx.push(i);
+        });
+        if (idx.length > 0) await applyHunks(repo, f.path, false, idx);
+      }
+      await commit(
+        repo,
+        subject,
+        appState.commitBody,
+        false,
+        appState.commitSignoff,
+        coauthors,
+      );
+    }
     appState.commitSubject = "";
     appState.commitBody = "";
     appState.commitCoauthors = [];
