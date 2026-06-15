@@ -5,8 +5,8 @@ pub mod store;
 use std::path::Path;
 
 use git::{
-    Blame, Branch, ChangedFile, Commit, ConflictVersions, DiffMode, FileDiff, FileStatus, GitCli,
-    GitError, GitLayer, Hunk, RepoStatus, Stash, SubmoduleInfo,
+    Blame, Branch, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions, DiffMode,
+    FileDiff, FileStatus, GitCli, GitError, GitLayer, Hunk, RepoStatus, Stash, SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
@@ -161,6 +161,15 @@ fn unstage(
     files: Option<Vec<String>>,
 ) -> Result<(), GitError> {
     state.unstage(Path::new(&path), files.as_deref())
+}
+
+#[tauri::command]
+fn discard_paths(
+    state: tauri::State<GitCli>,
+    path: String,
+    paths: Vec<String>,
+) -> Result<(), GitError> {
+    state.discard_paths(Path::new(&path), &paths)
 }
 
 #[tauri::command]
@@ -540,6 +549,38 @@ fn submodule_sha_at(
 }
 
 #[tauri::command]
+fn containment(
+    state: tauri::State<GitCli>,
+    path: String,
+    source: String,
+    target: String,
+) -> Result<Containment, GitError> {
+    state.containment(Path::new(&path), &source, &target)
+}
+
+#[tauri::command]
+fn commit_log_excluding(
+    state: tauri::State<GitCli>,
+    path: String,
+    source: String,
+    target: String,
+    limit: u32,
+    skip: u32,
+) -> Result<Vec<Commit>, GitError> {
+    state.commit_log_excluding(Path::new(&path), &source, &target, limit, skip)
+}
+
+#[tauri::command]
+fn commit_containment_detail(
+    state: tauri::State<GitCli>,
+    path: String,
+    sha: String,
+    target: String,
+) -> Result<ContainmentDetail, GitError> {
+    state.commit_containment_detail(Path::new(&path), &sha, &target)
+}
+
+#[tauri::command]
 fn load_state(app: tauri::AppHandle) -> Result<PersistedState, StoreError> {
     store::load(&app)
 }
@@ -643,6 +684,7 @@ pub fn run() {
             changes_file_diff,
             stage,
             unstage,
+            discard_paths,
             commit,
             head_commit_message,
             commit_paths,
@@ -684,6 +726,9 @@ pub fn run() {
             read_repo_file,
             list_submodules,
             submodule_sha_at,
+            containment,
+            commit_log_excluding,
+            commit_containment_detail,
             load_state,
             add_recent_repo,
             remove_recent_repo,

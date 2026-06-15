@@ -12,8 +12,9 @@ use super::blame::{parse_porcelain, Blame};
 use super::diff;
 use super::uasset;
 use super::{
-    Branch, BranchKind, ChangedFile, Commit, ConflictVersions, DiffMode, FileDiff, FileStatus,
-    GitError, GitLayer, Hunk, RepoStatus, Stash, StatusEntry, SubmoduleInfo,
+    Branch, BranchKind, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions,
+    DiffMode, FileDiff, FileStatus, GitError, GitLayer, Hunk, RepoStatus, Stash, StatusEntry,
+    SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -343,6 +344,18 @@ fn validate_ref(s: &str) -> Result<&str, GitError> {
     Ok(s)
 }
 
+/// Whether `p` exists in HEAD's tree (`git cat-file -e HEAD:p`, exit 0). False
+/// on an unborn branch or any error — callers treat that as a new file.
+fn path_in_head(repo: &Path, p: &str) -> bool {
+    git_command()
+        .arg("-C")
+        .arg(repo)
+        .args(["cat-file", "-e", &format!("HEAD:{p}")])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Parse `git log -z COMMIT_LOG_FORMAT` output into commits. Split out from the
 /// command so it can be unit-tested without a real repo. Records are NUL-
 /// separated; fields within a record are \x1f-separated in the order declared
@@ -385,6 +398,38 @@ fn parse_commit_log(text: &str) -> Vec<Commit> {
         });
     }
     commits
+}
+
+/// Parse `git cherry <upstream> <head>` output into the SHAs whose patch is
+/// already present upstream — lines starting with `- ` (a `+ ` line means no
+/// equivalent upstream, handled separately by the rev-list `--not` set). Split
+/// out for unit testing.
+fn parse_cherry_equivalent(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| l.strip_prefix("- "))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Parse `git rev-list --left-right --count A...B` ("<left>\t<right>") into
+/// `(left, right)`. With `A = target`, `B = source`: left = behind, right =
+/// ahead. Split out for unit testing.
+fn parse_ahead_behind(text: &str) -> (i64, i64) {
+    let mut it = text.split_whitespace();
+    let left = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let right = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    (left, right)
+}
+
+/// Parse `git rev-list`/`for-each-ref` newline output into trimmed, non-empty
+/// lines.
+fn nonempty_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Parse `git status --porcelain=v2 --branch -z` output. Records are NUL-
@@ -542,9 +587,13 @@ fn parse_hunks(text: &str) -> Vec<Hunk> {
         .iter()
         .map(|b| {
             let header = b.lines().next().unwrap_or("").to_string();
+            // Body = everything after the `@@` header line. The header carries
+            // line numbers that shift as the file changes, so the id hashes only
+            // the body (the +/-/context lines), keeping it stable across edits.
+            let body = b.splitn(2, '\n').nth(1).unwrap_or("");
             let mut added = 0;
             let mut removed = 0;
-            for l in b.lines().skip(1) {
+            for l in body.lines() {
                 match l.as_bytes().first() {
                     Some(b'+') => added += 1,
                     Some(b'-') => removed += 1,
@@ -552,12 +601,23 @@ fn parse_hunks(text: &str) -> Vec<Hunk> {
                 }
             }
             Hunk {
+                id: hunk_id(body),
                 header,
                 added,
                 removed,
             }
         })
         .collect()
+}
+
+/// Content signature of a hunk body — a hash of its +/-/context lines. Stable
+/// for the same content within a process, enough to track a hunk's changelist
+/// assignment across re-diffs (only compared within one session).
+fn hunk_id(body: &str) -> String {
+    use std::hash::Hasher;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    h.write(body.as_bytes());
+    format!("{:016x}", h.finish())
 }
 
 /// Parse `git stash list --format=%gd%x1f%s` output: one stash per line, the
@@ -1309,6 +1369,29 @@ impl GitLayer for GitCli {
         Ok(())
     }
 
+    fn discard_paths(&self, path: &Path, paths: &[String]) -> Result<(), GitError> {
+        for p in paths {
+            validate_path(p)?;
+        }
+        for p in paths {
+            if path_in_head(path, p) {
+                // Tracked in HEAD → revert index + worktree to HEAD.
+                self.run(
+                    path,
+                    &["restore", "--source=HEAD", "--staged", "--worktree", "--", p],
+                )?;
+            } else {
+                // New (staged-added or untracked) → drop from the index (no-op
+                // if it isn't staged), then remove the untracked working copy.
+                let _ = self.run(path, &["rm", "-f", "--cached", "--ignore-unmatch", "--", p]);
+                self.run(path, &["clean", "-f", "--", p])?;
+            }
+        }
+        // Index/worktree moved out from under the cat-file batch — respawn it.
+        self.drop_session();
+        Ok(())
+    }
+
     fn commit(
         &self,
         path: &Path,
@@ -2038,6 +2121,146 @@ impl GitLayer for GitCli {
         let stdout = self.run(path, &["ls-tree", tree_ish, "--", submodule_path])?;
         parse_gitlink_sha(&stdout)
     }
+
+    fn containment(
+        &self,
+        path: &Path,
+        source: &str,
+        target: &str,
+    ) -> Result<Containment, GitError> {
+        let target = validate_ref(target)?;
+        let source_is_branch = !source.is_empty();
+        if source_is_branch {
+            validate_ref(source)?;
+        }
+
+        // ● set: commits reachable from `source` (or every ref) but not target.
+        let mut rl_args: Vec<&str> = vec!["rev-list"];
+        if source_is_branch {
+            rl_args.push(source);
+        } else {
+            rl_args.push("--all");
+        }
+        rl_args.push("--not");
+        rl_args.push(target);
+        let not_in_target = nonempty_lines(&String::from_utf8_lossy(&self.run(path, &rl_args)?));
+
+        // Patch-equivalence (rebase/cherry-pick) + ahead/behind only make sense
+        // for a single-ref source.
+        let mut equivalent = Vec::new();
+        let mut ahead = 0;
+        let mut behind = 0;
+        if source_is_branch {
+            let cherry = self.run(path, &["cherry", target, source])?;
+            equivalent = parse_cherry_equivalent(&String::from_utf8_lossy(&cherry));
+            let spec = format!("{target}...{source}");
+            let counts = self.run(path, &["rev-list", "--left-right", "--count", &spec])?;
+            let (b, a) = parse_ahead_behind(&String::from_utf8_lossy(&counts));
+            behind = b;
+            ahead = a;
+        }
+
+        Ok(Containment {
+            not_in_target,
+            equivalent,
+            ahead,
+            behind,
+            source_is_branch,
+        })
+    }
+
+    fn commit_log_excluding(
+        &self,
+        path: &Path,
+        source: &str,
+        target: &str,
+        limit: u32,
+        skip: u32,
+    ) -> Result<Vec<Commit>, GitError> {
+        let target = validate_ref(target)?;
+        let limit_s = limit.to_string();
+        let skip_s = skip.to_string();
+        let mut args = vec![
+            "log",
+            "-z",
+            COMMIT_LOG_FORMAT,
+            "-n",
+            &limit_s,
+            "--skip",
+            &skip_s,
+            "--date-order",
+        ];
+        if source.is_empty() {
+            args.push("--all");
+        } else {
+            args.push(validate_ref(source)?);
+        }
+        args.push("--not");
+        args.push(target);
+        let stdout = self.run(path, &args)?;
+        Ok(parse_commit_log(&String::from_utf8_lossy(&stdout)))
+    }
+
+    fn commit_containment_detail(
+        &self,
+        path: &Path,
+        sha: &str,
+        target: &str,
+    ) -> Result<ContainmentDetail, GitError> {
+        let sha = validate_ref(sha)?;
+        let target = validate_ref(target)?;
+
+        // Every branch/tag that contains this commit, in one call. Drop the
+        // remote's default symref (origin/HEAD) as clutter.
+        let refs_out = self.run(
+            path,
+            &[
+                "for-each-ref",
+                "--contains",
+                sha,
+                "--format=%(refname:short)",
+                "refs/heads",
+                "refs/remotes",
+                "refs/tags",
+            ],
+        )?;
+        let refs: Vec<String> = nonempty_lines(&String::from_utf8_lossy(&refs_out))
+            .into_iter()
+            .filter(|s| !s.ends_with("/HEAD"))
+            .collect();
+
+        // Is the commit an ancestor of target? (exit 0 = yes). Use the raw
+        // command so a non-zero exit is "no", not an error.
+        let in_target = git_command()
+            .arg("-C")
+            .arg(path)
+            .args(["merge-base", "--is-ancestor", sha, target])
+            .output()?
+            .status
+            .success();
+
+        // The merge that introduced it into target: the oldest merge on the
+        // ancestry path sha..target (last line). Empty → fast-forwarded /
+        // committed directly.
+        let mut introduced_by = None;
+        if in_target {
+            let range = format!("{sha}..{target}");
+            let merges =
+                self.run(path, &["rev-list", "--ancestry-path", "--merges", &range])?;
+            if let Some(merge_sha) = nonempty_lines(&String::from_utf8_lossy(&merges)).pop() {
+                let one = self.run(path, &["log", "-1", "-z", COMMIT_LOG_FORMAT, &merge_sha])?;
+                introduced_by = parse_commit_log(&String::from_utf8_lossy(&one))
+                    .into_iter()
+                    .next();
+            }
+        }
+
+        Ok(ContainmentDetail {
+            refs,
+            in_target,
+            introduced_by,
+        })
+    }
 }
 
 /// Spawn a recursive filesystem watcher rooted at the repo. Each event
@@ -2310,6 +2533,36 @@ mod tests {
         assert!(validate_path("-rf").is_err());
         assert!(validate_path("src/main.rs").is_ok());
         assert!(validate_path("a b/c.txt").is_ok());
+    }
+
+    #[test]
+    fn cherry_keeps_only_equivalent() {
+        // `- sha` = patch already upstream (equivalent); `+ sha` = absent.
+        let input = "- aaa111\n+ bbb222\n- ccc333\n";
+        assert_eq!(parse_cherry_equivalent(input), vec!["aaa111", "ccc333"]);
+    }
+
+    #[test]
+    fn cherry_empty_is_empty() {
+        assert!(parse_cherry_equivalent("").is_empty());
+        assert!(parse_cherry_equivalent("+ only222\n").is_empty());
+    }
+
+    #[test]
+    fn ahead_behind_parses_left_right() {
+        // "<behind>\t<ahead>" with A=target, B=source.
+        assert_eq!(parse_ahead_behind("2\t5\n"), (2, 5));
+        assert_eq!(parse_ahead_behind("0 0"), (0, 0));
+        assert_eq!(parse_ahead_behind(""), (0, 0));
+    }
+
+    #[test]
+    fn nonempty_lines_trims_and_filters() {
+        assert_eq!(
+            nonempty_lines("  a \n\n b\nc\n"),
+            vec!["a", "b", "c"]
+        );
+        assert!(nonempty_lines("\n  \n").is_empty());
     }
 
     #[test]
@@ -2609,5 +2862,15 @@ z\n";
         // Binary diffs carry no @@ hunks.
         let bin = "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\n";
         assert!(parse_hunks(bin).is_empty());
+    }
+
+    #[test]
+    fn hunk_ids_distinct_and_stable() {
+        let hunks = parse_hunks(SAMPLE_DIFF);
+        assert_eq!(hunks.len(), 2);
+        // Same body → same id (re-parse); different bodies → different ids.
+        assert_eq!(hunks[0].id, parse_hunks(SAMPLE_DIFF)[0].id);
+        assert_ne!(hunks[0].id, hunks[1].id);
+        assert!(!hunks[0].id.is_empty());
     }
 }

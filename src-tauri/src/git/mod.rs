@@ -48,6 +48,36 @@ pub struct Commit {
     pub refs: Vec<String>,
 }
 
+/// Per-commit containment of the loaded commit graph against one `target` ref,
+/// powering the graph's "Compare against" highlight. `not_in_target` holds the
+/// SHAs reachable from `source` (or every ref, when source is empty) that are
+/// NOT yet in `target` — the ● ("only here") marks. `equivalent` holds SHAs
+/// whose patch is already applied in `target` under a different commit
+/// (rebase / cherry-pick, via `git cherry`); shown ✓ and only computed for a
+/// single-ref source. `ahead` / `behind` count `source` vs `target` (0 when
+/// source is empty). `source_is_branch` echoes whether a single source ref was
+/// given, so the UI knows ahead/behind + equivalence are meaningful.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Containment {
+    pub not_in_target: Vec<String>,
+    pub equivalent: Vec<String>,
+    pub ahead: i64,
+    pub behind: i64,
+    pub source_is_branch: bool,
+}
+
+/// Detail for one commit's "Containment" panel. `refs` lists every local/remote
+/// branch and tag that contains the commit; `in_target` is whether it's an
+/// ancestor of the active target; `introduced_by` is the merge commit that
+/// brought it into target (None when fast-forwarded / committed directly, or
+/// when not contained at all).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainmentDetail {
+    pub refs: Vec<String>,
+    pub in_target: bool,
+    pub introduced_by: Option<Commit>,
+}
+
 /// One entry from `git status --porcelain=v2`. `index_status` / `worktree_status`
 /// are the porcelain-v2 XY status codes: X is the *staged* side (HEAD↔index),
 /// Y the *unstaged* side (index↔worktree). Each is a single character from
@@ -82,10 +112,15 @@ pub struct Stash {
 }
 
 /// One hunk of a file's unified diff, for the Changes screen's per-hunk
-/// stage/unstage controls. `header` is the `@@ -a,b +c,d @@` line (with any
-/// section heading); `added`/`removed` count changed lines for the badge.
+/// stage/unstage + changelist-assignment controls. `header` is the
+/// `@@ -a,b +c,d @@` line (with any section heading); `added`/`removed` count
+/// changed lines for the badge. `id` is a content signature (hash of the hunk
+/// body, *excluding* the position-bearing header) so the frontend can track a
+/// hunk's changelist assignment across re-diffs within a session, where its
+/// array index would shift.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Hunk {
+    pub id: String,
     pub header: String,
     pub added: u32,
     pub removed: u32,
@@ -250,6 +285,13 @@ pub trait GitLayer {
     /// Remove paths from the index while keeping working-tree changes
     /// (`git restore --staged`). `files = None` unstages everything.
     fn unstage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError>;
+    /// Discard each path's local changes back to HEAD. A path tracked in HEAD
+    /// (modified / deleted / typechanged) has its index *and* worktree restored
+    /// to HEAD; a path not in HEAD (staged-added or untracked) is dropped from
+    /// the index and its working copy removed. Renames are discarded by passing
+    /// both the new and the original path. Destructive — callers must confirm
+    /// first (no `--no-verify`-style bypass; this only touches the given paths).
+    fn discard_paths(&self, path: &Path, paths: &[String]) -> Result<(), GitError>;
     /// Create a commit from the staged index. `subject` is the first line;
     /// `body` (when non-empty) follows after a blank line. `amend` rewrites
     /// HEAD; `signoff` adds a Signed-off-by trailer; each `coauthors` entry
@@ -441,6 +483,35 @@ pub trait GitLayer {
         prev_sha: Option<&str>,
         file_path: &str,
     ) -> Result<FileDiff, GitError>;
+    /// Per-commit containment of the loaded graph against `target`, for the
+    /// "Compare against" highlight. `source` ("" = every ref) scopes which
+    /// commits feed `ahead`/`behind` + patch-equivalence. Returns the SHAs not
+    /// yet in `target` (drives the ● mark) and those already applied as an
+    /// equivalent patch (rebase/cherry-pick → shown ✓; only for a single-ref
+    /// source). One `rev-list --not` call, plus `cherry` + a left-right count
+    /// when `source` is a branch.
+    fn containment(&self, path: &Path, source: &str, target: &str)
+        -> Result<Containment, GitError>;
+    /// Like `commit_log`, but excludes everything reachable from `target`
+    /// (`<source|--all> --not <target>`): exactly the commits still missing
+    /// from target. Drives the graph's "only not in target" filter.
+    fn commit_log_excluding(
+        &self,
+        path: &Path,
+        source: &str,
+        target: &str,
+        limit: u32,
+        skip: u32,
+    ) -> Result<Vec<Commit>, GitError>;
+    /// Detail for one commit's Containment panel: every branch/tag that
+    /// contains `sha`, whether it's in `target`, and the merge commit that
+    /// introduced it into `target` (None when fast-forwarded / not contained).
+    fn commit_containment_detail(
+        &self,
+        path: &Path,
+        sha: &str,
+        target: &str,
+    ) -> Result<ContainmentDetail, GitError>;
     /// Read `.gitmodules` (if present) and return the declared submodules.
     /// Empty list when there is no `.gitmodules` or it contains no
     /// `submodule.<name>.path` entries. Used to auto-populate the multi-root

@@ -112,6 +112,30 @@ export interface Commit {
   refs: string[];
 }
 
+/// Graph "Compare against" containment vs one target ref. Mirrors Rust
+/// `Containment`. `not_in_target` are SHAs reachable from the source (or every
+/// ref) but not in target — the ● ("only here") marks; `equivalent` are SHAs
+/// already applied in target as a different commit (rebase/cherry-pick → ✓),
+/// only populated for a single-branch source. `ahead`/`behind` count source vs
+/// target (0 when source is "all branches").
+export interface Containment {
+  not_in_target: string[];
+  equivalent: string[];
+  ahead: number;
+  behind: number;
+  source_is_branch: boolean;
+}
+
+/// Detail for one commit's Containment panel. Mirrors Rust `ContainmentDetail`.
+/// `refs` are the branches/tags containing the commit; `introduced_by` is the
+/// merge commit that brought it into target (null when fast-forwarded/direct or
+/// not contained).
+export interface ContainmentDetail {
+  refs: string[];
+  in_target: boolean;
+  introduced_by: Commit | null;
+}
+
 /// One entry from `git status --porcelain=v2`. Mirrors Rust `StatusEntry`.
 /// `index_status` (X, staged side) and `worktree_status` (Y, unstaged side)
 /// are single-character porcelain codes (`.MADRCU?`, `.` = unmodified);
@@ -153,11 +177,13 @@ export interface Changelist {
   files: string[];
 }
 
-/// One hunk of a file's unified diff, for per-hunk stage/unstage. Mirrors Rust
-/// `Hunk`. `header` is the `@@ -a,b +c,d @@` line; `added`/`removed` are line
-/// counts for the badge. The hunk's index in the returned array identifies it
-/// for `applyHunks`.
+/// One hunk of a file's unified diff, for per-hunk stage/unstage + changelist
+/// assignment. Mirrors Rust `Hunk`. `header` is the `@@ -a,b +c,d @@` line;
+/// `added`/`removed` are line counts for the badge. The hunk's *index* in the
+/// returned array identifies it for `applyHunks`; `id` is a content signature
+/// (stable across re-diffs in a session) used to track its changelist.
 export interface Hunk {
+  id: string;
   header: string;
   added: number;
   removed: number;

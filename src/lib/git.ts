@@ -4,6 +4,8 @@ import type {
   Branch,
   ChangedFile,
   Commit,
+  Containment,
+  ContainmentDetail,
   ConflictVersions,
   DiffMode,
   FileDiff,
@@ -282,6 +284,44 @@ export function commitLog(
 }
 
 /**
+ * Containment of the loaded graph against `target`: which commits aren't in it
+ * yet (●) and which are already applied as an equivalent patch (✓). `source`
+ * ("" = every ref) scopes ahead/behind + patch-equivalence. Drives the graph's
+ * "Compare against" highlight.
+ */
+export function containment(
+  path: string,
+  source: string,
+  target: string,
+): Promise<Containment> {
+  return invoke("containment", { path, source, target });
+}
+
+/**
+ * Like `commitLog`, but excludes everything reachable from `target`
+ * (`<source|--all> --not <target>`): exactly the commits still missing from
+ * target. Drives the "only not in target" filter.
+ */
+export function commitLogExcluding(
+  path: string,
+  source: string,
+  target: string,
+  limit: number,
+  skip: number,
+): Promise<Commit[]> {
+  return invoke("commit_log_excluding", { path, source, target, limit, skip });
+}
+
+/** One commit's Containment detail: containing refs + the introducing merge. */
+export function commitContainmentDetail(
+  path: string,
+  sha: string,
+  target: string,
+): Promise<ContainmentDetail> {
+  return invoke("commit_containment_detail", { path, sha, target });
+}
+
+/**
  * Full working-tree status (`git status --porcelain=v2 --branch`): staged /
  * unstaged / untracked entries plus the current branch's upstream and
  * ahead/behind counts. Drives the source-control Changes screen.
@@ -376,6 +416,15 @@ export function stage(path: string, files: string[] | null): Promise<void> {
  */
 export function unstage(path: string, files: string[] | null): Promise<void> {
   return invoke("unstage", { path, files });
+}
+
+/**
+ * Discard local changes to `paths`, reverting each back to HEAD: a file tracked
+ * in HEAD is restored (index + worktree); a new/untracked file is removed from
+ * disk. Destructive — confirm first. For a rename, pass the new and orig paths.
+ */
+export function discardPaths(path: string, paths: string[]): Promise<void> {
+  return invoke("discard_paths", { path, paths });
 }
 
 /**
