@@ -18,6 +18,7 @@
   } from "$lib/sourceControl";
   import { enterGraphView } from "$lib/commitHistory";
   import { requestCheckout } from "$lib/checkout";
+  import { confirmAction } from "$lib/dialogs";
   import RefIcon from "./RefIcon.svelte";
   import type { Branch } from "$lib/types";
 
@@ -124,9 +125,10 @@
       const msg = String(e);
       if (
         /not fully merged|not merged/i.test(msg) &&
-        confirm(
+        (await confirmAction(
           `'${b.name}' is not fully merged. Force delete? This discards its unmerged commits.`,
-        )
+          { title: "Force delete branch" },
+        ))
       ) {
         try {
           await deleteBranch(repoPath, b.name, true);

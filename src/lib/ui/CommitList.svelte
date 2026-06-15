@@ -19,6 +19,7 @@
   } from "$lib/git";
   import { requestCheckout } from "$lib/checkout";
   import { reloadBranchesFor } from "$lib/workspace";
+  import { confirmAction } from "$lib/dialogs";
   import type { Commit } from "$lib/types";
   import { computeGraph } from "./graph";
   import RefIcon from "./RefIcon.svelte";
@@ -207,10 +208,13 @@
     // to the remote so a behind local catches up to what was double-clicked.
     void requestCheckout(changesRepoPath(), target, isRemote ? name : undefined);
   }
-  function doReset(sha: string, mode: "soft" | "mixed" | "hard") {
+  async function doReset(sha: string, mode: "soft" | "mixed" | "hard") {
     if (
       mode === "hard" &&
-      !confirm("Hard reset discards uncommitted working-tree changes. Continue?")
+      !(await confirmAction(
+        "Hard reset discards uncommitted working-tree changes. Continue?",
+        { title: "Hard reset" },
+      ))
     )
       return;
     void act(reset(changesRepoPath(), sha, mode));
@@ -221,8 +225,14 @@
   function doRevert(sha: string) {
     void act(revert(changesRepoPath(), sha));
   }
-  function doRebase(sha: string) {
-    if (!confirm(`Rebase the current branch onto ${sha.slice(0, 7)}?`)) return;
+  async function doRebase(sha: string) {
+    if (
+      !(await confirmAction(
+        `Rebase the current branch onto ${sha.slice(0, 7)}?`,
+        { title: "Rebase" },
+      ))
+    )
+      return;
     void act(rebase(changesRepoPath(), sha));
   }
 

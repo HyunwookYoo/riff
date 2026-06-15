@@ -1,18 +1,20 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import { doFetch, doPull, doPush } from "$lib/sourceControl";
+  import { confirmAction } from "$lib/dialogs";
 
   let menu = $state<"pull" | "push" | null>(null);
   const busy = $derived(appState.syncing);
   const ahead = $derived(appState.currentAhead);
   const behind = $derived(appState.currentBehind);
 
-  function confirmForcePush() {
+  async function confirmForcePush() {
     menu = null;
     if (
-      !confirm(
+      !(await confirmAction(
         "Force-push with lease? This can overwrite remote history if others have pushed.",
-      )
+        { title: "Force push" },
+      ))
     )
       return;
     void doPush(true);
