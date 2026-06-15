@@ -60,8 +60,9 @@ class AppState {
     null,
   );
   updateInstalling = $state(false);
-  // Top-level workspace mode. Session-only — first run starts in compare.
-  appMode = $state<AppMode>("compare");
+  // Top-level workspace mode. Session-only — opens on the Working (Changes)
+  // view, the most-used mode.
+  appMode = $state<AppMode>("changes");
   // File currently being blamed, repo-qualified (§13.3 #23). Persists across
   // drill-in/back so returning to blame mode lands you on the same file.
   // Session-only.

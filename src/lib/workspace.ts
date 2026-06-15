@@ -13,7 +13,9 @@ import { compare } from "./compare";
 import { resetHistory } from "./commitHistory";
 import {
   loadCurrentBranch,
+  loadPendingOp,
   loadStashes,
+  loadStatus,
   resetSourceControl,
 } from "./sourceControl";
 import { clearBlameCache } from "./blameCache";
@@ -299,6 +301,13 @@ export async function loadMainRepo(
     // Cheap to skip if the user never enters blame — listRepoFiles for each
     // repo runs in parallel, and the backend caches the result.
     void prewarmRepoFiles(path, appState.repos);
+    // The Working (Changes) view is the default on app open — populate its
+    // status here (loadMainRepo doesn't otherwise). Other modes load on entry,
+    // and a mid-session repo switch keeps whatever mode the user is in.
+    if (appState.appMode === "changes") {
+      void loadStatus();
+      void loadPendingOp();
+    }
   } catch (e) {
     if (opts.silent) {
       console.warn("loadMainRepo failed:", e);
