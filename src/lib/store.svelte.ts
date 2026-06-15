@@ -4,7 +4,10 @@ import type {
   ChangedFile,
   Changelist,
   Commit,
+  Containment,
+  ContainmentDetail,
   CompareCtx,
+  Hunk,
   CompareMode,
   DiffMode,
   FileViewMode,
@@ -139,6 +142,22 @@ class AppState {
   // The graph itself takes the remaining (majority) width. Drag-resizable,
   // session-only.
   graphDetailWidth = $state(460);
+  // Branch-mode containment ("is my branch in target"): in Branch (compare)
+  // mode the start→target pickers drive a marked commit list of `start`'s
+  // history. `containment` holds the ✓/●/equiv marking sets + ahead/behind for
+  // start↔target; `bcCommits` is that commit list (paginated); `bcSelectedSha`
+  // is the row whose per-commit diff + detail show (null = "All changes", the
+  // aggregate start↔target diff); `bcDiffRange` overrides compare()'s range for
+  // a per-commit diff without touching the toolbar ref pickers;
+  // `containmentDetail` is the selected commit's panel data. Session-only.
+  containment = $state<Containment | null>(null);
+  containmentDetail = $state<ContainmentDetail | null>(null);
+  loadingContainment = $state(false);
+  bcCommits = $state<Commit[]>([]);
+  bcSelectedSha = $state<string | null>(null);
+  bcHasMore = $state(false);
+  bcLoadingCommits = $state(false);
+  bcDiffRange = $state<{ start: string; target: string } | null>(null);
   // Command palette (Ctrl+Shift+P) visibility. Session-only.
   paletteOpen = $state(false);
   // Pending "switch with local changes" prompt. Set when a checkout is

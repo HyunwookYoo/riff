@@ -193,7 +193,13 @@
   {#if appState.appMode === "compare"}
     <button
       class="primary"
-      onclick={() => void compare()}
+      onclick={() => {
+        // "Compare" shows the aggregate start↔target diff — clear any
+        // per-commit drill from the containment list first.
+        appState.bcSelectedSha = null;
+        appState.bcDiffRange = null;
+        void compare();
+      }}
       disabled={appState.loadingFiles || appState.loadingRepo}
     >
       {#if appState.loadingFiles}

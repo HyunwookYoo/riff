@@ -149,6 +149,9 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
     // future optimization (§14 follow-up).
     for (let i = 0; i < repos.length; i++) {
       if (session !== compareSession) break;
+      // A per-commit drill (Branch-mode containment) is a single-repo view —
+      // diff only the main repo, not submodule gitlinks for unrelated refs.
+      if (appState.bcDiffRange && i !== 0) continue;
       if (
         !isTabMode &&
         appState.activeRepoIdx !== null &&
@@ -208,11 +211,15 @@ async function fetchRepoChanges(
   onFile: (file: ChangedFile) => void,
 ): Promise<void> {
   if (repo.kind === "main") {
+    // Branch-mode containment drills into one commit via `bcDiffRange`
+    // (parent..commit, two-dot) without disturbing the toolbar ref pickers.
+    // null = the user's start↔target ("All changes").
+    const range = appState.bcDiffRange;
     await diffFiles(
       repo.path,
-      appState.startBranch,
-      appState.targetBranch,
-      appState.mode,
+      range ? range.start : appState.startBranch,
+      range ? range.target : appState.targetBranch,
+      range ? "two-dot" : appState.mode,
       appState.ignoreWhitespace,
       onFile,
     );

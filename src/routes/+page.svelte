@@ -6,6 +6,7 @@
   import InputBar from "$lib/ui/InputBar.svelte";
   import FileList from "$lib/ui/FileList.svelte";
   import CommitList from "$lib/ui/CommitList.svelte";
+  import BranchContainment from "$lib/ui/BranchContainment.svelte";
   import ChangesList from "$lib/ui/ChangesList.svelte";
   import CommitBox from "$lib/ui/CommitBox.svelte";
   import RepoTabs from "$lib/ui/RepoTabs.svelte";
@@ -513,7 +514,10 @@
         <div class="graph-main"><CommitList /></div>
       </div>
     {:else}
-      <FileList />
+      <div class="branch-col">
+        <div class="bc-pane"><BranchContainment /></div>
+        <div class="bc-files"><FileList /></div>
+      </div>
       <div
         class="picker-resizer"
         role="separator"
@@ -645,6 +649,25 @@
     min-height: 0;
     overflow: hidden;
     border-bottom: 1px solid var(--border);
+  }
+  /* Branch (compare) mode left column: containment list (top) + file list. */
+  .branch-col {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .bc-pane {
+    flex: 1 1 48%;
+    min-height: 0;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border);
+  }
+  .bc-files {
+    flex: 1 1 52%;
+    min-height: 0;
+    overflow: hidden;
   }
   .diff {
     display: flex;
