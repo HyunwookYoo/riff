@@ -2210,25 +2210,6 @@ impl GitLayer for GitCli {
         let sha = validate_ref(sha)?;
         let target = validate_ref(target)?;
 
-        // Every branch/tag that contains this commit, in one call. Drop the
-        // remote's default symref (origin/HEAD) as clutter.
-        let refs_out = self.run(
-            path,
-            &[
-                "for-each-ref",
-                "--contains",
-                sha,
-                "--format=%(refname:short)",
-                "refs/heads",
-                "refs/remotes",
-                "refs/tags",
-            ],
-        )?;
-        let refs: Vec<String> = nonempty_lines(&String::from_utf8_lossy(&refs_out))
-            .into_iter()
-            .filter(|s| !s.ends_with("/HEAD"))
-            .collect();
-
         // Is the commit an ancestor of target? (exit 0 = yes). Use the raw
         // command so a non-zero exit is "no", not an error.
         let in_target = git_command()
@@ -2256,7 +2237,6 @@ impl GitLayer for GitCli {
         }
 
         Ok(ContainmentDetail {
-            refs,
             in_target,
             introduced_by,
         })

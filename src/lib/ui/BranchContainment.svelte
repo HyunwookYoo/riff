@@ -147,14 +147,6 @@
         {:else if detail.in_target}
           <div class="d-note">fast-forwarded / committed directly — no merge commit</div>
         {/if}
-        {#if detail.refs.length}
-          <div class="d-refs">
-            <span class="d-label">in</span>
-            {#each detail.refs as r}
-              <span class="d-ref" class:t={r === appState.targetBranch}>{r}</span>
-            {/each}
-          </div>
-        {/if}
       </div>
     {/if}
   {/if}
@@ -355,24 +347,5 @@
   .d-note {
     color: var(--muted);
     font-style: italic;
-  }
-  .d-refs {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .d-ref {
-    padding: 0 6px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    font-family: var(--mono);
-    font-size: 0.92em;
-    color: var(--muted);
-  }
-  .d-ref.t {
-    color: var(--accent);
-    border-color: var(--accent);
-    font-weight: 600;
   }
 </style>

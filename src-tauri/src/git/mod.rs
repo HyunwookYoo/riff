@@ -66,14 +66,12 @@ pub struct Containment {
     pub source_is_branch: bool,
 }
 
-/// Detail for one commit's "Containment" panel. `refs` lists every local/remote
-/// branch and tag that contains the commit; `in_target` is whether it's an
-/// ancestor of the active target; `introduced_by` is the merge commit that
-/// brought it into target (None when fast-forwarded / committed directly, or
-/// when not contained at all).
+/// Detail for one commit's "Containment" panel. `in_target` is whether the
+/// commit is an ancestor of the active target; `introduced_by` is the merge
+/// commit that brought it into target (None when fast-forwarded / committed
+/// directly, or when not contained at all).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainmentDetail {
-    pub refs: Vec<String>,
     pub in_target: bool,
     pub introduced_by: Option<Commit>,
 }

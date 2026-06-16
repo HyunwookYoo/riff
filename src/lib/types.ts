@@ -127,11 +127,10 @@ export interface Containment {
 }
 
 /// Detail for one commit's Containment panel. Mirrors Rust `ContainmentDetail`.
-/// `refs` are the branches/tags containing the commit; `introduced_by` is the
-/// merge commit that brought it into target (null when fast-forwarded/direct or
-/// not contained).
+/// `in_target` is whether the commit is in the active target; `introduced_by`
+/// is the merge commit that brought it into target (null when fast-forwarded /
+/// committed directly, or not contained).
 export interface ContainmentDetail {
-  refs: string[];
   in_target: boolean;
   introduced_by: Commit | null;
 }
