@@ -122,6 +122,7 @@
     void cm;
     void uv;
     void side;
+    void appState.bcDiffRange;
     load(false);
   });
 
@@ -316,6 +317,20 @@
           file.old_path,
           file.status,
           appState.changesSide === "staged",
+          force,
+          ueVersion,
+        );
+      } else if (appState.bcDiffRange && repoIdx === 0) {
+        // Branch-mode containment drill: this file's diff is parent..commit
+        // (the selected commit), not the toolbar's start..target.
+        const range = appState.bcDiffRange;
+        next = await fileDiff(
+          repoPath,
+          range.start,
+          range.target,
+          "two-dot",
+          file.path,
+          file.old_path,
           force,
           ueVersion,
         );
