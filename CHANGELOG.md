@@ -3,6 +3,25 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v1.1.1
+
+작은 개선과 버그 수정.
+
+### ✨ 개선
+
+- **Submodule 탭 재정렬** — Changes·History 모드의 repo 탭을 드래그해서 순서를 바꿀 수
+  있습니다(main 탭은 맨 앞 고정). 현재는 세션 한정.
+
+### 🐛 수정
+
+- Branch 모드에서 비교할 ref를 아직 고르지 않았는데, Changes 모드에서 자동 선택된 파일이
+  남아 코드 영역에 "no refs to compare for this file" 오류가 뜨던 문제 수정.
+
+### 📦 설치 / 업그레이드
+
+- **기존 1.1.x 사용자**: 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+- **신규 설치**: 아래 assets에서 `Riff_1.1.1_x64-setup.exe` 다운로드 → 실행.
+
 ## v1.1.0
 
 소스 컨트롤(Changes)과 Branch 모드를 다듬은 업데이트입니다. hunk 단위 changelist,
