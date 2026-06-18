@@ -37,6 +37,13 @@ function ready(): boolean {
 export async function loadBranchContainment(): Promise<void> {
   if (!ready()) {
     clearBranchContainment();
+    // No refs to compare yet → drop any leftover selection (e.g. a file
+    // auto-opened in Changes mode) so the diff pane shows the neutral
+    // placeholder instead of a "no refs to compare for this file" error.
+    if (appState.appMode === "compare") {
+      appState.selectedFile = null;
+      appState.files = [];
+    }
     return;
   }
   const s = ++bcSession;
