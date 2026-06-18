@@ -367,6 +367,39 @@ export async function addManualRepoToWorkspace(path: string): Promise<void> {
  * tracks whether to persist this; for now the chip popover discloses the
  * setting on every load.)
  */
+/// Move a repo tab to a new position. Main (repos[0]) stays pinned at 0; only
+/// submodule/manual tabs reorder. Selections (changes/history/focus) follow by
+/// path; index-keyed caches are dropped (they repopulate lazily). Session-only.
+export function reorderRepo(from: number, to: number): void {
+  const repos = appState.repos;
+  if (
+    from < 1 ||
+    to < 1 ||
+    from >= repos.length ||
+    to >= repos.length ||
+    from === to
+  )
+    return;
+  const changesPath = repos[appState.changesRepoIdx]?.path;
+  const historyPath = repos[appState.historyRepoIdx]?.path;
+  const activePath =
+    appState.activeRepoIdx != null ? repos[appState.activeRepoIdx]?.path : null;
+
+  const next = [...repos];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  appState.repos = next;
+
+  const idxOf = (p?: string) => (p ? next.findIndex((r) => r.path === p) : -1);
+  appState.changesRepoIdx = Math.max(0, idxOf(changesPath));
+  appState.historyRepoIdx = Math.max(0, idxOf(historyPath));
+  appState.activeRepoIdx = activePath ? idxOf(activePath) : appState.activeRepoIdx;
+  // Indices shifted — these caches are keyed by the old index.
+  appState.branchesByRepoIdx = { 0: appState.branches };
+  appState.collapsedRepos = new Set();
+  appState.tabMemory = new Map();
+}
+
 export function setRepoOverride(
   idx: number,
   startBranch: string,
