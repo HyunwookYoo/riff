@@ -2,7 +2,7 @@ import { appState } from "./store.svelte";
 import { commitLog, status } from "./git";
 import { compare } from "./compare";
 import { loadCurrentBranch, loadPendingOp, loadStashes } from "./sourceControl";
-import type { Commit } from "./types";
+import type { Branch, Commit } from "./types";
 
 /// Commits fetched per page; "load more" appends another page.
 const PAGE_SIZE = 100;
@@ -251,6 +251,24 @@ export function openCommit(commit: Commit): void {
   }
   if (appState.repos.length > 1) appState.activeRepoIdx = idx;
   void compare();
+}
+
+/// Single-click a branch/tag in the sidebar while the graph is open: reveal it
+/// in the graph. If its tip is already in the loaded page, select that commit in
+/// place (row highlight + its diff), keeping the all-branches graph. Otherwise —
+/// common in large repos, where the tip sits far below the first page — scope
+/// the graph to this ref so its tip loads at the top and is selected; the user
+/// restores the full graph with the "Showing → ✕ All" reset.
+export function selectBranchInGraph(branch: Branch): void {
+  // A local branch decorates as "name" (or "HEAD -> name" when checked out);
+  // remotes as "<remote>/name"; tags as "tag: name".
+  const want = branch.kind === "tag" ? `tag: ${branch.name}` : branch.name;
+  const head = `HEAD -> ${branch.name}`;
+  const commit = appState.commits.find((c) =>
+    c.refs.some((r) => r === want || r === head),
+  );
+  if (commit) openCommit(commit);
+  else setHistoryRef(branch.name);
 }
 
 /// Reset the history browser when the active repo changes, so a stale log from

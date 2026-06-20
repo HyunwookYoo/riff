@@ -25,6 +25,20 @@
   import RefIcon from "./RefIcon.svelte";
 
   let busy = $state(false);
+
+  // Reveal the selected commit when the selection changes from outside the list
+  // (e.g. single-clicking a branch in the sidebar to locate it in the graph). A
+  // row already on screen isn't moved (block: "nearest"), so direct row clicks
+  // and the initial top selection don't cause jumps.
+  let listEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    const sha = appState.selectedCommitSha;
+    if (!sha || !listEl) return;
+    listEl
+      .querySelector<HTMLElement>(`[data-sha="${sha}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  });
+
   // Run a commit-graph action, then reload the log + current-branch chip.
   // On failure keep the error and skip the reload — loadCommits() clears
   // appState.error, which would otherwise swallow the message.
@@ -408,7 +422,7 @@
   </form>
 {/if}
 
-<div class="commit-list" onscroll={onScroll}>
+<div class="commit-list" bind:this={listEl} onscroll={onScroll}>
   {#if appState.commits.length === 0 && appState.loadingCommits}
     <div class="empty">Loading history…</div>
   {:else if appState.commits.length === 0}
@@ -422,6 +436,7 @@
         class="row"
         class:selected={commit.sha === appState.selectedCommitSha}
         class:wip={isWip}
+        data-sha={commit.sha}
         style="height: {ROW_H}px; font-size: {(ROW_H / 40).toFixed(3)}em;"
         onclick={() => {
           if (isWip) {

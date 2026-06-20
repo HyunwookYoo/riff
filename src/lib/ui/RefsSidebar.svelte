@@ -16,7 +16,7 @@
     enterChangesMode,
     loadCurrentBranch,
   } from "$lib/sourceControl";
-  import { enterGraphView } from "$lib/commitHistory";
+  import { enterGraphView, selectBranchInGraph } from "$lib/commitHistory";
   import { requestCheckout } from "$lib/checkout";
   import { confirmAction } from "$lib/dialogs";
   import RefIcon from "./RefIcon.svelte";
@@ -114,6 +114,26 @@
   // (stash / bring / discard) so local changes don't block the switch.
   function confirmCheckout(b: Branch) {
     void requestCheckout(repoPath, checkoutTarget(b), checkoutFf(b));
+  }
+
+  // Single vs double click on a ref row. Double-click checks out; a lone single
+  // click reveals the branch's tip in the graph (only while the graph is open).
+  // A short timer holds the single-click action so the first click of a
+  // double-click doesn't fire it (and flash a diff) before the checkout.
+  let clickTimer: ReturnType<typeof setTimeout> | null = null;
+  function onRefClick(b: Branch) {
+    if (clickTimer !== null) return; // 2nd click of a double — let dblclick win
+    clickTimer = setTimeout(() => {
+      clickTimer = null;
+      if (appState.appMode === "history") selectBranchInGraph(b);
+    }, 250);
+  }
+  function onRefDblClick(b: Branch) {
+    if (clickTimer !== null) {
+      clearTimeout(clickTimer);
+      clickTimer = null;
+    }
+    confirmCheckout(b);
   }
 
   async function doDelete(b: Branch) {
@@ -284,9 +304,12 @@
     class="ref"
     class:current={ref.name === current}
     style="padding-left: {8 + depth * 14}px"
-    ondblclick={() => confirmCheckout(ref)}
+    onclick={() => onRefClick(ref)}
+    ondblclick={() => onRefDblClick(ref)}
     oncontextmenu={(e) => openMenu(e, ref)}
-    title="Double-click to checkout · right-click for actions"
+    title={appState.appMode === "history"
+      ? "Click to reveal in graph · double-click to checkout · right-click for actions"
+      : "Double-click to checkout · right-click for actions"}
   >
     <RefIcon kind={ref.kind} />
     <span class="name">{name}</span>
