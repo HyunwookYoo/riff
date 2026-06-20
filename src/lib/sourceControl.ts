@@ -267,7 +267,8 @@ export async function refreshActiveView(): Promise<void> {
     invalidateGraph();
   } else {
     await loadCurrentBranch();
-    if (appState.appMode === "history") await loadCommits();
+    if (appState.appMode === "history")
+      await loadCommits({ preserveSelection: true });
   }
   appState.refsRefresh++;
 }

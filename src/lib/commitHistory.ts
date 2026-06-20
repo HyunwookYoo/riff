@@ -148,7 +148,9 @@ export function setHistoryRef(ref: string): void {
 
 /// Fetch the commit log (a fresh page, or append the next page when
 /// `opts.more`). A fresh load auto-opens the newest commit's diff.
-export async function loadCommits(opts: { more?: boolean } = {}): Promise<void> {
+export async function loadCommits(
+  opts: { more?: boolean; preserveSelection?: boolean } = {},
+): Promise<void> {
   if (!appState.repoPath) return;
   const more = opts.more === true;
   const skip = more ? appState.commits.length : 0;
@@ -168,7 +170,16 @@ export async function loadCommits(opts: { more?: boolean } = {}): Promise<void> 
     if (session !== logSession) return;
     appState.commits = more ? appState.commits.concat(page) : page;
     appState.commitsHasMore = page.length === PAGE_SIZE;
-    if (!more && page.length > 0) openCommit(page[0]);
+    if (!more && page.length > 0) {
+      // On a refresh (FS-watcher), keep the selected commit so the graph
+      // doesn't snap back to the top; only open the newest when there was no
+      // selection or it's gone (HEAD moved / rebased away).
+      const keep =
+        opts.preserveSelection &&
+        appState.selectedCommitSha != null &&
+        page.some((c) => c.sha === appState.selectedCommitSha);
+      if (!keep) openCommit(page[0]);
+    }
     // Refresh the WIP node's change count alongside a fresh log load.
     if (!more) void loadWipCount();
   } catch (e) {

@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import { goToNextChunk, goToPreviousChunk } from "@codemirror/merge";
   import { gotoLine, openSearchPanel } from "@codemirror/search";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
   import InputBar from "$lib/ui/InputBar.svelte";
   import FileList from "$lib/ui/FileList.svelte";
   import CommitList from "$lib/ui/CommitList.svelte";
@@ -22,15 +21,15 @@
   import TabBar from "$lib/ui/TabBar.svelte";
   import TitleBar from "$lib/ui/TitleBar.svelte";
   import { appState } from "$lib/store.svelte";
-  import { loadState, setBlamePickerWidth } from "$lib/git";
+  import { loadState, setBlamePickerWidth, setWatchedRepos } from "$lib/git";
   import { loadMainRepo } from "$lib/workspace";
+  import { initRepoWatch } from "$lib/repoWatch";
   import { cycleAppMode } from "$lib/compare";
   import { setHistoryRepo, enterGraphView } from "$lib/commitHistory";
   import {
     enterChangesMode,
     isPathConflicted,
     loadStatus,
-    refreshActiveView,
     setChangesRepo,
   } from "$lib/sourceControl";
   import { popHistory, redoHistory } from "$lib/history";
@@ -138,33 +137,25 @@
     }
   });
 
-  // Auto-refresh the active source-control view when the window regains focus
-  // after a real blur — the user may have edited files or run git (e.g. an
-  // external checkout) in another window. Covers Changes (status) and Graph
-  // (branch chip + commits + refs). Silent. WebView2 on Windows emits
-  // blur/focus *pairs* during window drag/resize (<100ms); a 500ms threshold
-  // ignores those and only reacts to real switches.
+  // Keep the active source-control view fresh via the backend filesystem
+  // watcher (src-tauri/src/watch.rs): it emits `repo-changed` on real changes —
+  // external git ops, file edits, in-app or not — so we refresh live instead of
+  // rescanning on every window refocus. The $effect below declares the roots.
   onMount(() => {
     let unlisten: (() => void) | undefined;
-    let blurredAt = 0;
-    const MIN_BLUR_MS = 500;
-    getCurrentWindow()
-      .onFocusChanged(({ payload: focused }) => {
-        if (!focused) {
-          if (blurredAt === 0) blurredAt = Date.now();
-          return;
-        }
-        if (blurredAt === 0) return;
-        const duration = Date.now() - blurredAt;
-        blurredAt = 0;
-        if (duration < MIN_BLUR_MS) return;
-        if (!appState.repoPath) return;
-        if (appState.appMode === "changes" || appState.appMode === "history") {
-          void refreshActiveView();
-        }
-      })
-      .then((u) => (unlisten = u));
+    void initRepoWatch().then((u) => (unlisten = u));
     return () => unlisten?.();
+  });
+
+  // Declare which roots the backend watches, re-sending whenever the workspace
+  // repo set changes (open, add/remove submodule or manual repo, reorder).
+  // Submodules live under the main worktree and share its `.git`, so the main
+  // root's recursive watch already covers them — send main + manual only.
+  $effect(() => {
+    const roots = appState.repos
+      .filter((r) => r.kind !== "submodule")
+      .map((r) => r.path);
+    void setWatchedRepos(roots);
   });
 
   async function installUpdate() {

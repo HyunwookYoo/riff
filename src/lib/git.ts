@@ -330,6 +330,12 @@ export function status(path: string): Promise<RepoStatus> {
   return invoke("status", { path });
 }
 
+/// Declare which repo roots the backend filesystem watcher observes. Submodules
+/// are covered by the main root's recursive watch, so pass main + manual repos.
+export function setWatchedRepos(paths: string[]): Promise<void> {
+  return invoke("set_watched_repos", { paths });
+}
+
 /**
  * Stream the changed files between two refs. `onFile` is invoked once per
  * entry as it arrives from the backend. The returned promise resolves when

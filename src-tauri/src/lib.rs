@@ -1,6 +1,7 @@
 pub mod diff;
 pub mod git;
 pub mod store;
+pub mod watch;
 
 use std::path::Path;
 
@@ -668,12 +669,28 @@ fn remove_manual_repo(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Declare which repo roots the filesystem watcher should observe (main repo +
+/// any manual repos; submodules are covered by the main root's recursive watch).
+/// The watcher emits `repo-changed` so the UI refreshes on real changes instead
+/// of polling on every window refocus.
+#[tauri::command]
+fn set_watched_repos(watch: tauri::State<watch::RepoWatch>, paths: Vec<String>) {
+    watch.set_repos(paths.into_iter().map(std::path::PathBuf::from).collect());
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(GitCli::new())
+        .manage(watch::RepoWatch::new())
+        .setup(|app| {
+            // The watcher needs an AppHandle to emit events; it only exists now.
+            app.state::<watch::RepoWatch>()
+                .set_app(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             validate_repo,
             list_refs,
@@ -744,6 +761,7 @@ pub fn run() {
             set_ue_version_for_repo,
             add_manual_repo,
             remove_manual_repo,
+            set_watched_repos,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
