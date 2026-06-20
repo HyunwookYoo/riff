@@ -56,6 +56,11 @@ pub struct GitCli {
     /// cold git startup cost. Entries are created lazily on first
     /// `worktree_files` call against a given path.
     worktree_caches: Mutex<HashMap<PathBuf, WorktreeCacheEntry>>,
+    /// Serializes index/ref-mutating git invocations. Commands run off the main
+    /// thread (async) now, so writes the main thread used to serialize implicitly
+    /// can otherwise overlap and collide on `.git/index.lock`. Read-only commands
+    /// (log/diff/blame/status) don't take this lock, so the UI stays responsive.
+    write_lock: Mutex<()>,
 }
 
 struct Session {
@@ -265,6 +270,7 @@ impl GitCli {
         Self {
             session: Mutex::new(None),
             worktree_caches: Mutex::new(HashMap::new()),
+            write_lock: Mutex::new(()),
         }
     }
 
@@ -886,7 +892,12 @@ impl GitLayer for GitCli {
     }
 
     fn status(&self, path: &Path) -> Result<RepoStatus, GitError> {
-        let stdout = self.run(path, &["status", "--porcelain=v2", "--branch", "-z"])?;
+        // `--no-optional-locks` so a background-refresh status never grabs
+        // `index.lock` and races a concurrent write (stage/commit/checkout).
+        let stdout = self.run(
+            path,
+            &["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z"],
+        )?;
         Ok(parse_status(&String::from_utf8_lossy(&stdout)))
     }
 
@@ -1336,6 +1347,7 @@ impl GitLayer for GitCli {
     }
 
     fn stage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         match files {
             None => {
                 self.run(path, &["add", "-A"])?;
@@ -1353,6 +1365,7 @@ impl GitLayer for GitCli {
     }
 
     fn unstage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         match files {
             None => {
                 self.run(path, &["restore", "--staged", "--", "."])?;
@@ -1370,6 +1383,7 @@ impl GitLayer for GitCli {
     }
 
     fn discard_paths(&self, path: &Path, paths: &[String]) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         for p in paths {
             validate_path(p)?;
         }
@@ -1401,6 +1415,7 @@ impl GitLayer for GitCli {
         signoff: bool,
         coauthors: &[String],
     ) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         if subject.trim().is_empty() {
             return Err(GitError::CommandFailed("commit subject is empty".into()));
         }
@@ -1449,6 +1464,7 @@ impl GitLayer for GitCli {
         signoff: bool,
         coauthors: &[String],
     ) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         if subject.trim().is_empty() {
             return Err(GitError::CommandFailed("commit subject is empty".into()));
         }
@@ -1513,6 +1529,7 @@ impl GitLayer for GitCli {
         staged: bool,
         hunks: &[u32],
     ) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_path(file_path)?;
         if hunks.is_empty() {
             return Ok(());
@@ -1550,6 +1567,7 @@ impl GitLayer for GitCli {
         start_point: Option<&str>,
         checkout: bool,
     ) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(name)?;
         if let Some(sp) = start_point {
             validate_ref(sp)?;
@@ -1570,6 +1588,7 @@ impl GitLayer for GitCli {
     }
 
     fn checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(ref_name)?;
         self.run(path, &["checkout", ref_name])?;
         self.drop_session();
@@ -1577,6 +1596,7 @@ impl GitLayer for GitCli {
     }
 
     fn force_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(ref_name)?;
         self.run(path, &["checkout", "-f", ref_name])?;
         self.drop_session();
@@ -1584,6 +1604,7 @@ impl GitLayer for GitCli {
     }
 
     fn fast_forward(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(ref_name)?;
         self.run(path, &["merge", "--ff-only", ref_name])?;
         self.drop_session();
@@ -1591,6 +1612,7 @@ impl GitLayer for GitCli {
     }
 
     fn stash_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(ref_name)?;
         // Stash everything (tracked + untracked) so the tree is clean to switch.
         let msg = format!("riff: auto-stash before checkout {ref_name}");
@@ -1641,6 +1663,7 @@ impl GitLayer for GitCli {
         file_path: &str,
         content: &str,
     ) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_path(file_path)?;
         fs::write(path.join(file_path), content).map_err(GitError::Io)?;
         // Staging a path with no conflict markers marks it resolved for the op.
@@ -1655,6 +1678,7 @@ impl GitLayer for GitCli {
         file_path: &str,
         side: &str,
     ) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_path(file_path)?;
         let flag = match side {
             "ours" => "--ours",
@@ -1668,6 +1692,7 @@ impl GitLayer for GitCli {
     }
 
     fn rename_branch(&self, path: &Path, old: &str, new: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(old)?;
         validate_ref(new)?;
         self.run(path, &["branch", "-m", old, new])?;
@@ -1675,6 +1700,7 @@ impl GitLayer for GitCli {
     }
 
     fn delete_branch(&self, path: &Path, name: &str, force: bool) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(name)?;
         let flag = if force { "-D" } else { "-d" };
         self.run(path, &["branch", flag, name])?;
@@ -1682,6 +1708,7 @@ impl GitLayer for GitCli {
     }
 
     fn set_upstream(&self, path: &Path, branch: &str, upstream: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(branch)?;
         validate_ref(upstream)?;
         let arg = format!("--set-upstream-to={upstream}");
@@ -1690,6 +1717,7 @@ impl GitLayer for GitCli {
     }
 
     fn create_tag(&self, path: &Path, name: &str, target: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(name)?;
         validate_ref(target)?;
         self.run(path, &["tag", name, target])?;
@@ -1697,6 +1725,7 @@ impl GitLayer for GitCli {
     }
 
     fn reset(&self, path: &Path, target: &str, mode: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(target)?;
         let flag = match mode {
             "soft" => "--soft",
@@ -1709,6 +1738,7 @@ impl GitLayer for GitCli {
     }
 
     fn cherry_pick(&self, path: &Path, target: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(target)?;
         self.run(path, &["cherry-pick", target])?;
         self.drop_session();
@@ -1716,6 +1746,7 @@ impl GitLayer for GitCli {
     }
 
     fn revert(&self, path: &Path, target: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(target)?;
         self.run(path, &["revert", "--no-edit", target])?;
         self.drop_session();
@@ -1723,6 +1754,7 @@ impl GitLayer for GitCli {
     }
 
     fn rebase(&self, path: &Path, onto: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(onto)?;
         self.run(path, &["rebase", onto])?;
         self.drop_session();
@@ -1730,6 +1762,7 @@ impl GitLayer for GitCli {
     }
 
     fn fetch(&self, path: &Path) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         self.run_network(path, &["fetch", "--all", "--prune"])?;
         // Newly-fetched objects/refs won't be visible to the cached batch.
         self.drop_session();
@@ -1737,6 +1770,7 @@ impl GitLayer for GitCli {
     }
 
     fn pull(&self, path: &Path, rebase: bool) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         let mut args = vec!["pull"];
         if rebase {
             args.push("--rebase");
@@ -1752,6 +1786,7 @@ impl GitLayer for GitCli {
         set_upstream_branch: Option<&str>,
         force: bool,
     ) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         let mut args = vec!["push"];
         if force {
             args.push("--force-with-lease");
@@ -1777,6 +1812,7 @@ impl GitLayer for GitCli {
         message: Option<&str>,
         include_untracked: bool,
     ) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         let mut args = vec!["stash", "push"];
         if include_untracked {
             args.push("--include-untracked");
@@ -1793,6 +1829,7 @@ impl GitLayer for GitCli {
     }
 
     fn stash_apply(&self, path: &Path, index: u32, pop: bool) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         let sel = format!("stash@{{{index}}}");
         let sub = if pop { "pop" } else { "apply" };
         self.run(path, &["stash", sub, &sel])?;
@@ -1801,12 +1838,14 @@ impl GitLayer for GitCli {
     }
 
     fn stash_drop(&self, path: &Path, index: u32) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         let sel = format!("stash@{{{index}}}");
         self.run(path, &["stash", "drop", &sel])?;
         Ok(())
     }
 
     fn merge(&self, path: &Path, branch: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         validate_ref(branch)?;
         self.run(path, &["merge", branch])?;
         self.drop_session();
@@ -1833,6 +1872,7 @@ impl GitLayer for GitCli {
     }
 
     fn op_abort(&self, path: &Path, op: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         let sub = match op {
             "merge" | "rebase" | "cherry-pick" | "revert" => op,
             _ => return Err(GitError::CommandFailed("no operation in progress".into())),
@@ -1843,6 +1883,7 @@ impl GitLayer for GitCli {
     }
 
     fn op_continue(&self, path: &Path, op: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
         // For merge, complete the commit (--continue would open an editor);
         // for the sequencer ops, --continue with the editor suppressed.
         let args: &[&str] = match op {
