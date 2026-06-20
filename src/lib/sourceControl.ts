@@ -130,14 +130,22 @@ export async function enterChangesMode(): Promise<void> {
   void loadStashes();
 }
 
+// Monotonic guard so a slow status fetch — now off the main thread, so the
+// watcher and user actions can fire overlapping refreshes — from an earlier
+// call can't land after and overwrite a newer one's results.
+let statusSession = 0;
+
 /// Load `git status --porcelain=v2` for the active repo and auto-open the first
 /// change so the diff pane isn't empty.
 export async function loadStatus(): Promise<void> {
   if (!appState.repoPath) return;
+  const session = ++statusSession;
   appState.loadingStatus = true;
   appState.error = null;
   try {
     const st = await status(changesRepoPath());
+    // A newer loadStatus started while we awaited — drop this stale result.
+    if (session !== statusSession) return;
     appState.repoStatus = st;
     appState.currentBranch = st.branch;
     appState.currentUpstream = st.upstream;
@@ -165,11 +173,12 @@ export async function loadStatus(): Promise<void> {
       appState.selectedFile = null;
     }
   } catch (e) {
+    if (session !== statusSession) return;
     appState.error = String(e);
     appState.repoStatus = null;
     appState.selectedFile = null;
   } finally {
-    appState.loadingStatus = false;
+    if (session === statusSession) appState.loadingStatus = false;
   }
 }
 
