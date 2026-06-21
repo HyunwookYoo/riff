@@ -3,6 +3,21 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v1.1.5
+
+작은 버그 수정.
+
+### 🐛 수정
+
+- **에러 메시지가 바로 사라지던 문제** — push·commit·merge·stash 등이 실패하면 에러가 떴다가
+  직후 새로고침에 덮여 곧바로 사라졌습니다(예: rebase 후 push의 non-fast-forward 거부). 이제
+  실패 메시지가 그대로 남고, 다음 작업이 성공하면 깨끗이 사라집니다.
+
+### 📦 설치 / 업그레이드
+
+- **기존 1.1.x 사용자**: 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+- **신규 설치**: 아래 assets에서 `Riff_1.1.5_x64-setup.exe` 다운로드 → 실행.
+
 ## v1.1.4
 
 rebase·sync 등 긴 작업의 진행 표시와 UI 안정화.
