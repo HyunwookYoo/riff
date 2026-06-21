@@ -295,8 +295,13 @@ async function runSync(op: Promise<void>, label: string): Promise<void> {
     appState.error = String(e);
   } finally {
     appState.syncing = false;
+    // Keep a sync failure's message: refreshActiveView() runs loadStatus()/
+    // loadCommits(), which reset appState.error — without this a rejected push
+    // (e.g. after a rebase) would flash and vanish before you could read it.
+    const err = appState.error;
     await refreshActiveView();
     await loadPendingOp();
+    if (err) appState.error = err;
     appState.endGitOp();
   }
 }
@@ -318,13 +323,16 @@ export async function loadPendingOp(): Promise<void> {
 /// and the banner appears; resolve + stage in Working, then Continue.
 export async function doMergeBranch(branch: string): Promise<void> {
   appState.beginGitOp("Merging…");
+  appState.error = null;
   try {
     await mergeCmd(changesRepoPath(), branch);
   } catch (e) {
     appState.error = String(e);
   } finally {
+    const err = appState.error;
     await refreshActiveView();
     await loadPendingOp();
+    if (err) appState.error = err;
     appState.endGitOp();
   }
 }
@@ -334,13 +342,16 @@ export async function abortOp(): Promise<void> {
   const op = appState.pendingOp;
   if (op === "none") return;
   appState.beginGitOp("Aborting…");
+  appState.error = null;
   try {
     await opAbort(changesRepoPath(), op);
   } catch (e) {
     appState.error = String(e);
   } finally {
+    const err = appState.error;
     await refreshActiveView();
     await loadPendingOp();
+    if (err) appState.error = err;
     appState.endGitOp();
   }
 }
@@ -350,13 +361,16 @@ export async function continueOp(): Promise<void> {
   const op = appState.pendingOp;
   if (op === "none") return;
   appState.beginGitOp("Resuming…");
+  appState.error = null;
   try {
     await opContinue(changesRepoPath(), op);
   } catch (e) {
     appState.error = String(e);
   } finally {
+    const err = appState.error;
     await refreshActiveView();
     await loadPendingOp();
+    if (err) appState.error = err;
     appState.endGitOp();
   }
 }
@@ -376,24 +390,30 @@ export async function loadStashes(): Promise<void> {
 
 /// Stash the working tree (including untracked) under an optional message.
 export async function doStashSave(message?: string): Promise<void> {
+  appState.error = null;
   try {
     await stashSave(changesRepoPath(), message ?? null, true);
   } catch (e) {
     appState.error = String(e);
   }
+  const err = appState.error;
   await refreshActiveView();
   await loadStashes();
+  if (err) appState.error = err;
 }
 
 /// Apply (or pop) a stash back onto the working tree.
 export async function doStashApply(index: number, pop: boolean): Promise<void> {
+  appState.error = null;
   try {
     await stashApply(changesRepoPath(), index, pop);
   } catch (e) {
     appState.error = String(e);
   }
+  const err = appState.error;
   await refreshActiveView();
   await loadStashes();
+  if (err) appState.error = err;
 }
 
 /// Drop a stash (no working-tree change).
@@ -490,6 +510,8 @@ export async function doCommit(): Promise<void> {
     appState.error = String(e);
   } finally {
     appState.committing = false;
+    const err = appState.error;
     await loadStatus();
+    if (err) appState.error = err;
   }
 }
