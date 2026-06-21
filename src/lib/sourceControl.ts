@@ -284,9 +284,10 @@ export async function refreshActiveView(): Promise<void> {
 
 /// Run a fetch/pull/push against the source-control repo with a busy flag,
 /// surfacing errors and refreshing afterward.
-async function runSync(op: Promise<void>): Promise<void> {
+async function runSync(op: Promise<void>, label: string): Promise<void> {
   if (appState.syncing) return;
   appState.syncing = true;
+  appState.beginGitOp(label);
   appState.error = null;
   try {
     await op;
@@ -296,6 +297,7 @@ async function runSync(op: Promise<void>): Promise<void> {
     appState.syncing = false;
     await refreshActiveView();
     await loadPendingOp();
+    appState.endGitOp();
   }
 }
 
@@ -315,39 +317,48 @@ export async function loadPendingOp(): Promise<void> {
 /// Merge a branch into the current one. On conflict the repo is left mid-merge
 /// and the banner appears; resolve + stage in Working, then Continue.
 export async function doMergeBranch(branch: string): Promise<void> {
+  appState.beginGitOp("Merging…");
   try {
     await mergeCmd(changesRepoPath(), branch);
   } catch (e) {
     appState.error = String(e);
+  } finally {
+    await refreshActiveView();
+    await loadPendingOp();
+    appState.endGitOp();
   }
-  await refreshActiveView();
-  await loadPendingOp();
 }
 
 /// Abort the in-progress operation.
 export async function abortOp(): Promise<void> {
   const op = appState.pendingOp;
   if (op === "none") return;
+  appState.beginGitOp("Aborting…");
   try {
     await opAbort(changesRepoPath(), op);
   } catch (e) {
     appState.error = String(e);
+  } finally {
+    await refreshActiveView();
+    await loadPendingOp();
+    appState.endGitOp();
   }
-  await refreshActiveView();
-  await loadPendingOp();
 }
 
 /// Continue the in-progress operation (conflicts must be resolved + staged).
 export async function continueOp(): Promise<void> {
   const op = appState.pendingOp;
   if (op === "none") return;
+  appState.beginGitOp("Resuming…");
   try {
     await opContinue(changesRepoPath(), op);
   } catch (e) {
     appState.error = String(e);
+  } finally {
+    await refreshActiveView();
+    await loadPendingOp();
+    appState.endGitOp();
   }
-  await refreshActiveView();
-  await loadPendingOp();
 }
 
 /// Load the stash list for the source-control repo (shown in the sidebar).
@@ -396,10 +407,10 @@ export async function doStashDrop(index: number): Promise<void> {
 }
 
 export function doFetch(): Promise<void> {
-  return runSync(fetchCmd(changesRepoPath()));
+  return runSync(fetchCmd(changesRepoPath()), "Fetching…");
 }
 export function doPull(rebase: boolean): Promise<void> {
-  return runSync(pullCmd(changesRepoPath(), rebase));
+  return runSync(pullCmd(changesRepoPath(), rebase), "Pulling…");
 }
 export function doPush(force: boolean): Promise<void> {
   // First push (no upstream): set it on the current branch while pushing.
@@ -407,7 +418,7 @@ export function doPush(force: boolean): Promise<void> {
     !appState.currentUpstream && appState.currentBranch
       ? appState.currentBranch
       : null;
-  return runSync(pushCmd(changesRepoPath(), setUpstream, force));
+  return runSync(pushCmd(changesRepoPath(), setUpstream, force), "Pushing…");
 }
 
 /// Clear all Changes-screen state on repo switch — the status, repo selection,

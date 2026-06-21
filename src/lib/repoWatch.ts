@@ -8,10 +8,16 @@ import { loadPendingOp, loadStashes, refreshActiveView } from "./sourceControl";
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleRefresh(): void {
+  // An in-app git op (rebase/merge/pull/…) is driving the repo and will refresh
+  // the view itself when it finishes or stops; ignore the churn it makes
+  // meanwhile so the UI doesn't update on every commit a rebase replays.
+  if (appState.gitOpDepth > 0) return;
   if (timer !== null) return;
   timer = setTimeout(() => {
     timer = null;
     if (!appState.repoPath) return;
+    // An op may have started after this was scheduled — let it own the refresh.
+    if (appState.gitOpDepth > 0) return;
     // refreshActiveView reloads status (Changes) or branch chip + graph
     // (History) and nudges the refs sidebar; pending-op + stashes cover the
     // conflict banner and stash list.

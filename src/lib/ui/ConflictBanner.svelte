@@ -22,11 +22,15 @@
 </script>
 
 {#if appState.pendingOp !== "none"}
-  <div class="conflict-banner">
+  <div class="conflict-banner" class:info={unresolved === 0}>
     <span class="msg">
-      ⚠ {label} in progress{#if unresolved}
-        — {unresolved} unresolved file{unresolved === 1 ? "" : "s"}{/if}. Resolve
-      conflicts in Working, stage them, then Continue.
+      {#if unresolved > 0}
+        ⚠ {label} hit a conflict — {unresolved} unresolved file{unresolved === 1
+          ? ""
+          : "s"}. Resolve them in Working, stage, then Continue.
+      {:else}
+        ✓ {label}: all conflicts resolved — Continue to finish.
+      {/if}
     </span>
     {#if unresolved > 0}
       <button
@@ -65,6 +69,12 @@
     color: var(--error-fg, #f0b4b4);
     border-bottom: 1px solid var(--border);
     font-size: 0.85em;
+  }
+  /* No unresolved conflicts left — the op is just waiting for Continue, so use
+     the calmer info palette instead of the alarming red error one. */
+  .conflict-banner.info {
+    background: var(--info-bg);
+    color: var(--info-fg);
   }
   .conflict-banner .msg {
     flex: 1;

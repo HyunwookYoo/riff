@@ -11,6 +11,7 @@
   import RepoTabs from "$lib/ui/RepoTabs.svelte";
   import RefsSidebar from "$lib/ui/RefsSidebar.svelte";
   import ConflictBanner from "$lib/ui/ConflictBanner.svelte";
+  import OpProgressBanner from "$lib/ui/OpProgressBanner.svelte";
   import ConflictView from "$lib/ui/ConflictView.svelte";
   import CheckoutDialog from "$lib/ui/CheckoutDialog.svelte";
   import CommandPalette from "$lib/ui/CommandPalette.svelte";
@@ -409,6 +410,7 @@
       </button>
     </div>
   {/if}
+  <OpProgressBanner />
   <ConflictBanner />
   <CheckoutDialog />
   <CommandPalette />

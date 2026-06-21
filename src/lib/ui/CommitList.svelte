@@ -6,6 +6,7 @@
     enterChangesMode,
     loadCurrentBranch,
     loadPendingOp,
+    loadStatus,
   } from "$lib/sourceControl";
   import {
     checkout,
@@ -42,25 +43,41 @@
   // Run a commit-graph action, then reload the log + current-branch chip.
   // On failure keep the error and skip the reload — loadCommits() clears
   // appState.error, which would otherwise swallow the message.
-  async function act(op: Promise<void>) {
+  async function act(op: Promise<void>, label?: string) {
     if (busy) return;
     busy = true;
+    // Hold off the file-watcher's refreshes while we drive this op so a
+    // multi-commit rebase doesn't redraw the graph on every replayed commit;
+    // we refresh once below when it finishes or stops. A label also shows the
+    // "…in progress, please wait" banner (only for notable ops like rebase).
+    appState.beginGitOp(label);
+    let ok = false;
     try {
       await op;
+      ok = true;
     } catch (e) {
       appState.error = String(e);
-      busy = false;
-      // A conflicting cherry-pick/revert/rebase leaves the repo mid-operation.
-      void loadPendingOp();
-      return;
     }
     busy = false;
-    await loadCommits();
-    void loadCurrentBranch();
-    void loadPendingOp();
-    // Refresh the local/remote ref list so badge merging (mergeRefs) reflects
-    // the new/moved/deleted branch instead of the write-once cache.
-    void reloadBranchesFor(appState.changesRepoIdx);
+    try {
+      if (ok) {
+        await loadCommits();
+        void loadCurrentBranch();
+        void loadPendingOp();
+        // Refresh the local/remote ref list so badge merging (mergeRefs) reflects
+        // the new/moved/deleted branch instead of the write-once cache.
+        void reloadBranchesFor(appState.changesRepoIdx);
+      } else {
+        // A conflicting cherry-pick/revert/rebase leaves the repo mid-operation.
+        // Don't loadCommits() here — it clears appState.error, swallowing the
+        // message. Load status so the conflict banner's count is accurate even
+        // from the graph.
+        await loadPendingOp();
+        if (appState.pendingOp !== "none") void loadStatus();
+      }
+    } finally {
+      appState.endGitOp();
+    }
   }
 
   // Right-click context menu on a commit.
@@ -167,6 +184,7 @@
         await checkout(p, dwim(m.target));
         await merge(p, m.source.name);
       })(),
+      "Merging…",
     );
   }
   function dropRebase() {
@@ -180,6 +198,7 @@
         await checkout(p, dwim(m.source));
         await rebase(p, m.target.name);
       })(),
+      "Rebasing…",
     );
   }
 
@@ -247,7 +266,7 @@
       ))
     )
       return;
-    void act(rebase(changesRepoPath(), sha));
+    void act(rebase(changesRepoPath(), sha), "Rebasing…");
   }
 
   // Lane gutter geometry. Row height is user-adjustable (graph density); the

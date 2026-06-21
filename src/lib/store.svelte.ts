@@ -226,6 +226,16 @@ class AppState {
   currentBehind = $state(0);
   // True while a fetch/pull/push runs (disables the sync buttons + spinner).
   syncing = $state(false);
+  // >0 while an in-app git op (rebase, merge, pull, continue/abort) is driving
+  // the repo. The filesystem watcher skips its refresh while this is set, so a
+  // multi-commit rebase doesn't redraw the UI on every replayed commit — the op
+  // refreshes once itself when it finishes or stops at a conflict.
+  gitOpDepth = $state(0);
+  // Label of the in-flight notable op ("Rebasing…", "Merging…", "Pulling…", …)
+  // for the "in progress — please wait" banner; null when nothing notable runs.
+  // Fast single-shot ops (cherry-pick/reset/branch) don't set it, so the banner
+  // doesn't flash for things that finish instantly.
+  gitOpLabel = $state<string | null>(null);
   // In-progress operation that may need resolving: "merge" | "rebase" |
   // "cherry-pick" | "revert" | "none". Drives the conflict banner.
   pendingOp = $state("none");
@@ -244,6 +254,18 @@ class AppState {
   commitSignoff = $state(false);
   commitCoauthors = $state<string[]>([]);
   committing = $state(false);
+
+  // Mark an in-app git op as started/finished. gitOpDepth gates the file watcher
+  // (so a rebase doesn't redraw on every replayed commit); gitOpLabel drives the
+  // "…in progress, please wait" banner (pass a label only for notable/slow ops).
+  beginGitOp(label: string | null = null) {
+    this.gitOpDepth++;
+    if (label) this.gitOpLabel = label;
+  }
+  endGitOp() {
+    this.gitOpDepth--;
+    if (this.gitOpDepth === 0) this.gitOpLabel = null;
+  }
 }
 
 export const appState = new AppState();
