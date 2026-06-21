@@ -28,12 +28,11 @@
     <button
       type="button"
       class="sbtn"
-      class:spin={busy}
       disabled={busy}
       title="Fetch all remotes"
       onclick={() => void doFetch()}
     >
-      ⟳
+      <span class="ico" class:spin={busy}>⟳</span>
     </button>
 
     <div class="split">
@@ -142,7 +141,13 @@
     border-left: none;
     padding: 3px 5px;
   }
-  .sbtn.spin {
+  /* Spin just the refresh glyph, not the whole button box — the operation now
+     runs async (UI stays live), so a rotating bordered button would be visible
+     the entire time and looks off. inline-block so the transform applies. */
+  .ico {
+    display: inline-block;
+  }
+  .ico.spin {
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin {
