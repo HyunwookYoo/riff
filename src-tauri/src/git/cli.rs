@@ -778,6 +778,24 @@ fn gitlink_sha(repo: &Path, spec: &str) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
+/// The submodule gitlink SHA at `tree_ish:file_path`, or None when the path
+/// isn't a gitlink (mode 160000) there. Unlike `gitlink_sha` (a bare rev-parse,
+/// which also resolves regular blobs), this confirms the entry is a submodule
+/// pointer via `ls-tree`, so a normal file never false-matches.
+fn ls_tree_gitlink(repo: &Path, tree_ish: &str, file_path: &str) -> Option<String> {
+    let out = git_command()
+        .arg("-C")
+        .arg(repo)
+        .args(["ls-tree", tree_ish, "--", file_path])
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_gitlink_sha(&out.stdout).ok().flatten()
+}
+
 /// Ensure the cached session targets `path`. Drops the previous session
 /// (which terminates its child processes) before spawning a new one.
 fn ensure_session(
@@ -1021,6 +1039,35 @@ impl GitLayer for GitCli {
             BatchResponse::Found { size } => Some(size),
             BatchResponse::Missing => None,
         };
+
+        // A submodule gitlink at either side: `<ref>:<path>` points at the
+        // submodule's commit oid, which isn't in this repo's object store, so
+        // both sides come back Missing and a normal diff would render blank.
+        // Show the pointer move like `git show` — "Subproject commit <old>" →
+        // "<new>". Gated on both-missing so regular files skip the ls-tree.
+        if old_size.is_none() && new_size.is_none() {
+            let old_link = ls_tree_gitlink(path, &old_ref, old_target);
+            let new_link = ls_tree_gitlink(path, &new_ref, file_path);
+            if old_link.is_some() || new_link.is_some() {
+                let to_text = |s: &Option<String>| {
+                    s.as_deref()
+                        .map(|sha| format!("Subproject commit {sha}\n"))
+                        .unwrap_or_default()
+                };
+                let old_content = to_text(&old_link);
+                let new_content = to_text(&new_link);
+                let changes = diff::compute_changes(&old_content, &new_content);
+                return Ok(FileDiff::Text {
+                    old_content,
+                    new_content,
+                    old_size: 0,
+                    new_size: 0,
+                    derived_label: None,
+                    ue_version: None,
+                    changes,
+                });
+            }
+        }
 
         // Unreal asset / image previews bypass the raw too-large gate (each
         // keeps its own cap): the .uasset header is small, and images render
@@ -1557,6 +1604,35 @@ impl GitLayer for GitCli {
             args.push("--reverse");
         }
         self.run_stdin(path, &args, patch.as_bytes())?;
+        Ok(())
+    }
+
+    fn discard_hunks(&self, path: &Path, file_path: &str, hunks: &[u32]) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
+        validate_path(file_path)?;
+        if hunks.is_empty() {
+            return Ok(());
+        }
+        // Re-diff the *unstaged* changes now so the patch matches the current
+        // worktree and indices line up with what the user clicked.
+        let out = self.run(path, &diff_args(false, file_path))?;
+        let text = String::from_utf8_lossy(&out);
+        let (header, blocks) = split_diff(&text);
+        if header.is_empty() || blocks.is_empty() {
+            return Err(GitError::CommandFailed(
+                "no diff to discard (file may have changed)".into(),
+            ));
+        }
+        let mut patch = header;
+        for &i in hunks {
+            let block = blocks.get(i as usize).ok_or_else(|| {
+                GitError::CommandFailed("file changed since hunks were listed; refresh".into())
+            })?;
+            patch.push_str(block);
+        }
+        // Reverse-apply to the worktree only (no --cached): drops the selected
+        // unstaged change, reverting that region to the index.
+        self.run_stdin(path, &["apply", "--reverse"], patch.as_bytes())?;
         Ok(())
     }
 

@@ -28,6 +28,7 @@
   import { cycleAppMode } from "$lib/compare";
   import { setHistoryRepo, enterGraphView } from "$lib/commitHistory";
   import {
+    discardSelectedFile,
     enterChangesMode,
     isPathConflicted,
     loadStatus,
@@ -341,6 +342,15 @@
       case "ArrowUp":
         moveSelection(-1);
         e.preventDefault();
+        break;
+      case "Delete":
+        // Discard the selected changed file (Working view only). Destructive —
+        // discardSelectedFile() confirms first. Form-control focus already
+        // yielded above, so this never fires while typing in the commit box.
+        if (appState.appMode === "changes" && appState.selectedFile) {
+          void discardSelectedFile();
+          e.preventDefault();
+        }
         break;
       case "n":
       case "p": {

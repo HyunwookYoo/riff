@@ -509,6 +509,20 @@ export function applyHunks(
 }
 
 /**
+ * Discard the unstaged hunks at the given indices from the working tree
+ * (`git apply --reverse`) — reverting just those regions to the index.
+ * Destructive. Rejects if an index is out of range (the file changed since
+ * listing).
+ */
+export function discardHunks(
+  path: string,
+  filePath: string,
+  hunks: number[],
+): Promise<void> {
+  return invoke("discard_hunks", { path, filePath, hunks });
+}
+
+/**
  * Run `git blame --porcelain -w -M` on a file. `rev` is ignored when
  * `useContents` is true (worktree mode blames the working copy against HEAD).
  * Lines with no commit (uncommitted edits) come back with sha "00000000".

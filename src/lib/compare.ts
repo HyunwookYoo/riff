@@ -64,15 +64,26 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
   appState.files = [];
   appState.selectedFile = null;
 
-  // Paths of submodule gitlinks inside main. When main lists a changed
-  // file at one of these paths it's actually the submodule-pointer bump
-  // (git reports submodule mods as `M\t<path>` in name-status output).
-  // Drop those — the submodule's own group renders the real change set
-  // with the right semantics, and clicking the gitlink as a regular file
-  // would try to read a directory and trigger ACCESS_DENIED.
+  // Which repos this pass will actually scan (mirrors the per-repo loop's
+  // skips below). A submodule that won't be scanned has no group of its own in
+  // this view, which drives the gitlink decision just below.
+  const willScan = (i: number) =>
+    !(appState.bcDiffRange && i !== 0) &&
+    !(!isTabMode && appState.activeRepoIdx !== null && appState.activeRepoIdx !== i);
+
+  // Paths of submodule gitlinks inside main. When main lists a changed file at
+  // one of these paths it's actually the submodule-pointer bump (git reports
+  // submodule mods as `M\t<path>` in name-status output). Drop it ONLY when the
+  // submodule's own group is also rendered this pass — that group shows the real
+  // change set, so the gitlink row would be a broken duplicate. When the
+  // submodule is focused-out (e.g. the graph's per-commit view on main), keep
+  // the gitlink so the bump still shows as "Subproject commit a→b" instead of
+  // vanishing — file_diff renders that pointer move and never reads the dir.
   const submoduleGitlinkPaths = new Set(
     appState.repos
-      .filter((r) => r.kind === "submodule" && r.parentGitlinkPath)
+      .filter(
+        (r, i) => r.kind === "submodule" && r.parentGitlinkPath && willScan(i),
+      )
       .map((r) => r.parentGitlinkPath!),
   );
 

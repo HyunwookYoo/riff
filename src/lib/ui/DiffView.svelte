@@ -6,7 +6,8 @@
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
   import { changesFileDiff, fileDiff, fileHunks, setUeVersionForRepo } from "$lib/git";
-  import { changesRepoPath } from "$lib/sourceControl";
+  import { changesRepoPath, discardHunk } from "$lib/sourceControl";
+  import { confirmAction } from "$lib/dialogs";
   import { assignHunk, hunkChangelistId } from "$lib/changelists";
   import { resolveDiffRefsFor } from "$lib/workspace";
   import type { ChangedFile, FileDiff } from "$lib/types";
@@ -204,7 +205,6 @@
     if (
       appState.appMode !== "changes" ||
       appState.changesSide !== "unstaged" ||
-      appState.changelists.length < 2 ||
       !appState.selectedFile
     )
       return null;
@@ -247,8 +247,11 @@
     e.stopPropagation();
     if (hunkBtn) hunkMenu = { x: e.clientX, y: e.clientY, hunkId: hunkBtn.hunkId };
   }
-  // Right-click stays as a shortcut to the same menu.
+  // Right-click stays as a shortcut to the changelist menu — only meaningful
+  // when there's another list to move the hunk to. Discard lives on the hover
+  // button, so it stays reachable even with just the default changelist.
   function onHunkContextMenu(e: MouseEvent, view: EditorView): boolean {
+    if (appState.changelists.length < 2) return false;
     const hunkId = hunkAtEvent(e, view);
     if (!hunkId) return false;
     e.preventDefault();
@@ -260,6 +263,22 @@
     const file = appState.selectedFile?.path;
     if (file && hunkMenu) assignHunk(file, hunkMenu.hunkId, clId);
     hunkMenu = null;
+  }
+
+  // Discard just the hovered hunk (revert that region to the index). Destructive
+  // — confirm first, mirroring the file-level discard. The hunk id resolves to
+  // its current diff index inside discardHunk(), guarding against drift.
+  async function discardHunkClick() {
+    const file = appState.selectedFile?.path;
+    if (!file || !hunkBtn) return;
+    const hunkId = hunkBtn.hunkId;
+    hunkBtn = null;
+    const ok = await confirmAction(
+      "Discard changes in this hunk? It reverts to the staged/committed state and can't be undone.",
+      { title: "Discard hunk" },
+    );
+    if (!ok) return;
+    await discardHunk(file, hunkId);
   }
 
   // Keep the changelist menu inside the window — the Assign button sits at the
@@ -628,17 +647,32 @@
 </div>
 
 {#if hunkBtn}
-  <button
-    type="button"
-    class="hunk-assign-btn"
+  <div
+    class="hunk-actions"
     style="top: {hunkBtn.top}px; left: {hunkBtn.left}px"
-    title="Move this hunk to a changelist"
+    role="group"
     onmouseenter={() => clearTimeout(hideTimer)}
     onmouseleave={scheduleHideBtn}
-    onclick={openHunkMenu}
   >
-    Assign ▾
-  </button>
+    <button
+      type="button"
+      class="hunk-act discard"
+      title="Discard this hunk (revert to the staged/committed state)"
+      onclick={discardHunkClick}
+    >
+      ↩ Discard
+    </button>
+    {#if appState.changelists.length >= 2}
+      <button
+        type="button"
+        class="hunk-act"
+        title="Move this hunk to a changelist"
+        onclick={openHunkMenu}
+      >
+        Assign ▾
+      </button>
+    {/if}
+  </div>
 {/if}
 
 {#if hunkMenu}
@@ -823,11 +857,16 @@
   :global(.cm-deletedChunk .cm-deletedText) {
     background: transparent !important;
   }
-  .hunk-assign-btn {
+  .hunk-actions {
     position: fixed;
     z-index: 999;
     /* `left` is the anchor's right edge; grow leftward from it. */
     transform: translateX(-100%);
+    display: inline-flex;
+    gap: 4px;
+    white-space: nowrap;
+  }
+  .hunk-act {
     padding: 2px 10px;
     border: 1px solid var(--accent);
     border-radius: 11px;
@@ -840,8 +879,14 @@
     white-space: nowrap;
     box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
   }
-  .hunk-assign-btn:hover {
+  .hunk-act:hover {
     filter: brightness(1.12);
+  }
+  /* Discard is destructive — tint it apart from the accent-blue Assign pill. */
+  .hunk-act.discard {
+    background: var(--error-bg);
+    border-color: var(--error-fg);
+    color: var(--error-fg);
   }
   .hunk-menu {
     position: fixed;

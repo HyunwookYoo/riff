@@ -340,6 +340,13 @@ pub trait GitLayer {
         staged: bool,
         hunks: &[u32],
     ) -> Result<(), GitError>;
+    /// Discard the unstaged hunks at the given indices from the working tree —
+    /// the per-hunk analog of `discard_paths`. Re-diffs the file, builds a
+    /// sub-patch of just those hunks, and reverse-applies it to the worktree
+    /// (`git apply --reverse`, no `--cached`), reverting those regions to the
+    /// index. Destructive. Rejects when an index is out of range — the file
+    /// changed since the hunks were listed.
+    fn discard_hunks(&self, path: &Path, file_path: &str, hunks: &[u32]) -> Result<(), GitError>;
     /// Create branch `name` (at `start_point`, default HEAD). When `checkout`
     /// is true, also switch to it (`git checkout -b`); otherwise just create it.
     fn create_branch(

@@ -74,6 +74,7 @@ export async function enterHistoryMode(): Promise<void> {
     };
   }
   appState.appMode = "history";
+  appState.lastScmView = "history";
   if (!appState.repoPath) return;
 
   if (appState.commits.length === 0) {

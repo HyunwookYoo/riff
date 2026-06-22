@@ -1,8 +1,10 @@
 import { appState } from "./store.svelte";
 import {
   commit as commitCmd,
+  discardHunks,
   discardPaths as discardCmd,
   fetch as fetchCmd,
+  fileHunks,
   headCommitMessage,
   merge as mergeCmd,
   opAbort,
@@ -18,11 +20,12 @@ import {
   status,
   unstage as unstageCmd,
 } from "./git";
-import { loadCommits, invalidateGraph } from "./commitHistory";
+import { loadCommits, invalidateGraph, enterGraphView } from "./commitHistory";
 import {
   loadChangelistsForRepo,
   reconcileChangelists,
 } from "./changelists";
+import { confirmAction } from "./dialogs";
 import type { ChangedFile, FileStatus, StatusEntry } from "./types";
 
 /// Map a porcelain-v2 status code (X or Y for one side) to a `FileStatus` for
@@ -125,9 +128,19 @@ export async function enterChangesMode(): Promise<void> {
     appState.changesRepoIdx = appState.historyRepoIdx;
   }
   appState.appMode = "changes";
+  appState.lastScmView = "changes";
   await loadStatus();
   void loadPendingOp();
   void loadStashes();
+}
+
+/// Enter the source-control area, restoring whichever sub-view (Working or the
+/// commit Graph) was last shown — so leaving for Branch/Blame and coming back
+/// lands on the same view instead of always snapping to Working.
+export function enterScm(): Promise<void> {
+  return appState.lastScmView === "history"
+    ? enterGraphView()
+    : enterChangesMode();
 }
 
 // Monotonic guard so a slow status fetch — now off the main thread, so the
@@ -241,6 +254,48 @@ export function discardPath(path: string, origPath: string | null): Promise<void
   const paths = origPath ? [path, origPath] : [path];
   return applyAndReload(discardCmd(changesRepoPath(), paths));
 }
+/// Discard a single unstaged hunk (revert just that region to the index).
+/// Destructive — the caller confirms first. Re-lists the file's hunks so the
+/// id resolves to its *current* diff index (guarding against drift since the
+/// menu was opened), reverse-applies it, then reloads status — which refreshes
+/// the change counts, the open diff, and the per-hunk list.
+export async function discardHunk(path: string, hunkId: string): Promise<void> {
+  const repo = changesRepoPath();
+  try {
+    const cur = await fileHunks(repo, path, false);
+    const idx = cur.findIndex((h) => h.id === hunkId);
+    if (idx < 0) throw new Error("hunk no longer present — refresh and retry");
+    await discardHunks(repo, path, [idx]);
+  } catch (e) {
+    appState.error = String(e);
+  }
+  await loadStatus();
+}
+/// Discard the file currently selected in Changes — the Delete-key shortcut.
+/// Mirrors a row's ↩ button: a new file (staged-add / untracked) is deleted,
+/// anything else reverts to HEAD. Destructive, so it confirms first. No-op
+/// outside the Changes (Working) view or with nothing selected.
+export async function discardSelectedFile(): Promise<void> {
+  if (appState.appMode !== "changes") return;
+  const sel = appState.selectedFile;
+  if (!sel) return;
+  const entry = (appState.repoStatus?.entries ?? []).find(
+    (e) => e.path === sel.path,
+  );
+  const isNew =
+    !!entry &&
+    (entry.index_status === "A" ||
+      (entry.index_status === "?" && entry.worktree_status === "?"));
+  const ok = await confirmAction(
+    isNew
+      ? `Delete this new file? It is permanently removed from disk and can't be undone.\n\n${sel.path}`
+      : `Discard changes to this file? It reverts to HEAD and can't be undone.\n\n${sel.path}`,
+    { title: isNew ? "Delete file" : "Discard changes" },
+  );
+  if (!ok) return;
+  await discardPath(sel.path, entry?.orig_path ?? null);
+}
+
 export function stageAll(): Promise<void> {
   return applyAndReload(stageCmd(changesRepoPath(), null));
 }

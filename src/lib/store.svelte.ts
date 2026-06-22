@@ -63,6 +63,10 @@ class AppState {
   // Top-level workspace mode. Session-only — opens on the Working (Changes)
   // view, the most-used mode.
   appMode = $state<AppMode>("changes");
+  // Which source-control sub-view (Working vs the commit Graph) was last shown,
+  // so the "Changes" toolbar button restores it after a trip to Branch/Blame
+  // instead of always snapping back to Working. Session-only.
+  lastScmView = $state<"changes" | "history">("changes");
   // File currently being blamed, repo-qualified (§13.3 #23). Persists across
   // drill-in/back so returning to blame mode lands you on the same file.
   // Session-only.

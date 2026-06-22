@@ -247,6 +247,16 @@ async fn apply_hunks(
 }
 
 #[tauri::command]
+async fn discard_hunks(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    file_path: String,
+    hunks: Vec<u32>,
+) -> Result<(), GitError> {
+    state.discard_hunks(Path::new(&path), &file_path, &hunks)
+}
+
+#[tauri::command]
 async fn create_branch(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -709,6 +719,7 @@ pub fn run() {
             save_changelists,
             file_hunks,
             apply_hunks,
+            discard_hunks,
             create_branch,
             checkout,
             force_checkout,

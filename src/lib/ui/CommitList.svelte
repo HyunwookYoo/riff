@@ -1,6 +1,11 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { openCommit, loadCommits, loadMoreCommits } from "$lib/commitHistory";
+  import {
+    openCommit,
+    loadCommits,
+    loadMoreCommits,
+    setHistoryRef,
+  } from "$lib/commitHistory";
   import {
     changesRepoPath,
     enterChangesMode,
@@ -227,6 +232,13 @@
   function doCheckout(sha: string) {
     void requestCheckout(changesRepoPath(), sha);
   }
+
+  // Filter the graph to one ref from its badge funnel — same as the toolbar's
+  // "Showing" picker (git log <ref>). Clicking the active filter's funnel again
+  // clears back to all branches.
+  function filterToBranch(name: string) {
+    setHistoryRef(appState.historyRef === name ? "" : name);
+  }
   // Double-click a branch label in the graph to check it out. A clean tree
   // switches immediately; a dirty tree opens the CheckoutDialog (stash / bring
   // / discard). A remote-tracking label (origin/x) DWIMs into a local branch of
@@ -424,6 +436,42 @@
   onpointerup={onWinPointerUp}
 />
 
+<!-- Funnel that scopes the graph to one ref (reused by branch/head/remote
+     badges). Hover-revealed; stays lit while that ref is the active filter.
+     stopPropagation keeps it clear of the badge's drag / dbl-click checkout. -->
+{#snippet filterBtn(refName: string)}
+  <button
+    type="button"
+    class="ref-filter"
+    class:active={appState.historyRef === refName}
+    title={appState.historyRef === refName
+      ? `Showing only ${refName} — click to show all branches`
+      : `Show only ${refName} in the graph`}
+    aria-label={appState.historyRef === refName
+      ? `Showing only ${refName}; click to show all branches`
+      : `Show only ${refName} in the graph`}
+    onpointerdown={(e) => e.stopPropagation()}
+    onclick={(e) => {
+      e.stopPropagation();
+      filterToBranch(refName);
+    }}
+  >
+    <svg
+      viewBox="0 0 24 24"
+      width="11"
+      height="11"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+    </svg>
+  </button>
+{/snippet}
+
 <div class="cl-wrap">
   {#if editor}
   <form class="cl-editor" onsubmit={submitEditor}>
@@ -524,7 +572,7 @@
                       confirmCheckoutRef(b.checkout);
                     }
                   }}
-                  >{b.text}{#if b.remotes.length}<RefIcon kind="remote" />{/if}</span
+                  >{b.text}{#if b.remotes.length}<RefIcon kind="remote" />{/if}{@render filterBtn(b.text)}</span
                 >
               {:else if b.kind === "head"}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -540,7 +588,7 @@
                 >
                   <span class="check" aria-hidden="true">✓</span>{b.text}{#if b.remotes.length}<RefIcon
                       kind="remote"
-                    />{/if}
+                    />{/if}{@render filterBtn(b.text)}
                 </span>
               {:else if b.kind === "remote"}
                 <span
@@ -563,7 +611,7 @@
                       e.stopPropagation();
                       confirmCheckoutRef(b.checkout);
                     }
-                  }}><RefIcon kind="remote" />{b.text}</span
+                  }}><RefIcon kind="remote" />{b.text}{@render filterBtn(b.text)}</span
                 >
               {:else}
                 <span class="ref tag">{b.text}</span>
@@ -871,6 +919,50 @@
   .ref.remote :global(svg.i) {
     margin-left: 0;
     margin-right: 3px;
+  }
+  /* Funnel button: scope the graph to this ref. Collapsed (max-width 0, so it
+     takes no layout space) until the badge is hovered; stays revealed while
+     it's the active filter. min-width:0 lets the flex child shrink past its
+     icon's intrinsic width. */
+  .ref-filter {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: 0;
+    height: 14px;
+    overflow: hidden;
+    opacity: 0;
+    margin-left: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    pointer-events: none;
+    transition:
+      max-width 0.12s ease,
+      opacity 0.12s ease,
+      margin-left 0.12s ease;
+  }
+  .ref:hover .ref-filter,
+  .ref-filter.active {
+    max-width: 16px;
+    margin-left: 4px;
+    opacity: 0.7;
+    pointer-events: auto;
+  }
+  .ref-filter:hover {
+    opacity: 1;
+  }
+  /* Active filter: solid funnel + full opacity so the lit badge reads as
+     "the graph is scoped to me — click to clear". */
+  .ref-filter.active {
+    opacity: 1;
+  }
+  .ref-filter.active svg {
+    fill: currentColor;
   }
   .empty {
     padding: 16px;
