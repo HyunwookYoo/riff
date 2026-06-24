@@ -5,6 +5,7 @@ import {
   forceCheckout,
   stashCheckout,
   fastForward,
+  fetch as fetchRemotes,
 } from "./git";
 import {
   refreshActiveView,
@@ -48,33 +49,42 @@ async function refreshAfterCheckout(): Promise<void> {
 
 /// Run a checkout with the chosen strategy and refresh on success. Throws on
 /// failure so the caller (dialog) can surface an inline error and stay open.
-/// When `ffTo` is set (a remote ref), the local branch is fast-forwarded to it
-/// after the switch — used for remote-branch double-clicks so a behind local
-/// catches up. A fast-forward failure (diverged) is surfaced but doesn't undo
-/// the completed switch.
+/// When `ffTo` is set (a remote ref), this is a real "pull": the remote is
+/// fetched and the just-switched local branch is fast-forwarded up to it —
+/// used for remote-branch double-clicks so a behind local catches up to the
+/// server. A fetch (offline) or fast-forward (diverged) failure is surfaced
+/// but doesn't undo the completed switch.
 export async function runCheckout(
   repoPath: string,
   target: string,
   strategy: CheckoutStrategy,
   ffTo?: string,
 ): Promise<void> {
+  appState.error = null;
   if (strategy === "stash") await stashCheckout(repoPath, target);
   else if (strategy === "discard") await forceCheckout(repoPath, target);
   else await checkout(repoPath, target);
   if (ffTo) {
+    // Fetch first so the remote-tracking ref reflects the server, then
+    // fast-forward — otherwise we'd only ever catch up to a stale local copy.
     try {
+      await fetchRemotes(repoPath);
       await fastForward(repoPath, ffTo);
     } catch (e) {
-      appState.error = `Switched to ${target}, but couldn't fast-forward to ${ffTo}: ${e}`;
+      appState.error = `Switched to ${target}, but couldn't update to ${ffTo}: ${e}`;
     }
   }
+  // Preserve a fetch/ff error across the refresh — loadStatus/loadCommits clear
+  // appState.error, which would otherwise swallow the message.
+  const err = appState.error;
   await refreshAfterCheckout();
+  if (err) appState.error = err;
 }
 
 /// Entry point for every checkout affordance. On a clean tree it switches
 /// immediately; on a dirty tree it opens the CheckoutDialog to let the user
-/// pick stash / bring / discard. `ffTo` (a remote ref) fast-forwards the local
-/// to the remote after the switch.
+/// pick stash / bring / discard. `ffTo` (a remote ref) fetches + fast-forwards
+/// (pulls) the local to the remote after the switch.
 export async function requestCheckout(
   repoPath: string,
   target: string,

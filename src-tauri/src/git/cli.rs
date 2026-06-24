@@ -796,6 +796,35 @@ fn ls_tree_gitlink(repo: &Path, tree_ish: &str, file_path: &str) -> Option<Strin
     parse_gitlink_sha(&out.stdout).ok().flatten()
 }
 
+/// Unmerged paths whose working-tree file still contains conflict markers — the
+/// user hasn't actually resolved them. Used to guard the auto-stage on
+/// `op_continue` so a half-resolved file is never committed as a "resolution".
+fn unresolved_conflict_files(repo: &Path) -> Vec<String> {
+    let out = match git_command()
+        .arg("-C")
+        .arg(repo)
+        .args(["diff", "--name-only", "--diff-filter=U", "-z"])
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => return Vec::new(),
+    };
+    let mut bad = Vec::new();
+    for raw in out.split(|&b| b == 0).filter(|s| !s.is_empty()) {
+        let rel = String::from_utf8_lossy(raw).to_string();
+        if let Ok(content) = fs::read_to_string(repo.join(&rel)) {
+            let has_marker = content
+                .lines()
+                .any(|l| l.starts_with("<<<<<<<") || l.starts_with(">>>>>>>"));
+            if has_marker {
+                bad.push(rel);
+            }
+        }
+    }
+    bad
+}
+
 /// Ensure the cached session targets `path`. Drops the previous session
 /// (which terminates its child processes) before spawning a new one.
 fn ensure_session(
@@ -1969,6 +1998,19 @@ impl GitLayer for GitCli {
             "revert" => &["revert", "--continue"],
             _ => return Err(GitError::CommandFailed("no operation in progress".into())),
         };
+        // A resolution left unstaged in the working tree (or any other tracked
+        // edit) makes git bail with "you have unstaged changes" / "unmerged
+        // files". Stage tracked changes so the working-tree resolution is picked
+        // up — but first refuse if a conflict still has markers, so a
+        // half-resolved file is never committed as the resolution.
+        let unresolved = unresolved_conflict_files(path);
+        if !unresolved.is_empty() {
+            return Err(GitError::CommandFailed(format!(
+                "resolve the remaining conflict markers first: {}",
+                unresolved.join(", ")
+            )));
+        }
+        self.run(path, &["add", "-u"])?;
         let output = git_command()
             .arg("-C")
             .arg(path)
