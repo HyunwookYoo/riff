@@ -3,6 +3,26 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v1.1.7
+
+버그 수정.
+
+### 🐛 수정
+
+- **그래프에서 remote 브랜치를 더블클릭해도 최신을 안 받아오던 문제** — 로컬 브랜치로 전환만 되고
+  fast-forward/pull이 되지 않았습니다(게다가 fast-forward가 막혀도 이유가 곧바로 사라졌습니다).
+  이제 그 remote를 **fetch한 뒤 fast-forward**(진짜 pull)하고, 갈라졌거나 오프라인이면 그 사유가
+  배너에 남습니다.
+- **충돌 해결 후 Continue가 "uncommitted changes"로 실패하던 문제** — rebase·merge·cherry-pick·
+  revert에서 충돌을 해결했는데 working tree에 stage되지 않은 변경이 남아 있으면 `--continue`가
+  거부됐습니다. 이제 Continue가 추적된 변경을 stage하고 진행하며, 아직 충돌 마커가 남은 파일이
+  있으면 어떤 파일인지 알려줍니다.
+
+### 📦 설치 / 업그레이드
+
+- **기존 1.1.x 사용자**: 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+- **신규 설치**: 아래 assets에서 `Riff_1.1.7_x64-setup.exe` 다운로드 → 실행.
+
 ## v1.1.6
 
 소스 컨트롤·그래프 사용성 개선 묶음.
