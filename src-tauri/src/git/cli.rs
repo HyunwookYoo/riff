@@ -26,9 +26,12 @@ const BINARY_SNIFF_BYTES: usize = 8192;
 /// `git log` pretty format for the history browser. Fields are separated by
 /// the Unit Separator (\x1f) and records by NUL (`-z`), neither of which can
 /// appear in any field — so parsing is a plain split. Field order:
-/// sha, short sha, parents, author name, author unix time, subject, refs.
+/// sha, short sha, parents, author name, author unix time, subject, refs, body.
+/// Body (`%b`) is last so that, being free-form multi-line text, anything it
+/// contains lands in the final greedy split field instead of shifting earlier
+/// fields.
 const COMMIT_LOG_FORMAT: &str =
-    "--format=%H%x1f%h%x1f%P%x1f%an%x1f%at%x1f%s%x1f%D";
+    "--format=%H%x1f%h%x1f%P%x1f%an%x1f%at%x1f%s%x1f%D%x1f%b";
 
 /// `Command::new("git")` with `CREATE_NO_WINDOW` on Windows so spawning git
 /// from a GUI app doesn't flash a console window. No-op on other platforms.
@@ -372,7 +375,7 @@ fn parse_commit_log(text: &str) -> Vec<Commit> {
         if rec.is_empty() {
             continue;
         }
-        let mut f = rec.splitn(7, '\x1f');
+        let mut f = rec.splitn(8, '\x1f');
         let sha = f.next().unwrap_or("").to_string();
         let short_sha = f.next().unwrap_or("").to_string();
         let parents_raw = f.next().unwrap_or("");
@@ -380,6 +383,10 @@ fn parse_commit_log(text: &str) -> Vec<Commit> {
         let time = f.next().unwrap_or("").trim().parse::<i64>().unwrap_or(0);
         let summary = f.next().unwrap_or("").to_string();
         let refs_raw = f.next().unwrap_or("");
+        // Body (`%b`): the commit message past the subject. Drop git's trailing
+        // newline(s) so an empty body is "" and a real one has no dangling blank
+        // line; internal formatting is preserved.
+        let body = f.next().unwrap_or("").trim_end().to_string();
         if sha.is_empty() {
             continue;
         }
@@ -401,6 +408,7 @@ fn parse_commit_log(text: &str) -> Vec<Commit> {
             time,
             summary,
             refs,
+            body,
         });
     }
     commits
@@ -2820,8 +2828,9 @@ mod tests {
         time: &str,
         subject: &str,
         refs: &str,
+        body: &str,
     ) -> String {
-        format!("{sha}\u{1f}{short}\u{1f}{parents}\u{1f}{author}\u{1f}{time}\u{1f}{subject}\u{1f}{refs}\0")
+        format!("{sha}\u{1f}{short}\u{1f}{parents}\u{1f}{author}\u{1f}{time}\u{1f}{subject}\u{1f}{refs}\u{1f}{body}\0")
     }
 
     #[test]
@@ -2831,8 +2840,9 @@ mod tests {
             log_record(
                 "a1b2c3d", "a1b2c3d", "f00ba12 c0ffee0", "Jane", "1700000000",
                 "merge: feature into main", "HEAD -> main, origin/main",
+                "Brings the feature branch to main.\n",
             ),
-            log_record("f00ba12", "f00ba12", "", "Bob", "1699990000", "init", ""),
+            log_record("f00ba12", "f00ba12", "", "Bob", "1699990000", "init", "", ""),
         );
         let out = parse_commit_log(&input);
         assert_eq!(out.len(), 2);
@@ -2844,11 +2854,14 @@ mod tests {
         assert_eq!(out[0].time, 1700000000);
         assert_eq!(out[0].summary, "merge: feature into main");
         assert_eq!(out[0].refs, vec!["HEAD -> main", "origin/main"]);
+        // Body is captured, with git's trailing newline stripped.
+        assert_eq!(out[0].body, "Brings the feature branch to main.");
 
-        // Root commit: no parents, no refs.
+        // Root commit: no parents, no refs, no body.
         assert!(out[1].parents.is_empty());
         assert!(out[1].refs.is_empty());
         assert_eq!(out[1].summary, "init");
+        assert_eq!(out[1].body, "");
     }
 
     #[test]
@@ -2863,6 +2876,7 @@ mod tests {
         let input = log_record(
             "deadbee", "deadbee", "abc1234", "A, B & C", "notanumber",
             "fix: a, b, c", "tag: v1.0",
+            "Line one.\nLine two.\n\n",
         );
         let out = parse_commit_log(&input);
         assert_eq!(out.len(), 1);
@@ -2870,6 +2884,9 @@ mod tests {
         assert_eq!(out[0].time, 0);
         assert_eq!(out[0].summary, "fix: a, b, c");
         assert_eq!(out[0].refs, vec!["tag: v1.0"]);
+        // A multi-line body keeps its internal newlines; only trailing blank
+        // lines are trimmed.
+        assert_eq!(out[0].body, "Line one.\nLine two.");
     }
 
     #[test]

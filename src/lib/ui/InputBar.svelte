@@ -111,7 +111,11 @@
       Blame
     </button>
   </div>
-  <BranchChip />
+  <!-- The branch chip toggles the Branches panel, which is hidden in blame
+       mode — so hide its toggle too rather than leave a dead button. -->
+  {#if appState.appMode !== "blame"}
+    <BranchChip />
+  {/if}
   <SyncControls />
   <span class="mode-hint">Ctrl+Shift+W to cycle</span>
 </div>

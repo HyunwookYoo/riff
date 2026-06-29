@@ -108,8 +108,11 @@ export interface Commit {
   author: string;
   /// Author time, unix seconds.
   time: number;
+  /// Subject line (first line of the message).
   summary: string;
   refs: string[];
+  /// Message body past the subject; empty when there is none.
+  body: string;
 }
 
 /// Graph "Compare against" containment vs one target ref. Mirrors Rust

@@ -61,24 +61,33 @@ export async function runCheckout(
   ffTo?: string,
 ): Promise<void> {
   appState.error = null;
-  if (strategy === "stash") await stashCheckout(repoPath, target);
-  else if (strategy === "discard") await forceCheckout(repoPath, target);
-  else await checkout(repoPath, target);
-  if (ffTo) {
-    // Fetch first so the remote-tracking ref reflects the server, then
-    // fast-forward — otherwise we'd only ever catch up to a stale local copy.
-    try {
-      await fetchRemotes(repoPath);
-      await fastForward(repoPath, ffTo);
-    } catch (e) {
-      appState.error = `Switched to ${target}, but couldn't update to ${ffTo}: ${e}`;
+  // Progress banner + watcher suppression while the switch runs — and, for a
+  // remote badge, the fetch + fast-forward, which can take a while over the
+  // network. "Pulling…" when we're catching up to a remote, else "Checking
+  // out…".
+  appState.beginGitOp(ffTo ? "Pulling…" : "Checking out…");
+  try {
+    if (strategy === "stash") await stashCheckout(repoPath, target);
+    else if (strategy === "discard") await forceCheckout(repoPath, target);
+    else await checkout(repoPath, target);
+    if (ffTo) {
+      // Fetch first so the remote-tracking ref reflects the server, then
+      // fast-forward — otherwise we'd only ever catch up to a stale local copy.
+      try {
+        await fetchRemotes(repoPath);
+        await fastForward(repoPath, ffTo);
+      } catch (e) {
+        appState.error = `Switched to ${target}, but couldn't update to ${ffTo}: ${e}`;
+      }
     }
+    // Preserve a fetch/ff error across the refresh — loadStatus/loadCommits
+    // clear appState.error, which would otherwise swallow the message.
+    const err = appState.error;
+    await refreshAfterCheckout();
+    if (err) appState.error = err;
+  } finally {
+    appState.endGitOp();
   }
-  // Preserve a fetch/ff error across the refresh — loadStatus/loadCommits clear
-  // appState.error, which would otherwise swallow the message.
-  const err = appState.error;
-  await refreshAfterCheckout();
-  if (err) appState.error = err;
 }
 
 /// Entry point for every checkout affordance. On a clean tree it switches

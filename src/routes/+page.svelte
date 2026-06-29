@@ -5,6 +5,7 @@
   import InputBar from "$lib/ui/InputBar.svelte";
   import FileList from "$lib/ui/FileList.svelte";
   import CommitList from "$lib/ui/CommitList.svelte";
+  import CommitDetail from "$lib/ui/CommitDetail.svelte";
   import BranchContainment from "$lib/ui/BranchContainment.svelte";
   import ChangesList from "$lib/ui/ChangesList.svelte";
   import CommitBox from "$lib/ui/CommitBox.svelte";
@@ -434,7 +435,7 @@
     <RepoTabs value={appState.changesRepoIdx} onselect={setChangesRepo} />
   {/if}
   <div class="workarea">
-    {#if appState.sidebarOpen}
+    {#if appState.sidebarOpen && appState.appMode !== "blame"}
       <RefsSidebar />
     {/if}
     <div
@@ -504,6 +505,7 @@
           class="graph-detail"
           style="--gd-w: {appState.graphDetailWidth}px;"
         >
+          <CommitDetail />
           <div class="gd-files"><FileList /></div>
           {@render diffPane()}
         </div>

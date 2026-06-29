@@ -12,6 +12,7 @@ function c(sha: string, parents: string[] = []): Commit {
     time: 0,
     summary: "",
     refs: [],
+    body: "",
   };
 }
 

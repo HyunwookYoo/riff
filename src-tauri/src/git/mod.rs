@@ -36,6 +36,8 @@ pub struct ChangedFile {
 /// One commit in the history browser's log list. `parents` holds full parent
 /// SHAs (used by the frontend graph layout to wire lanes); `refs` are the raw
 /// decoration names (`HEAD -> main`, `tag: v1`, `origin/main`) for display.
+/// `summary` is the subject line; `body` is the rest of the message (empty when
+/// there is none).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Commit {
     pub sha: String,
@@ -46,6 +48,7 @@ pub struct Commit {
     pub time: i64,
     pub summary: String,
     pub refs: Vec<String>,
+    pub body: String,
 }
 
 /// Per-commit containment of the loaded commit graph against one `target` ref,

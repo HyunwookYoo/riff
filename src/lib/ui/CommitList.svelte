@@ -329,6 +329,7 @@
       time: base[idx].time,
       summary: `Uncommitted — ${n} change${n === 1 ? "" : "s"}`,
       refs: [],
+      body: "",
     };
     const out = base.slice();
     out.splice(idx, 0, wip);
