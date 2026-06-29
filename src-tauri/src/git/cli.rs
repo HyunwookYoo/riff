@@ -1869,7 +1869,11 @@ impl GitLayer for GitCli {
     fn rebase(&self, path: &Path, onto: &str) -> Result<(), GitError> {
         let _w = self.write_lock.lock().unwrap();
         validate_ref(onto)?;
-        self.run(path, &["rebase", onto])?;
+        // `--autostash`: stash uncommitted changes before rebasing and reapply
+        // them after. A clean tree makes it a no-op; a dirty tree no longer
+        // aborts the rebase, and `git rebase --abort` (or a conflicting reapply)
+        // keeps the stash so the work is never lost.
+        self.run(path, &["rebase", "--autostash", onto])?;
         self.drop_session();
         Ok(())
     }

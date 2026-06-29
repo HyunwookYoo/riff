@@ -21,7 +21,10 @@ import { reloadBranchesFor } from "./workspace";
 /// - `discard`: throw away tracked changes (`git checkout -f`). Destructive.
 export type CheckoutStrategy = "bring" | "stash" | "discard";
 
-async function isDirty(repoPath: string): Promise<boolean> {
+/// True when the working tree has tracked modifications (staged or unstaged)
+/// that would block a clean switch or rebase. Untracked-only trees return false
+/// (git carries new files across both operations).
+export async function isDirty(repoPath: string): Promise<boolean> {
   try {
     const st = await status(repoPath);
     // Untracked-only trees don't block a switch (git carries new files over),

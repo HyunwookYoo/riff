@@ -23,7 +23,7 @@
     reset,
     revert,
   } from "$lib/git";
-  import { requestCheckout } from "$lib/checkout";
+  import { isDirty, requestCheckout } from "$lib/checkout";
   import { reloadBranchesFor } from "$lib/workspace";
   import { confirmAction } from "$lib/dialogs";
   import type { Commit } from "$lib/types";
@@ -192,11 +192,20 @@
       "Merging…",
     );
   }
-  function dropRebase() {
+  async function dropRebase() {
     const m = dropMenu;
     if (!m) return;
     dropMenu = null;
     const p = changesRepoPath();
+    // Warn before stashing when the tree is dirty (the rebase auto-stashes and
+    // reapplies the changes). Clean trees rebase straight away.
+    if (await isDirty(p)) {
+      const ok = await confirmAction(
+        `Rebase ${m.source.name} onto ${m.target.name}?\n\nYou have uncommitted local changes — they'll be stashed and reapplied around the rebase.`,
+        { title: "Rebase" },
+      );
+      if (!ok) return;
+    }
     // Rebase source onto target: check out source, then rebase onto target.
     void act(
       (async () => {
@@ -271,14 +280,15 @@
     void act(revert(changesRepoPath(), sha));
   }
   async function doRebase(sha: string) {
-    if (
-      !(await confirmAction(
-        `Rebase the current branch onto ${sha.slice(0, 7)}?`,
-        { title: "Rebase" },
-      ))
-    )
-      return;
-    void act(rebase(changesRepoPath(), sha), "Rebasing…");
+    const p = changesRepoPath();
+    // A dirty tree no longer blocks the rebase — it's auto-stashed and reapplied
+    // — but warn first so the stash/reapply isn't a surprise (mirrors checkout).
+    const dirty = await isDirty(p);
+    const msg = dirty
+      ? `Rebase the current branch onto ${sha.slice(0, 7)}?\n\nYou have uncommitted local changes — they'll be stashed and reapplied around the rebase.`
+      : `Rebase the current branch onto ${sha.slice(0, 7)}?`;
+    if (!(await confirmAction(msg, { title: "Rebase" }))) return;
+    void act(rebase(p, sha), "Rebasing…");
   }
 
   // Lane gutter geometry. Row height is user-adjustable (graph density); the

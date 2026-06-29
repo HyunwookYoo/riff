@@ -416,8 +416,9 @@ pub trait GitLayer {
     fn cherry_pick(&self, path: &Path, target: &str) -> Result<(), GitError>;
     /// Create a commit that undoes `target` (`git revert --no-edit`).
     fn revert(&self, path: &Path, target: &str) -> Result<(), GitError>;
-    /// Rebase the current branch onto `onto` (`git rebase`). Conflicts surface
-    /// as an error; resolving them is done outside the app for now.
+    /// Rebase the current branch onto `onto` (`git rebase --autostash`).
+    /// Uncommitted changes are auto-stashed and reapplied around the rebase, so
+    /// a dirty tree no longer blocks it. Conflicts surface as an error.
     fn rebase(&self, path: &Path, onto: &str) -> Result<(), GitError>;
     /// Fetch every remote, pruning deleted branches (`git fetch --all --prune`).
     fn fetch(&self, path: &Path) -> Result<(), GitError>;
