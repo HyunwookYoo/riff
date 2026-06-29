@@ -3,6 +3,24 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v1.1.9
+
+Rebase 사용성 개선.
+
+### ✨ 개선
+
+- **Rebase 시 로컬 변경 자동 stash & reapply** — 커밋 안 한 로컬 변경이 있어도 rebase가 막히지
+  않습니다. rebase 전에 변경을 자동으로 stash하고 rebase가 끝나면 다시 적용합니다
+  (`git rebase --autostash`). rebase 도중 충돌이 나서 해결·계속(continue)하는 경우에도 stash가
+  유지됐다가 마지막에 복원되고, rebase를 중단(abort)하면 stash도 함께 되돌아가 작업이 유실되지
+  않습니다. checkout의 stash 방식과 동일하게, 로컬 변경이 있을 때만 진행 전에 확인 창으로
+  알려줍니다(그래프 컨텍스트 메뉴의 "Rebase onto …", 브랜치 배지 드래그-드롭 rebase 모두).
+
+### 📦 설치 / 업그레이드
+
+- **기존 1.1.x 사용자**: 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+- **신규 설치**: 아래 assets에서 `Riff_1.1.9_x64-setup.exe` 다운로드 → 실행.
+
 ## v1.1.8
 
 그래프·체크아웃·blame 사용성 개선.
