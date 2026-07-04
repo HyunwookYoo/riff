@@ -416,10 +416,14 @@ pub trait GitLayer {
     fn cherry_pick(&self, path: &Path, target: &str) -> Result<(), GitError>;
     /// Create a commit that undoes `target` (`git revert --no-edit`).
     fn revert(&self, path: &Path, target: &str) -> Result<(), GitError>;
-    /// Rebase the current branch onto `onto` (`git rebase --autostash`).
-    /// Uncommitted changes are auto-stashed and reapplied around the rebase, so
-    /// a dirty tree no longer blocks it. Conflicts surface as an error.
+    /// Rebase the current branch onto `onto` (`git rebase`). Conflicts surface
+    /// as an error and leave the rebase in progress for resolve→continue.
     fn rebase(&self, path: &Path, onto: &str) -> Result<(), GitError>;
+    /// Rebase with a dirty tree: stash tracked changes, rebase, then reapply on a
+    /// clean finish. On conflict the rebase stays in progress (normal continue
+    /// flow) and the stash is kept for the user to reapply — unlike git's
+    /// `--autostash`, which wedges when its end-of-rebase reapply conflicts.
+    fn stash_rebase(&self, path: &Path, onto: &str) -> Result<(), GitError>;
     /// Fetch every remote, pruning deleted branches (`git fetch --all --prune`).
     fn fetch(&self, path: &Path) -> Result<(), GitError>;
     /// Integrate the upstream into the current branch (`git pull`); `rebase`

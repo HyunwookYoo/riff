@@ -398,6 +398,11 @@ async fn rebase(state: tauri::State<'_, GitCli>, path: String, onto: String) -> 
 }
 
 #[tauri::command]
+async fn stash_rebase(state: tauri::State<'_, GitCli>, path: String, onto: String) -> Result<(), GitError> {
+    state.stash_rebase(Path::new(&path), &onto)
+}
+
+#[tauri::command]
 async fn fetch(state: tauri::State<'_, GitCli>, path: String) -> Result<(), GitError> {
     state.fetch(Path::new(&path))
 }
@@ -497,7 +502,11 @@ async fn read_repo_file(path: String, file_path: String) -> Result<String, GitEr
     }
 
     let full = Path::new(&path).join(rel);
-    let meta = fs::metadata(&full).map_err(GitError::Io)?;
+    // Report the resolved path on failure: a bare "os error 3" (path not found)
+    // gives no clue that, e.g., a submodule file was resolved against the wrong
+    // repo root.
+    let meta = fs::metadata(&full)
+        .map_err(|e| GitError::CommandFailed(format!("cannot read {}: {e}", full.display())))?;
     // Hard cap so a stray binary or huge log file can't lock up the editor.
     const BLAME_READ_CAP: u64 = 2_000_000;
     if meta.len() > BLAME_READ_CAP {
@@ -506,7 +515,8 @@ async fn read_repo_file(path: String, file_path: String) -> Result<String, GitEr
             meta.len()
         )));
     }
-    let bytes = fs::read(&full).map_err(GitError::Io)?;
+    let bytes = fs::read(&full)
+        .map_err(|e| GitError::CommandFailed(format!("cannot read {}: {e}", full.display())))?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
@@ -736,6 +746,7 @@ pub fn run() {
             cherry_pick,
             revert,
             rebase,
+            stash_rebase,
             fetch,
             pull,
             push,

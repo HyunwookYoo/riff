@@ -1869,13 +1869,34 @@ impl GitLayer for GitCli {
     fn rebase(&self, path: &Path, onto: &str) -> Result<(), GitError> {
         let _w = self.write_lock.lock().unwrap();
         validate_ref(onto)?;
-        // `--autostash`: stash uncommitted changes before rebasing and reapply
-        // them after. A clean tree makes it a no-op; a dirty tree no longer
-        // aborts the rebase, and `git rebase --abort` (or a conflicting reapply)
-        // keeps the stash so the work is never lost.
-        self.run(path, &["rebase", "--autostash", onto])?;
+        self.run(path, &["rebase", onto])?;
         self.drop_session();
         Ok(())
+    }
+
+    fn stash_rebase(&self, path: &Path, onto: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
+        validate_ref(onto)?;
+        // Stash tracked changes so the rebase runs on a clean tree, then reapply.
+        // Deliberately NOT git's `--autostash`: that reapplies inside the rebase
+        // at the very end, and a conflicting reapply leaves the rebase wedged
+        // (unmergeable "continue"). Instead we reapply only when the rebase
+        // finishes cleanly here; if it stops on a conflict the rebase stays in
+        // progress for the normal resolve→continue flow and the stash is kept so
+        // the local work can be reapplied afterward (or restored via `--abort`).
+        let msg = format!("riff: auto-stash before rebase {onto}");
+        self.run(path, &["stash", "push", "-m", &msg])?;
+        if let Err(e) = self.run(path, &["rebase", onto]) {
+            // Mid-rebase now (conflict) — can't pop. Leave the stash in place and
+            // surface the error so the conflict UI engages.
+            self.drop_session();
+            return Err(e);
+        }
+        // Clean rebase → reapply. A pop conflict keeps the stash and writes
+        // conflict markers; propagate so the UI can report it (like stash_checkout).
+        let reapply = self.run(path, &["stash", "pop"]);
+        self.drop_session();
+        reapply.map(|_| ())
     }
 
     fn fetch(&self, path: &Path) -> Result<(), GitError> {

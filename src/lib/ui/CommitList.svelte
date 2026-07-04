@@ -20,6 +20,7 @@
     createTag,
     merge,
     rebase,
+    stashRebase,
     reset,
     revert,
   } from "$lib/git";
@@ -197,11 +198,12 @@
     if (!m) return;
     dropMenu = null;
     const p = changesRepoPath();
-    // Warn before stashing when the tree is dirty (the rebase auto-stashes and
-    // reapplies the changes). Clean trees rebase straight away.
-    if (await isDirty(p)) {
+    // Warn before stashing when the tree is dirty; a dirty rebase stashes and
+    // reapplies (stashRebase). Clean trees rebase straight away.
+    const dirty = await isDirty(p);
+    if (dirty) {
       const ok = await confirmAction(
-        `Rebase ${m.source.name} onto ${m.target.name}?\n\nYou have uncommitted local changes — they'll be stashed and reapplied around the rebase.`,
+        `Rebase ${m.source.name} onto ${m.target.name}?\n\nYour uncommitted changes will be stashed and reapplied after the rebase (kept in a stash if it stops on conflicts).`,
         { title: "Rebase" },
       );
       if (!ok) return;
@@ -210,7 +212,9 @@
     void act(
       (async () => {
         await checkout(p, dwim(m.source));
-        await rebase(p, m.target.name);
+        await (dirty
+          ? stashRebase(p, m.target.name)
+          : rebase(p, m.target.name));
       })(),
       "Rebasing…",
     );
@@ -281,14 +285,14 @@
   }
   async function doRebase(sha: string) {
     const p = changesRepoPath();
-    // A dirty tree no longer blocks the rebase — it's auto-stashed and reapplied
-    // — but warn first so the stash/reapply isn't a surprise (mirrors checkout).
+    // A dirty tree is stashed, rebased, then reapplied (stashRebase) — but warn
+    // first so the stash/reapply isn't a surprise (mirrors the checkout flow).
     const dirty = await isDirty(p);
     const msg = dirty
-      ? `Rebase the current branch onto ${sha.slice(0, 7)}?\n\nYou have uncommitted local changes — they'll be stashed and reapplied around the rebase.`
+      ? `Rebase the current branch onto ${sha.slice(0, 7)}?\n\nYour uncommitted changes will be stashed and reapplied after the rebase (kept in a stash if it stops on conflicts).`
       : `Rebase the current branch onto ${sha.slice(0, 7)}?`;
     if (!(await confirmAction(msg, { title: "Rebase" }))) return;
-    void act(rebase(p, sha), "Rebasing…");
+    void act(dirty ? stashRebase(p, sha) : rebase(p, sha), "Rebasing…");
   }
 
   // Lane gutter geometry. Row height is user-adjustable (graph density); the

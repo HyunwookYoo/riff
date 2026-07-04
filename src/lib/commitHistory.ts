@@ -241,6 +241,11 @@ export function openCommit(commit: Commit): void {
   appState.compareMode = "branch";
   appState.mode = "two-dot";
   appState.selectedFile = null;
+  // A per-commit drill from Branch mode (`bcDiffRange`) takes priority in
+  // compare() — so a leftover one would make the graph keep diffing that stale
+  // range instead of the commit just clicked (empty/wrong file list). This is
+  // the graph's own parent..commit view, so clear the drill.
+  appState.bcDiffRange = null;
 
   if (!repo || repo.kind === "main") {
     appState.startBranch = start;

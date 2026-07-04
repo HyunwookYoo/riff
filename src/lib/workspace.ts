@@ -394,6 +394,37 @@ export function reorderRepo(from: number, to: number): void {
   appState.changesRepoIdx = Math.max(0, idxOf(changesPath));
   appState.historyRepoIdx = Math.max(0, idxOf(historyPath));
   appState.activeRepoIdx = activePath ? idxOf(activePath) : appState.activeRepoIdx;
+
+  // Every file collection carries a `repoIdx` that must follow the reorder too —
+  // otherwise a submodule file's path resolves against the wrong repo root and
+  // reads fail with "path not found" (blame, diff). Main stays pinned at 0, so
+  // its files are unaffected; only moved submodules' files were mis-pointed.
+  // `next` holds the same repo objects (splice), so reference lookup is exact.
+  const remap = (i: number) => {
+    const ni = next.indexOf(repos[i]);
+    return ni === -1 ? i : ni;
+  };
+  appState.repoFiles = appState.repoFiles.map((f) => ({
+    ...f,
+    repoIdx: remap(f.repoIdx),
+  }));
+  appState.files = appState.files.map((f) => ({
+    ...f,
+    repoIdx: remap(f.repoIdx ?? 0),
+  }));
+  if (appState.selectedFile) {
+    appState.selectedFile = {
+      ...appState.selectedFile,
+      repoIdx: remap(appState.selectedFile.repoIdx ?? 0),
+    };
+  }
+  if (appState.blameTarget) {
+    appState.blameTarget = {
+      ...appState.blameTarget,
+      repoIdx: remap(appState.blameTarget.repoIdx),
+    };
+  }
+
   // Indices shifted — these caches are keyed by the old index.
   appState.branchesByRepoIdx = { 0: appState.branches };
   appState.collapsedRepos = new Set();

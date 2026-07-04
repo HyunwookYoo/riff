@@ -199,6 +199,15 @@ export function rebase(path: string, onto: string): Promise<void> {
   return invoke("rebase", { path, onto });
 }
 
+/**
+ * Rebase a dirty tree: stash tracked changes, rebase, reapply on a clean finish.
+ * On conflict the rebase is left in progress (resolve→continue as usual) and the
+ * stash is kept for the user to reapply afterward.
+ */
+export function stashRebase(path: string, onto: string): Promise<void> {
+  return invoke("stash_rebase", { path, onto });
+}
+
 /** Fetch all remotes (`git fetch --all --prune`). */
 export function fetch(path: string): Promise<void> {
   return invoke("fetch", { path });
