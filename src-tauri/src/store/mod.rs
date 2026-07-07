@@ -27,6 +27,12 @@ pub struct PersistedState {
     /// extra repos. Submodules are auto-discovered and not stored here.
     #[serde(default)]
     pub manual_repos_by_main: HashMap<String, Vec<String>>,
+    /// Per-main-repo tab order: the ordered list of non-main repo paths as the
+    /// user arranged them by dragging tabs. Main is always pinned at index 0 and
+    /// is not stored. Applied on top of the default workspace order; unknown
+    /// paths (new submodule / manual) fall to the end.
+    #[serde(default)]
+    pub tab_order_by_main: HashMap<String, Vec<String>>,
     /// Workspace layout choice (§14.5 #13): "unified" (default) shows all
     /// repos in one grouped picker; "tabs" shows one repo at a time via a
     /// Fork-style tab bar. Global, applies to every workspace.
@@ -106,6 +112,7 @@ impl Default for PersistedState {
             font_size: default_font_size(),
             compare_mode: default_compare_mode(),
             manual_repos_by_main: HashMap::new(),
+            tab_order_by_main: HashMap::new(),
             workspace_layout: default_workspace_layout(),
             blame_picker_width: default_blame_picker_width(),
             file_view_mode: default_file_view_mode(),
@@ -285,4 +292,20 @@ pub fn remove_manual_repo(
     }
     save(app, &state)?;
     Ok(result)
+}
+
+/// Save the user-arranged tab order (non-main repo paths) for `main_repo`. An
+/// empty list removes the entry so state.json stays tidy.
+pub fn set_tab_order(
+    app: &AppHandle,
+    main_repo: String,
+    order: Vec<String>,
+) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    if order.is_empty() {
+        state.tab_order_by_main.remove(&main_repo);
+    } else {
+        state.tab_order_by_main.insert(main_repo, order);
+    }
+    save(app, &state)
 }

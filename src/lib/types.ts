@@ -206,6 +206,9 @@ export interface PersistedState {
   /// Per-main-repo list of manually added extra repos (§13.3 #5).
   /// Submodules are not stored here — they're rediscovered from .gitmodules.
   manual_repos_by_main: Record<string, string[]>;
+  /// Per-main-repo tab order (non-main repo paths) as arranged by dragging tabs.
+  /// Applied on top of the default workspace order; main stays pinned at 0.
+  tab_order_by_main?: Record<string, string[]>;
   /// Workspace layout (§14.5 #13). Global. Defaults to "unified".
   workspace_layout: WorkspaceLayout;
   /// Width (px) of the blame view's left file-picker. Clamped 200-600 on

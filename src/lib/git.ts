@@ -48,6 +48,13 @@ export function setWorkspaceLayout(layout: WorkspaceLayout): Promise<void> {
   return invoke("set_workspace_layout", { layout });
 }
 
+export function setTabOrder(
+  mainRepo: string,
+  order: string[],
+): Promise<void> {
+  return invoke("set_tab_order", { mainRepo, order });
+}
+
 export function setBlamePickerWidth(width: number): Promise<void> {
   return invoke("set_blame_picker_width", { width });
 }

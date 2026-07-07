@@ -688,6 +688,15 @@ fn remove_manual_repo(
     store::remove_manual_repo(&app, main_repo, repo)
 }
 
+#[tauri::command]
+fn set_tab_order(
+    app: tauri::AppHandle,
+    main_repo: String,
+    order: Vec<String>,
+) -> Result<(), StoreError> {
+    store::set_tab_order(&app, main_repo, order)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Declare which repo roots the filesystem watcher should observe (main repo +
 /// any manual repos; submodules are covered by the main root's recursive watch).
@@ -783,6 +792,7 @@ pub fn run() {
             set_ue_version_for_repo,
             add_manual_repo,
             remove_manual_repo,
+            set_tab_order,
             set_watched_repos,
         ])
         .run(tauri::generate_context!())

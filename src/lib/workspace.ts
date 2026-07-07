@@ -6,6 +6,7 @@ import {
   listRepoFiles,
   listSubmodules,
   removeManualRepo,
+  setTabOrder,
   submoduleShaAt,
   validateRepo,
 } from "./git";
@@ -46,6 +47,7 @@ function basename(p: string): string {
 export async function buildWorkspace(
   mainPath: string,
   manualPaths: string[],
+  savedOrder: string[] = [],
 ): Promise<RepoEntry[]> {
   const repos: RepoEntry[] = [
     {
@@ -95,7 +97,26 @@ export async function buildWorkspace(
     });
   }
 
-  return repos;
+  return applyTabOrder(repos, savedOrder);
+}
+
+/**
+ * Reorder the non-main repos to match the user's saved tab order (§14.2). Main
+ * (repos[0]) stays pinned. Entries are stable-sorted by their index in
+ * `savedOrder`; paths not present (a newly discovered submodule or freshly
+ * added manual repo) keep their default relative order and fall to the end.
+ * A no-op when nothing is saved.
+ */
+function applyTabOrder(repos: RepoEntry[], savedOrder: string[]): RepoEntry[] {
+  if (savedOrder.length === 0 || repos.length <= 2) return repos;
+  const rank = new Map(savedOrder.map((p, i) => [p, i]));
+  const rest = repos.slice(1).map((r, i) => ({ r, i }));
+  rest.sort((a, b) => {
+    const ra = rank.get(a.r.path) ?? Infinity;
+    const rb = rank.get(b.r.path) ?? Infinity;
+    return ra === rb ? a.i - b.i : ra - rb;
+  });
+  return [repos[0], ...rest.map((x) => x.r)];
 }
 
 /**
@@ -278,7 +299,8 @@ export async function loadMainRepo(
     await validateRepo(path);
     appState.repoPath = path;
     const manualPaths = appState.manualReposByMain[path] ?? [];
-    appState.repos = await buildWorkspace(path, manualPaths);
+    const savedOrder = appState.tabOrderByMain[path] ?? [];
+    appState.repos = await buildWorkspace(path, manualPaths, savedOrder);
     appState.activeRepoIdx = null;
     appState.collapsedRepos = new Set();
     appState.branchesByRepoIdx = {};
@@ -350,6 +372,7 @@ export async function addManualRepoToWorkspace(path: string): Promise<void> {
   appState.repos = await buildWorkspace(
     main,
     appState.manualReposByMain[main] ?? [],
+    appState.tabOrderByMain[main] ?? [],
   );
   // Repopulate file lists (blame picker) and changed files (compare).
   appState.repoFiles = [];
@@ -369,7 +392,9 @@ export async function addManualRepoToWorkspace(path: string): Promise<void> {
  */
 /// Move a repo tab to a new position. Main (repos[0]) stays pinned at 0; only
 /// submodule/manual tabs reorder. Selections (changes/history/focus) follow by
-/// path; index-keyed caches are dropped (they repopulate lazily). Session-only.
+/// path; index-keyed caches are dropped (they repopulate lazily). The new order
+/// is persisted per-main-repo (tab_order_by_main) so it survives repo switch and
+/// app restart.
 export function reorderRepo(from: number, to: number): void {
   const repos = appState.repos;
   if (
@@ -429,6 +454,16 @@ export function reorderRepo(from: number, to: number): void {
   appState.branchesByRepoIdx = { 0: appState.branches };
   appState.collapsedRepos = new Set();
   appState.tabMemory = new Map();
+
+  // Persist the new order per main repo so it survives repo switch / restart.
+  const main = appState.repoPath;
+  if (main) {
+    const order = next.slice(1).map((r) => r.path);
+    appState.tabOrderByMain = { ...appState.tabOrderByMain, [main]: order };
+    void setTabOrder(main, order).catch((e) =>
+      console.warn("setTabOrder failed:", e),
+    );
+  }
 }
 
 export function setRepoOverride(
@@ -513,6 +548,7 @@ export async function removeManualRepoFromWorkspace(
   appState.repos = await buildWorkspace(
     main,
     appState.manualReposByMain[main] ?? [],
+    appState.tabOrderByMain[main] ?? [],
   );
   appState.repoFiles = [];
   if (appState.startBranch && appState.targetBranch) {

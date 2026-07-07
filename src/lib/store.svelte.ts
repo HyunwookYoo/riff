@@ -92,6 +92,10 @@ class AppState {
   // Mirror of PersistedState.manual_repos_by_main — kept in sync with the
   // backend so the popover can render without re-fetching on every open.
   manualReposByMain = $state<Record<string, string[]>>({});
+  // Mirror of PersistedState.tab_order_by_main — the user's saved tab order
+  // (non-main repo paths) per main repo. Applied in buildWorkspace on load;
+  // written back by reorderRepo when tabs are dragged.
+  tabOrderByMain = $state<Record<string, string[]>>({});
   // Per-repo collapse state (§13.3 #14). repos[idx] collapsed if idx in set.
   // Files in collapsed repos are skipped by j/k navigation. Session-only.
   collapsedRepos = $state(new Set<number>());
