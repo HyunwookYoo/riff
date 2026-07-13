@@ -15,6 +15,7 @@
   import OpProgressBanner from "$lib/ui/OpProgressBanner.svelte";
   import ConflictView from "$lib/ui/ConflictView.svelte";
   import CheckoutDialog from "$lib/ui/CheckoutDialog.svelte";
+  import OpRecoveryDialog from "$lib/ui/OpRecoveryDialog.svelte";
   import CommandPalette from "$lib/ui/CommandPalette.svelte";
   import Timelapse from "$lib/ui/Timelapse.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
@@ -425,6 +426,7 @@
   <OpProgressBanner />
   <ConflictBanner />
   <CheckoutDialog />
+  <OpRecoveryDialog />
   <CommandPalette />
   <Timelapse />
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}

@@ -216,7 +216,17 @@
 </div>
 
 {#if appState.error}
-  <div class="error">{appState.error}</div>
+  <div class="error">
+    <span class="error-msg">{appState.error}</span>
+    <button
+      type="button"
+      class="error-x"
+      aria-label="Dismiss error"
+      onclick={() => (appState.error = null)}
+    >
+      ×
+    </button>
+  </div>
 {/if}
 
 <style>
@@ -247,11 +257,31 @@
     border-color: var(--accent);
   }
   .error {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
     padding: 6px 10px;
     background: var(--error-bg);
     color: var(--error-fg);
     font-size: 0.85em;
+  }
+  .error-msg {
+    flex: 1;
     white-space: pre-wrap;
+  }
+  .error-x {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 1.1em;
+    line-height: 1;
+    padding: 0 2px;
+    opacity: 0.8;
+  }
+  .error-x:hover {
+    opacity: 1;
   }
   input,
   button {

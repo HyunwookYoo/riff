@@ -178,6 +178,19 @@ class AppState {
     target: string;
     ffTo?: string;
   } | null>(null);
+  // Reactive recovery prompt for an op refused by local changes (error-recovery
+  // design, case A). Set by the op wrappers via offerRecovery() when
+  // classifyGitError flags a recoverable failure; read by OpRecoveryDialog.
+  // `retry` re-runs the op with a strategy ("stash" always; "discard" only when
+  // offerDiscard). null = closed. Session-only.
+  recovery = $state<{
+    op: "checkout" | "pull" | "merge";
+    title: string;
+    reason: string;
+    paths: string[];
+    offerDiscard: boolean;
+    retry: (strategy: "stash" | "discard") => Promise<void>;
+  } | null>(null);
   // The user's compare context, snapshotted when entering history mode (which
   // reuses start/target + per-repo overrides + focus to render parent..commit)
   // and restored when returning to compare — so peeking at history doesn't
