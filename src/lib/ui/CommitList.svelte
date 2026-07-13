@@ -235,11 +235,20 @@
     editor = null;
     if (!ed || !v) return;
     const p = changesRepoPath();
-    // Create at the commit without switching the working tree (works even
-    // with uncommitted changes; checking out an arbitrary commit would fail
-    // on a dirty tree). Switch via the sidebar if desired.
-    if (ed.kind === "branch") void act(createBranch(p, v, ed.sha, false));
-    else void act(createTag(p, v, ed.sha));
+    // Create the branch at the commit via `git branch` (never `checkout -b`:
+    // switching to an arbitrary commit could fail on a dirty tree). When "check
+    // out after creating" is on, switch afterward through requestCheckout, which
+    // handles a dirty tree via the stash / bring / discard recovery flow.
+    if (ed.kind === "branch") {
+      const switchAfter = appState.graphCheckoutAfterCreate;
+      void act(
+        (async () => {
+          await createBranch(p, v, ed.sha, false);
+          if (switchAfter) await requestCheckout(p, v);
+        })(),
+        switchAfter ? "Creating & switching…" : undefined,
+      );
+    } else void act(createTag(p, v, ed.sha));
   }
 
   function doCheckout(sha: string) {
@@ -501,6 +510,12 @@
       autofocus
       onkeydown={(e) => e.key === "Escape" && (editor = null)}
     />
+    {#if editor.kind === "branch"}
+      <label class="cl-editor-check">
+        <input type="checkbox" bind:checked={appState.graphCheckoutAfterCreate} />
+        Check out after creating
+      </label>
+    {/if}
   </form>
 {/if}
 
@@ -740,6 +755,23 @@
     color: inherit;
     font-size: 0.82em;
     font-family: var(--mono);
+  }
+  .cl-editor-check {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 2px;
+    font-size: 0.76em;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  /* Reset the generic `.cl-editor input` text-field styling for the checkbox. */
+  .cl-editor-check input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+    padding: 0;
+    cursor: pointer;
   }
   .commit-list {
     overflow-y: auto;
