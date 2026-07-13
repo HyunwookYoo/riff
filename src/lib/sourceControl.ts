@@ -355,9 +355,11 @@ async function runSync(
     await op;
   } catch (e) {
     const raw = String(e);
-    // onError returning true means it opened a recovery dialog — don't also
-    // show the raw banner.
-    if (!onError || !onError(raw)) appState.error = raw;
+    // Always surface the raw message (the finally preserves it across the
+    // refresh); onError may open the recovery dialog on top, and Cancel reveals
+    // this banner.
+    appState.error = raw;
+    onError?.(raw);
   } finally {
     appState.syncing = false;
     // Keep a sync failure's message: refreshActiveView() runs loadStatus()/
@@ -394,9 +396,11 @@ export async function doMergeBranch(branch: string): Promise<void> {
     await mergeCmd(repo, branch);
   } catch (e) {
     const raw = String(e);
-    if (!offerRecovery(raw, "merge", `Merge ${branch}`, false, () => doStashMerge(repo, branch))) {
-      appState.error = raw;
-    }
+    appState.error = raw;
+    offerRecovery(raw, "merge", `Merge ${branch}`, false, () =>
+      // pull/merge don't offer Discard, so strategy is always "stash"
+      doStashMerge(repo, branch),
+    );
   } finally {
     const err = appState.error;
     await refreshActiveView();
@@ -406,7 +410,7 @@ export async function doMergeBranch(branch: string): Promise<void> {
   }
 }
 
-// Recovery retry for a merge blocked by local changes: stash → merge → pop.
+/// Recovery retry for a merge blocked by local changes: stash → merge → pop.
 async function doStashMerge(repo: string, branch: string): Promise<void> {
   appState.beginGitOp("Stashing & merging…");
   appState.error = null;
@@ -520,6 +524,7 @@ export function doPull(rebase: boolean): Promise<void> {
   const repo = changesRepoPath();
   return runSync(pullCmd(repo, rebase), "Pulling…", (raw) =>
     offerRecovery(raw, "pull", "Pull couldn't complete", false, () =>
+      // pull/merge don't offer Discard, so strategy is always "stash"
       runSync(stashPull(repo, rebase), "Stashing & pulling…"),
     ),
   );

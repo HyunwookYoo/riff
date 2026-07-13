@@ -111,6 +111,10 @@ export async function requestCheckout(
     await runCheckout(repoPath, target, "bring", ffTo);
   } catch (e) {
     const raw = String(e);
+    // Always surface the raw message: on an unknown failure it's the only
+    // feedback, and when the recovery dialog opens it sits on top with this
+    // banner waiting underneath — so Cancel reveals it.
+    appState.error = raw;
     const handled = offerRecovery(
       raw,
       "checkout",
@@ -119,9 +123,6 @@ export async function requestCheckout(
       (strategy) =>
         runCheckout(repoPath, target, strategy === "discard" ? "discard" : "stash", ffTo),
     );
-    if (!handled) {
-      appState.error = raw;
-      void loadPendingOp();
-    }
+    if (!handled) void loadPendingOp();
   }
 }
