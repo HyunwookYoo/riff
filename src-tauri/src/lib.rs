@@ -300,6 +300,24 @@ async fn stash_checkout(
 }
 
 #[tauri::command]
+async fn stash_pull(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    rebase: bool,
+) -> Result<(), GitError> {
+    state.stash_pull(Path::new(&path), rebase)
+}
+
+#[tauri::command]
+async fn stash_merge(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    branch: String,
+) -> Result<(), GitError> {
+    state.stash_merge(Path::new(&path), &branch)
+}
+
+#[tauri::command]
 async fn conflict_versions(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -744,6 +762,8 @@ pub fn run() {
             force_checkout,
             fast_forward,
             stash_checkout,
+            stash_pull,
+            stash_merge,
             conflict_versions,
             resolve_conflict,
             checkout_conflict_side,

@@ -399,6 +399,14 @@ pub trait GitLayer {
     /// the stash and writes conflict markers; the error propagates so the UI
     /// can report it. If the switch itself fails, the stash is restored first.
     fn stash_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
+    /// Stash local changes (tracked + untracked), pull, then reapply the stash.
+    /// Mirrors `stash_checkout`: a clean pull reapplies; a pull that conflicts
+    /// leaves the op in progress and keeps the stash for manual reapply. `rebase`
+    /// adds `--rebase`.
+    fn stash_pull(&self, path: &Path, rebase: bool) -> Result<(), GitError>;
+    /// Stash local changes (tracked + untracked), merge `branch`, then reapply.
+    /// Same clean/conflict semantics as `stash_pull`.
+    fn stash_merge(&self, path: &Path, branch: &str) -> Result<(), GitError>;
     /// Rename branch `old` to `new` (`git branch -m`).
     fn rename_branch(&self, path: &Path, old: &str, new: &str) -> Result<(), GitError>;
     /// Delete branch `name`. `force` uses `-D` (drops unmerged commits) instead

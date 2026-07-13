@@ -115,6 +115,16 @@ export function stashCheckout(path: string, refName: string): Promise<void> {
   return invoke("stash_checkout", { path, refName });
 }
 
+/** Stash local changes, pull, then reapply — recovery for a pull blocked by local changes. */
+export function stashPull(path: string, rebase: boolean): Promise<void> {
+  return invoke("stash_pull", { path, rebase });
+}
+
+/** Stash local changes, merge `branch`, then reapply — recovery for a merge blocked by local changes. */
+export function stashMerge(path: string, branch: string): Promise<void> {
+  return invoke("stash_merge", { path, branch });
+}
+
 /** Fast-forward the current branch to `refName` (`git merge --ff-only`). */
 export function fastForward(path: string, refName: string): Promise<void> {
   return invoke("fast_forward", { path, refName });

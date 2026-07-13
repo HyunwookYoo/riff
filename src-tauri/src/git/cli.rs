@@ -1899,6 +1899,45 @@ impl GitLayer for GitCli {
         reapply.map(|_| ())
     }
 
+    fn stash_pull(&self, path: &Path, rebase: bool) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
+        // Stash everything so the pull runs on a clean tree. Manual stash→pull→pop
+        // (not `--autostash`) so a conflicting reapply can't wedge the op — same
+        // stance as stash_rebase.
+        self.run(path, &["stash", "push", "--include-untracked", "-m",
+            "riff: auto-stash before pull"])?;
+        let mut args = vec!["pull"];
+        if rebase {
+            args.push("--rebase");
+        }
+        if let Err(e) = self.run_network(path, &args) {
+            // Pull conflicted (or failed) — leave the stash for the user to
+            // reapply after resolving; surface the error so the conflict UI (or
+            // banner) engages.
+            self.drop_session();
+            return Err(e);
+        }
+        // Clean pull → reapply. A pop conflict keeps the stash and writes markers;
+        // propagate so the UI reports it (like stash_checkout).
+        let reapply = self.run(path, &["stash", "pop"]);
+        self.drop_session();
+        reapply.map(|_| ())
+    }
+
+    fn stash_merge(&self, path: &Path, branch: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
+        validate_ref(branch)?;
+        self.run(path, &["stash", "push", "--include-untracked", "-m",
+            "riff: auto-stash before merge"])?;
+        if let Err(e) = self.run(path, &["merge", branch]) {
+            self.drop_session();
+            return Err(e);
+        }
+        let reapply = self.run(path, &["stash", "pop"]);
+        self.drop_session();
+        reapply.map(|_| ())
+    }
+
     fn fetch(&self, path: &Path) -> Result<(), GitError> {
         let _w = self.write_lock.lock().unwrap();
         self.run_network(path, &["fetch", "--all", "--prune"])?;
