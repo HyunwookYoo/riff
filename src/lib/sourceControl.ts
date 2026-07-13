@@ -525,7 +525,7 @@ export function doPull(rebase: boolean): Promise<void> {
   return runSync(pullCmd(repo, rebase), "Pulling…", (raw) =>
     offerRecovery(raw, "pull", "Pull couldn't complete", false, () =>
       // pull/merge don't offer Discard, so strategy is always "stash"
-      runSync(stashPull(repo, rebase), "Stashing & pulling…"),
+      runSync(stashPull(repo, rebase), "Stashing & pulling…").then(() => loadStashes()),
     ),
   );
 }

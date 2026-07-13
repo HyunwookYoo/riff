@@ -57,6 +57,14 @@ describe("classifyGitError", () => {
   it("returns unknown with empty paths for empty input", () => {
     expect(classifyGitError("")).toEqual({ kind: "unknown", paths: [], raw: "" });
   });
+
+  it("classifies through the 'git command failed: ' IPC prefix", () => {
+    // GitError::CommandFailed serializes as `git command failed: <stderr>`, so
+    // classification must match the embedded substring, not the whole string.
+    const f = classifyGitError("git command failed: " + CHECKOUT_LOCAL);
+    expect(f.kind).toBe("local-changes-blocked");
+    expect(f.paths).toEqual(["src/foo.rs", "src/bar.rs"]);
+  });
 });
 
 describe("parseBlockedPaths", () => {

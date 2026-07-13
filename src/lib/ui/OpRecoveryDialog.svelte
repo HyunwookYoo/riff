@@ -17,7 +17,7 @@
     if (!r || busy) return;
     if (strategy === "discard") {
       const ok = await confirmAction(
-        "Discard local changes to tracked files, then continue? This cannot be undone.",
+        "Discard local changes and overwrite any untracked files that are in the way, then continue? This cannot be undone.",
         { title: "Discard changes" },
       );
       if (!ok) return;
@@ -96,7 +96,8 @@
           >
             <span class="opt-title">Discard changes</span>
             <span class="opt-desc">
-              Throw away local changes to tracked files, then continue.
+              Throw away local changes to tracked files and overwrite any
+              untracked files in the way, then continue.
               <strong>Cannot be undone.</strong>
             </span>
           </button>
