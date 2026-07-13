@@ -14,6 +14,7 @@ import {
   loadPendingOp,
 } from "./sourceControl";
 import { reloadBranchesFor } from "./workspace";
+import { offerRecovery } from "./recovery";
 
 /// How to handle uncommitted changes when switching branches:
 /// - `bring`: carry them over (`git checkout`) — fails if they conflict.
@@ -109,7 +110,18 @@ export async function requestCheckout(
   try {
     await runCheckout(repoPath, target, "bring", ffTo);
   } catch (e) {
-    appState.error = String(e);
-    void loadPendingOp();
+    const raw = String(e);
+    const handled = offerRecovery(
+      raw,
+      "checkout",
+      `Switch to ${target}`,
+      true, // discard is free for checkout (force_checkout exists)
+      (strategy) =>
+        runCheckout(repoPath, target, strategy === "discard" ? "discard" : "stash", ffTo),
+    );
+    if (!handled) {
+      appState.error = raw;
+      void loadPendingOp();
+    }
   }
 }

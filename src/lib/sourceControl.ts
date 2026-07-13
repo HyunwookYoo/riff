@@ -16,6 +16,8 @@ import {
   stashApply,
   stashDrop,
   stashList,
+  stashMerge,
+  stashPull,
   stashSave,
   status,
   unstage as unstageCmd,
@@ -26,6 +28,7 @@ import {
   reconcileChangelists,
 } from "./changelists";
 import { confirmAction } from "./dialogs";
+import { offerRecovery } from "./recovery";
 import type { ChangedFile, FileStatus, StatusEntry } from "./types";
 
 /// Map a porcelain-v2 status code (X or Y for one side) to a `FileStatus` for
@@ -339,7 +342,11 @@ export async function refreshActiveView(): Promise<void> {
 
 /// Run a fetch/pull/push against the source-control repo with a busy flag,
 /// surfacing errors and refreshing afterward.
-async function runSync(op: Promise<void>, label: string): Promise<void> {
+async function runSync(
+  op: Promise<void>,
+  label: string,
+  onError?: (raw: string) => boolean,
+): Promise<void> {
   if (appState.syncing) return;
   appState.syncing = true;
   appState.beginGitOp(label);
@@ -347,7 +354,10 @@ async function runSync(op: Promise<void>, label: string): Promise<void> {
   try {
     await op;
   } catch (e) {
-    appState.error = String(e);
+    const raw = String(e);
+    // onError returning true means it opened a recovery dialog — don't also
+    // show the raw banner.
+    if (!onError || !onError(raw)) appState.error = raw;
   } finally {
     appState.syncing = false;
     // Keep a sync failure's message: refreshActiveView() runs loadStatus()/
@@ -377,16 +387,38 @@ export async function loadPendingOp(): Promise<void> {
 /// Merge a branch into the current one. On conflict the repo is left mid-merge
 /// and the banner appears; resolve + stage in Working, then Continue.
 export async function doMergeBranch(branch: string): Promise<void> {
+  const repo = changesRepoPath();
   appState.beginGitOp("Merging…");
   appState.error = null;
   try {
-    await mergeCmd(changesRepoPath(), branch);
+    await mergeCmd(repo, branch);
+  } catch (e) {
+    const raw = String(e);
+    if (!offerRecovery(raw, "merge", `Merge ${branch}`, false, () => doStashMerge(repo, branch))) {
+      appState.error = raw;
+    }
+  } finally {
+    const err = appState.error;
+    await refreshActiveView();
+    await loadPendingOp();
+    if (err) appState.error = err;
+    appState.endGitOp();
+  }
+}
+
+// Recovery retry for a merge blocked by local changes: stash → merge → pop.
+async function doStashMerge(repo: string, branch: string): Promise<void> {
+  appState.beginGitOp("Stashing & merging…");
+  appState.error = null;
+  try {
+    await stashMerge(repo, branch);
   } catch (e) {
     appState.error = String(e);
   } finally {
     const err = appState.error;
     await refreshActiveView();
     await loadPendingOp();
+    await loadStashes();
     if (err) appState.error = err;
     appState.endGitOp();
   }
@@ -485,7 +517,12 @@ export function doFetch(): Promise<void> {
   return runSync(fetchCmd(changesRepoPath()), "Fetching…");
 }
 export function doPull(rebase: boolean): Promise<void> {
-  return runSync(pullCmd(changesRepoPath(), rebase), "Pulling…");
+  const repo = changesRepoPath();
+  return runSync(pullCmd(repo, rebase), "Pulling…", (raw) =>
+    offerRecovery(raw, "pull", "Pull couldn't complete", false, () =>
+      runSync(stashPull(repo, rebase), "Stashing & pulling…"),
+    ),
+  );
 }
 export function doPush(force: boolean): Promise<void> {
   // First push (no upstream): set it on the current branch while pushing.
