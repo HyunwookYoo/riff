@@ -121,6 +121,17 @@ export async function enterConflictResolution(): Promise<void> {
   if (conflicts.length > 0) openChange(conflicts[0], "unstaged");
 }
 
+/// Open the next still-conflicted file (the first unmerged entry that isn't the
+/// one already selected), used to auto-advance after a file is resolved. No-op
+/// when none remain.
+export function openNextConflict(): void {
+  const conflicts = conflictedEntries();
+  if (conflicts.length === 0) return;
+  const cur = appState.selectedFile?.path;
+  const next = conflicts.find((e) => e.path !== cur) ?? conflicts[0];
+  openChange(next, "unstaged");
+}
+
 export async function enterChangesMode(): Promise<void> {
   // Ordinary entry resets the WIP back/forward pair; the special WIP-node and
   // mouse-forward steps re-arm the relevant flag after calling this.

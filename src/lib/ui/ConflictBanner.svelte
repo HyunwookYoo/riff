@@ -25,11 +25,10 @@
   <div class="conflict-banner" class:info={unresolved === 0}>
     <span class="msg">
       {#if unresolved > 0}
-        ⚠ {label} hit a conflict — {unresolved} unresolved file{unresolved === 1
-          ? ""
-          : "s"}. Resolve them in Working, stage, then Continue.
+        ⚠ {label} paused on a conflict — Step 1 of 3: resolve {unresolved}
+        file{unresolved === 1 ? "" : "s"}, then stage &amp; Continue.
       {:else}
-        ✓ {label}: all conflicts resolved — Continue to finish.
+        ✓ {label}: all conflicts resolved — Step 3 of 3: Continue to finish.
       {/if}
     </span>
     {#if unresolved > 0}
