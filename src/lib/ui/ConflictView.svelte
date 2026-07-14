@@ -57,6 +57,11 @@
   // don't trust (see safeParse) or a user who just wants to hand-edit.
   let segments = $state<Segment[]>([]);
   let manualMode = $state(false);
+  // The path `segments` currently correspond to; null when they don't match
+  // any loaded file yet. markResolved and the toolbar button require this to
+  // equal the selected file's path, closing the write window where `loading`
+  // is already false but segments are still stale or empty (see load()).
+  let segmentsFile = $state<string | null>(null);
   // Live marker count in the manual editor, kept in sync by its update
   // listener. Structured mode ignores this — `remaining` reads the segment
   // model instead.
@@ -518,6 +523,7 @@
       return;
     }
     loading = true;
+    segmentsFile = null;
     const repo = changesRepoPath();
     let vers;
     try {
@@ -578,6 +584,7 @@
     const parsed = safeParse(vers.merged);
     segments = parsed.segments;
     manualMode = parsed.manual;
+    segmentsFile = path;
     // The segments/manualMode $effect (re)builds resultView; defer so it has
     // run by the time we scroll.
     requestAnimationFrame(() => scrollToFirstConflict());
@@ -585,7 +592,7 @@
 
   async function markResolved() {
     const file = appState.selectedFile;
-    if (!file || busy || loading) return;
+    if (!file || busy || loading || segmentsFile !== file.path) return;
     const content = manualMode
       ? (resultView?.state.doc.toString() ?? "")
       : assembleResult(segments);
@@ -688,7 +695,7 @@
       <button
         type="button"
         class="resolve"
-        disabled={busy || loading || remaining > 0}
+        disabled={busy || loading || remaining > 0 || segmentsFile !== appState.selectedFile?.path}
         title={remaining > 0
           ? "There are still unresolved conflicts — resolve them or use Take Current/Incoming"
           : "Stage the resolved file"}
