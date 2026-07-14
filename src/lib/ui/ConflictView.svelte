@@ -5,12 +5,12 @@
     keymap,
     lineNumbers,
     Decoration,
-    ViewPlugin,
     WidgetType,
     type DecorationSet,
   } from "@codemirror/view";
   import {
     EditorState,
+    StateField,
     type Extension,
     type Range,
   } from "@codemirror/state";
@@ -21,10 +21,17 @@
     resolveConflict,
     checkoutConflictSide,
   } from "$lib/git";
-  import { changesRepoPath, loadStatus } from "$lib/sourceControl";
+  import { changesRepoPath, loadStatus, openNextConflict } from "$lib/sourceControl";
   import { detectLanguage } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
-  import { sideDescriptors, type ConflictOp } from "$lib/conflictModel";
+  import {
+    parseConflicts,
+    assembleResult,
+    unresolvedCount,
+    sideDescriptors,
+    type ConflictOp,
+    type Segment,
+  } from "$lib/conflictModel";
 
   let oursHost = $state<HTMLDivElement>();
   let baseHost = $state<HTMLDivElement>();
@@ -41,9 +48,25 @@
   let binary = $state(false);
   let hasBase = $state(true);
   let showBase = $state(false);
-  let conflictsLeft = $state(0);
   let busy = $state(false);
   let loadSession = 0;
+
+  // The Result's segment model (Tasks 1-2). Structured mode renders this
+  // directly — read-only, resolve via each block's buttons; manual mode is a
+  // plain editable marker doc seeded from it, the escape hatch for a parse we
+  // don't trust (see safeParse) or a user who just wants to hand-edit.
+  let segments = $state<Segment[]>([]);
+  let manualMode = $state(false);
+  // Live marker count in the manual editor, kept in sync by its update
+  // listener. Structured mode ignores this — `remaining` reads the segment
+  // model instead.
+  let conflictsLeft = $state(0);
+  const remaining = $derived(
+    manualMode ? conflictsLeft : unresolvedCount(segments),
+  );
+  // Sentinel positions of the last-built structured doc's unresolved blocks,
+  // used for Prev/Next (see conflictPositions()).
+  let resultBlocks: { pos: number; idx: number }[] = [];
 
   // git swaps the meaning of stage-2 (ours) / stage-3 (theirs) depending on the
   // operation. Most notably, in a rebase "ours" is the branch being replayed
@@ -60,7 +83,6 @@
   // stay valid until the next edit — and a click *is* an edit, which rebuilds
   // the plugin's decorations with fresh positions for the remaining regions.
   class AcceptWidget extends WidgetType {
-    view: EditorView;
     from: number;
     to: number;
     ours: string;
@@ -68,7 +90,6 @@
     oursLabel: string;
     theirsLabel: string;
     constructor(
-      view: EditorView,
       from: number,
       to: number,
       ours: string,
@@ -77,7 +98,6 @@
       theirsLabel: string,
     ) {
       super();
-      this.view = view;
       this.from = from;
       this.to = to;
       this.ours = ours;
@@ -96,7 +116,7 @@
     ignoreEvent() {
       return true;
     }
-    toDOM() {
+    toDOM(view: EditorView) {
       const wrap = document.createElement("div");
       wrap.className = "cv-accept";
       const both =
@@ -112,7 +132,7 @@
         btn.onmousedown = (e) => e.preventDefault();
         btn.onclick = (e) => {
           e.preventDefault();
-          this.view.dispatch({
+          view.dispatch({
             changes: { from: this.from, to: this.to, insert },
           });
         };
@@ -129,20 +149,114 @@
     }
   }
 
-  // Highlight git's conflict regions and attach the accept toolbars.
-  // Recomputed on every doc change.
-  const conflictDecos = ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet;
-      constructor(view: EditorView) {
-        this.decorations = build(view);
+  // Doc text for the structured Result = resolved/text segments inline; each
+  // unresolved hunk becomes one sentinel newline (an empty line) carrying a
+  // replace block widget. `blocks` gives each sentinel's doc position so the
+  // decorations — and Prev/Next — can find them.
+  function buildResult(
+    segs: Segment[],
+  ): { doc: string; blocks: { pos: number; idx: number }[] } {
+    let doc = "";
+    const blocks: { pos: number; idx: number }[] = [];
+    segs.forEach((s, idx) => {
+      if (s.type === "text") {
+        // Normalize CRLF for this display-only doc (CodeMirror's own \r\n?|\n
+        // line splitting otherwise interacts badly with the bare-\n sentinel
+        // lines below); the real resolve path (assembleResult on segments)
+        // is untouched and stays byte-faithful to the source.
+        doc += s.content.replace(/\r\n/g, "\n");
+        return;
       }
-      update(u: { docChanged: boolean; view: EditorView }) {
-        if (u.docChanged) this.decorations = build(u.view);
+      const h = s.hunk;
+      if (h.choice === null) {
+        blocks.push({ pos: doc.length, idx });
+        doc += "\n";
+      } else {
+        const text =
+          h.choice === "current"
+            ? h.current
+            : h.choice === "incoming"
+              ? h.incoming
+              : h.current + h.incoming;
+        doc += text.replace(/\r\n/g, "\n");
       }
+    });
+    return { doc, blocks };
+  }
+
+  // An unresolved hunk in the structured Result: both sides stacked with an
+  // accept toolbar, no raw marker ASCII. Replaces the sentinel line
+  // buildResult() emits for it. Diff highlighting inside each side is Task 6.
+  class ConflictBlockWidget extends WidgetType {
+    idx: number;
+    constructor(idx: number) {
+      super();
+      this.idx = idx;
+    }
+    eq(o: ConflictBlockWidget) {
+      return o.idx === this.idx;
+    }
+    toDOM() {
+      const seg = segments[this.idx];
+      const h = seg.type === "conflict" ? seg.hunk : null;
+      const wrap = document.createElement("div");
+      wrap.className = "cv-block";
+      if (!h) return wrap;
+      const side = (cls: string, label: string, text: string) => {
+        const box = document.createElement("div");
+        box.className = `cv-side ${cls}`;
+        const hd = document.createElement("div");
+        hd.className = "cv-side-h";
+        hd.textContent = label;
+        const pre = document.createElement("pre");
+        pre.className = "cv-side-body";
+        pre.textContent = text.replace(/\r?\n$/, "");
+        box.append(hd, pre);
+        return box;
+      };
+      wrap.appendChild(side("current", `Current · ${sides.current.label}`, h.current));
+      wrap.appendChild(side("incoming", `Incoming · ${sides.incoming.role}`, h.incoming));
+      const bar = document.createElement("div");
+      bar.className = "cv-block-bar";
+      const btn = (txt: string, choice: "current" | "incoming" | "both") => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = txt;
+        b.onclick = () => choose(this.idx, choice);
+        return b;
+      };
+      bar.append(btn("Use Current", "current"), btn("Use Incoming", "incoming"), btn("Both", "both"));
+      wrap.appendChild(bar);
+      return wrap;
+    }
+    ignoreEvent() {
+      return false;
+    }
+  }
+
+  // Accept a side for one hunk, then trigger the segments $effect to rebuild
+  // the Result from scratch with the new choice baked in.
+  function choose(idx: number, choice: "current" | "incoming" | "both") {
+    const seg = segments[idx];
+    if (seg.type !== "conflict") return;
+    seg.hunk.choice = choice;
+    segments = [...segments];
+  }
+
+  // Highlight git's conflict regions and attach the accept toolbars. A
+  // StateField, not a ViewPlugin: CodeMirror requires block decorations
+  // (the AcceptWidget toolbar is `block: true`) to come from state, not a
+  // viewport-driven plugin — it throws "Block decorations may not be
+  // specified via plugins" otherwise. Recomputed on every doc change.
+  const conflictDecos = StateField.define<DecorationSet>({
+    create(state) {
+      return build(state);
     },
-    { decorations: (v) => v.decorations },
-  );
+    update(deco, tr) {
+      return tr.docChanged ? build(tr.state) : deco;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
 
   const oursLine = Decoration.line({ class: "cv-ours" });
   const theirsLine = Decoration.line({ class: "cv-theirs" });
@@ -156,8 +270,8 @@
     return parts.join("\n");
   }
 
-  function build(view: EditorView): DecorationSet {
-    const doc = view.state.doc;
+  function build(state: EditorState): DecorationSet {
+    const doc = state.doc;
     const ranges: Range<Decoration>[] = [];
     // Line shading. side: 0 = outside, 1 = ours, 2 = base (diff3), 3 = theirs.
     // Region tracking (start/base/sep line numbers) drives the accept widgets.
@@ -192,7 +306,6 @@
           ranges.push(
             Decoration.widget({
               widget: new AcceptWidget(
-                view,
                 doc.line(start).from,
                 line.to,
                 ours,
@@ -221,9 +334,45 @@
     return (doc.match(/^<<<<<<</gm) ?? []).length;
   }
 
-  // Positions of each conflict's `<<<<<<<` line in the result doc.
+  // assembleResult renders an unresolved hunk with canonical "Current"/
+  // "Base"/"Incoming" labels, which differ from git's real marker suffixes
+  // (ref names / SHAs) — so comparing it byte-for-byte against vers.merged
+  // would spuriously fail on every real conflict. Strip each marker line's
+  // label before comparing, so safeParse's check still catches genuine
+  // parse anomalies (wrong hunk boundaries, dropped content) without
+  // false-triggering on ordinary conflicts. Also normalize CRLF to LF first:
+  // renderMarkers's synthetic marker lines are always LF-only, so on a CRLF
+  // source (common on Windows) the bare "=======" separator — never touched
+  // by the label strip above — would keep its \r on one side only.
+  function stripMarkerLabels(doc: string): string {
+    return doc
+      .replace(/\r\n/g, "\n")
+      .replace(/^(<<<<<<<|\|\|\|\|\|\|\||>>>>>>>).*$/gm, "$1");
+  }
+
+  // Parse defensively: on a throw, or when the parse doesn't faithfully
+  // reproduce the source (see stripMarkerLabels above), fall back to a
+  // single opaque text segment — assembleResult(segments) then equals
+  // `merged` exactly, a safe, lossless seed for manual mode. The user is
+  // never trapped behind a bad parse.
+  function safeParse(merged: string): { segments: Segment[]; manual: boolean } {
+    try {
+      const segs = parseConflicts(merged);
+      if (stripMarkerLabels(assembleResult(segs)) === stripMarkerLabels(merged)) {
+        return { segments: segs, manual: false };
+      }
+    } catch {
+      // fall through to the safe fallback below
+    }
+    return { segments: [{ type: "text", content: merged }], manual: true };
+  }
+
+  // Positions to jump to via Prev/Next: unresolved block sentinels in
+  // structured mode (from the last buildResult() call), or each conflict's
+  // `<<<<<<<` marker line in manual mode.
   function conflictPositions(): number[] {
     if (!resultView) return [];
+    if (!manualMode) return resultBlocks.map((b) => b.pos);
     const doc = resultView.state.doc;
     const out: number[] = [];
     for (let i = 1; i <= doc.lines; i++) {
@@ -262,6 +411,70 @@
     });
   }
 
+  // Structured Result: real text for resolved/text segments, each unresolved
+  // hunk replaced by a block widget. Read-only — resolution happens via a
+  // widget's buttons (choose()), which rebuild this from scratch. No shiki:
+  // the Result has never been syntax-highlighted, only the reference panes.
+  function buildStructuredEditor(segs: Segment[], dark: boolean): EditorView | null {
+    if (!resultHost) return null;
+    const { doc, blocks } = buildResult(segs);
+    resultBlocks = blocks;
+    const decos = Decoration.set(
+      blocks.map((b) =>
+        Decoration.replace({
+          block: true,
+          widget: new ConflictBlockWidget(b.idx),
+        }).range(b.pos),
+      ),
+      true,
+    );
+    return new EditorView({
+      state: EditorState.create({
+        doc,
+        extensions: [
+          EditorState.readOnly.of(true),
+          EditorView.editable.of(false),
+          EditorView.lineWrapping,
+          EditorView.darkTheme.of(dark),
+          EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } }),
+          lineNumbers(),
+          search({ top: true }),
+          keymap.of(searchKeymap),
+          EditorView.decorations.of(decos),
+        ],
+      }),
+      parent: resultHost,
+    });
+  }
+
+  // Manual mode: the pre-redesign editable marker doc — lineWrapping, search,
+  // the marker/side shading + AcceptWidget toolbars, and a countConflicts
+  // update listener. Seeded from the segment model (or, via safeParse's
+  // fallback, from the raw source when the parse can't be trusted).
+  function buildManualEditor(segs: Segment[], dark: boolean): EditorView | null {
+    if (!resultHost) return null;
+    const doc = assembleResult(segs);
+    conflictsLeft = countConflicts(doc);
+    return new EditorView({
+      state: EditorState.create({
+        doc,
+        extensions: [
+          EditorView.lineWrapping,
+          EditorView.darkTheme.of(dark),
+          EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } }),
+          lineNumbers(),
+          search({ top: true }),
+          keymap.of(searchKeymap),
+          conflictDecos,
+          EditorView.updateListener.of((u) => {
+            if (u.docChanged) conflictsLeft = countConflicts(u.state.doc.toString());
+          }),
+        ],
+      }),
+      parent: resultHost,
+    });
+  }
+
   function teardown() {
     oursView?.destroy();
     baseView?.destroy();
@@ -278,6 +491,23 @@
     const theme = appState.effectiveTheme;
     void theme;
     void load(file?.path ?? null);
+  });
+
+  // (Re)build the Result editor whenever the segment model or edit mode
+  // changes — a full EditorState.create is fine, accepts are low-frequency.
+  // Kept separate from load() so an accept (choose()) only rebuilds the
+  // Result, not the reference panes.
+  $effect(() => {
+    const segs = segments;
+    const manual = manualMode;
+    const file = appState.selectedFile;
+    const dark = isDarkMode();
+    resultView?.destroy();
+    resultView = null;
+    if (!file || binary || !resultHost) return;
+    resultView = manual
+      ? buildManualEditor(segs, dark)
+      : buildStructuredEditor(segs, dark);
   });
 
   async function load(path: string | null) {
@@ -303,7 +533,6 @@
     loading = false;
     binary = vers.binary;
     hasBase = vers.base.length > 0;
-    conflictsLeft = countConflicts(vers.merged);
     if (binary) {
       teardown();
       return;
@@ -346,38 +575,27 @@
         state: EditorState.create({ doc: vers.theirs, extensions: refExts(theirsExt) }),
         parent: theirsHost,
       });
-    if (resultHost)
-      resultView = new EditorView({
-        state: EditorState.create({
-          doc: vers.merged,
-          extensions: [
-            EditorView.lineWrapping,
-            EditorView.darkTheme.of(dark),
-            EditorView.theme({ ".cm-scroller": { fontFamily: "var(--mono)" } }),
-            lineNumbers(),
-            search({ top: true }),
-            keymap.of(searchKeymap),
-            conflictDecos,
-            EditorView.updateListener.of((u) => {
-              if (u.docChanged)
-                conflictsLeft = countConflicts(u.state.doc.toString());
-            }),
-          ],
-        }),
-        parent: resultHost,
-      });
-
-    if (resultView) requestAnimationFrame(() => scrollToFirstConflict());
+    const parsed = safeParse(vers.merged);
+    segments = parsed.segments;
+    manualMode = parsed.manual;
+    // The segments/manualMode $effect (re)builds resultView; defer so it has
+    // run by the time we scroll.
+    requestAnimationFrame(() => scrollToFirstConflict());
   }
 
   async function markResolved() {
     const file = appState.selectedFile;
-    if (!file || !resultView || busy) return;
+    if (!file || busy) return;
+    const content = manualMode
+      ? (resultView?.state.doc.toString() ?? "")
+      : assembleResult(segments);
+    if (countConflicts(content) > 0) return; // guard: markers remain
     busy = true;
     error = null;
     try {
-      await resolveConflict(changesRepoPath(), file.path, resultView.state.doc.toString());
+      await resolveConflict(changesRepoPath(), file.path, content);
       await loadStatus();
+      openNextConflict(); // v1: always advance
     } catch (e) {
       error = String(e);
     } finally {
@@ -406,13 +624,13 @@
     <span class="cv-status">
       {#if binary}
         Binary conflict — choose a side
-      {:else if conflictsLeft > 0}
-        ⚠ {conflictsLeft} conflict{conflictsLeft === 1 ? "" : "s"} remaining
+      {:else if remaining > 0}
+        ⚠ {remaining} conflict{remaining === 1 ? "" : "s"} remaining
       {:else}
-        ✓ No markers left — ready to mark resolved
+        ✓ Nothing left to resolve — ready to mark resolved
       {/if}
     </span>
-    {#if !binary && conflictsLeft > 0}
+    {#if !binary && remaining > 0}
       <div class="cv-nav">
         <button
           type="button"
@@ -461,10 +679,18 @@
     {#if !binary}
       <button
         type="button"
+        class:active={manualMode}
+        title="Edit the file directly with conflict markers"
+        onclick={() => (manualMode = !manualMode)}
+      >
+        Edit manually
+      </button>
+      <button
+        type="button"
         class="resolve"
-        disabled={busy}
-        title={conflictsLeft > 0
-          ? "There are still conflict markers — resolve them or use Take Current/Incoming"
+        disabled={busy || remaining > 0}
+        title={remaining > 0
+          ? "There are still unresolved conflicts — resolve them or use Take Current/Incoming"
           : "Stage the resolved file"}
         onclick={markResolved}
       >
@@ -500,7 +726,9 @@
       </div>
     </div>
     <div class="cv-result">
-      <header class="cv-h result">Result · edit the markers to resolve</header>
+      <header class="cv-h result">
+        Result · {manualMode ? "edit the markers to resolve" : "resolve each conflict below"}
+      </header>
       <div class="cv-host" bind:this={resultHost}></div>
     </div>
   {/if}
@@ -670,5 +898,62 @@
   .cv-host :global(.cv-accept .theirs:hover) {
     border-color: #5a9bd4;
     color: #5a9bd4;
+  }
+  /* Structured-mode conflict block: the unresolved hunk's two sides stacked
+     with an accept toolbar — replaces the sentinel line buildResult() emits. */
+  .cv-host :global(.cv-block) {
+    display: flex;
+    flex-direction: column;
+    margin: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .cv-host :global(.cv-side + .cv-side) {
+    border-top: 1px solid var(--border);
+  }
+  .cv-host :global(.cv-side.current) {
+    box-shadow: inset 3px 0 #4a9d5b;
+  }
+  .cv-host :global(.cv-side.incoming) {
+    box-shadow: inset 3px 0 #5a9bd4;
+  }
+  .cv-host :global(.cv-side-h) {
+    padding: 2px 8px;
+    font-size: 0.72em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+    background: var(--bar-bg);
+  }
+  .cv-host :global(.cv-side-body) {
+    margin: 0;
+    padding: 4px 10px;
+    font-family: var(--mono);
+    font-size: 0.9em;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--input-bg);
+  }
+  .cv-host :global(.cv-block-bar) {
+    display: flex;
+    gap: 4px;
+    padding: 4px 8px;
+    background: var(--bar-bg);
+    border-top: 1px solid var(--border);
+  }
+  .cv-host :global(.cv-block-bar button) {
+    font-family: var(--mono);
+    font-size: 0.75em;
+    padding: 2px 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--input-bg);
+    color: inherit;
+    cursor: pointer;
+  }
+  .cv-host :global(.cv-block-bar button:hover) {
+    background: var(--hover);
   }
 </style>
