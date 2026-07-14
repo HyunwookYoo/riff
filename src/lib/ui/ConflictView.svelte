@@ -585,7 +585,7 @@
 
   async function markResolved() {
     const file = appState.selectedFile;
-    if (!file || busy) return;
+    if (!file || busy || loading) return;
     const content = manualMode
       ? (resultView?.state.doc.toString() ?? "")
       : assembleResult(segments);
@@ -688,7 +688,7 @@
       <button
         type="button"
         class="resolve"
-        disabled={busy || remaining > 0}
+        disabled={busy || loading || remaining > 0}
         title={remaining > 0
           ? "There are still unresolved conflicts — resolve them or use Take Current/Incoming"
           : "Stage the resolved file"}
