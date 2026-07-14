@@ -15,6 +15,7 @@
     type Range,
   } from "@codemirror/state";
   import { search, searchKeymap } from "@codemirror/search";
+  import { diff } from "@codemirror/merge";
   import { appState } from "$lib/store.svelte";
   import {
     conflictVersions,
@@ -189,9 +190,56 @@
     return { doc, blocks };
   }
 
+  // Character ranges within `b` that differ from `a` (added/changed parts of
+  // b) — offsets are into `b`, ready to feed straight into renderRanges(b, …).
+  function changedInB(a: string, b: string): [number, number][] {
+    return diff(a, b)
+      .map((c) => [c.fromB, c.toB] as [number, number])
+      .filter(([f, t]) => t > f);
+  }
+
+  // Which ranges to highlight on each side of a hunk, given already
+  // LF-normalized text (see toDOM below, which is also the one place that
+  // normalizes). diff3 (base present) compares each side against the common
+  // ancestor; without a base, the only reference point is the other side.
+  function hunkHighlights(
+    base: string,
+    current: string,
+    incoming: string,
+  ): { current: [number, number][]; incoming: [number, number][] } {
+    if (base)
+      return { current: changedInB(base, current), incoming: changedInB(base, incoming) };
+    return { current: changedInB(incoming, current), incoming: changedInB(current, incoming) };
+  }
+
+  // Render `text` as a DocumentFragment of plain text nodes with `ranges`
+  // wrapped in `<span class="cv-tok">` — the intra-hunk diff highlight for one
+  // side of a conflict block. `text` must already be LF-normalized the same
+  // way as the string `ranges` was computed against, so offsets line up.
+  // Strips one trailing newline, like the plain-text rendering it replaces.
+  function renderRanges(text: string, ranges: [number, number][]): DocumentFragment {
+    const frag = document.createDocumentFragment();
+    const body = text.replace(/\n$/, "");
+    let pos = 0;
+    for (const [f, t] of ranges) {
+      const a = Math.min(f, body.length), b = Math.min(t, body.length);
+      if (a > pos) frag.appendChild(document.createTextNode(body.slice(pos, a)));
+      if (b > a) {
+        const span = document.createElement("span");
+        span.className = "cv-tok";
+        span.textContent = body.slice(a, b);
+        frag.appendChild(span);
+      }
+      pos = b;
+    }
+    if (pos < body.length) frag.appendChild(document.createTextNode(body.slice(pos)));
+    return frag;
+  }
+
   // An unresolved hunk in the structured Result: both sides stacked with an
   // accept toolbar, no raw marker ASCII. Replaces the sentinel line
-  // buildResult() emits for it. Diff highlighting inside each side is Task 6.
+  // buildResult() emits for it. Each side highlights what actually differs
+  // (vs base under diff3, vs the other side otherwise) via hunkHighlights.
   class ConflictBlockWidget extends WidgetType {
     idx: number;
     constructor(idx: number) {
@@ -207,7 +255,15 @@
       const wrap = document.createElement("div");
       wrap.className = "cv-block";
       if (!h) return wrap;
-      const side = (cls: string, label: string, text: string) => {
+      // Normalize to LF once so diff() offsets and the rendered text agree —
+      // display-only (mirrors buildResult()'s CRLF handling above); the
+      // resolve path (assembleResult on segments) stays untouched and
+      // byte-faithful to the source.
+      const cur = h.current.replace(/\r\n/g, "\n");
+      const inc = h.incoming.replace(/\r\n/g, "\n");
+      const base = h.base.replace(/\r\n/g, "\n");
+      const hl = hunkHighlights(base, cur, inc);
+      const side = (cls: string, label: string, text: string, ranges: [number, number][]) => {
         const box = document.createElement("div");
         box.className = `cv-side ${cls}`;
         const hd = document.createElement("div");
@@ -215,12 +271,12 @@
         hd.textContent = label;
         const pre = document.createElement("pre");
         pre.className = "cv-side-body";
-        pre.textContent = text.replace(/\r?\n$/, "");
+        pre.appendChild(renderRanges(text, ranges));
         box.append(hd, pre);
         return box;
       };
-      wrap.appendChild(side("current", `Current · ${sides.current.label}`, h.current));
-      wrap.appendChild(side("incoming", `Incoming · ${sides.incoming.role}`, h.incoming));
+      wrap.appendChild(side("current", `Current · ${sides.current.label}`, cur, hl.current));
+      wrap.appendChild(side("incoming", `Incoming · ${sides.incoming.role}`, inc, hl.incoming));
       const bar = document.createElement("div");
       bar.className = "cv-block-bar";
       const btn = (txt: string, choice: "current" | "incoming" | "both") => {
@@ -942,6 +998,14 @@
     white-space: pre-wrap;
     word-break: break-word;
     background: var(--input-bg);
+  }
+  /* Intra-hunk diff highlight — what actually differs within a side. */
+  .cv-host :global(.cv-side-body .cv-tok) {
+    background: var(--diff-add-token, rgba(74, 157, 91, 0.35));
+    border-radius: 2px;
+  }
+  .cv-host :global(.cv-side.incoming .cv-side-body .cv-tok) {
+    background: var(--diff-del-token, rgba(90, 155, 212, 0.35));
   }
   .cv-host :global(.cv-block-bar) {
     display: flex;
