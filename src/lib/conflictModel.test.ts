@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { parseConflicts, type Segment } from "./conflictModel";
+import {
+  parseConflicts,
+  assembleResult,
+  unresolvedCount,
+  sideDescriptors,
+  type Segment,
+} from "./conflictModel";
 
 const MERGE = `line 1
 <<<<<<< HEAD
@@ -73,5 +79,69 @@ describe("parseConflicts", () => {
       )
       .join("");
     expect(raw).toBe(DIFF3);
+  });
+});
+
+const MERGE2 = `pre
+<<<<<<< HEAD
+current A
+=======
+incoming A
+>>>>>>> feature
+post
+`;
+
+describe("assembleResult", () => {
+  it("keeps text verbatim and picks the chosen side", () => {
+    const segs = parseConflicts(MERGE2);
+    const c = segs.find((s) => s.type === "conflict")!;
+    if (c.type !== "conflict") throw new Error();
+    c.hunk.choice = "incoming";
+    expect(assembleResult(segs)).toBe("pre\nincoming A\npost\n");
+  });
+
+  it("'both' is current then incoming", () => {
+    const segs = parseConflicts(MERGE2);
+    const c = segs.find((s) => s.type === "conflict")!;
+    if (c.type !== "conflict") throw new Error();
+    c.hunk.choice = "both";
+    expect(assembleResult(segs)).toBe("pre\ncurrent A\nincoming A\npost\n");
+  });
+
+  it("renders canonical markers for an unresolved hunk", () => {
+    const out = assembleResult(parseConflicts(MERGE2));
+    expect(out).toContain("<<<<<<< Current");
+    expect(out).toContain("=======");
+    expect(out).toContain(">>>>>>> Incoming");
+  });
+});
+
+describe("unresolvedCount", () => {
+  it("counts null-choice hunks", () => {
+    const segs = parseConflicts(MERGE2 + MERGE2);
+    expect(unresolvedCount(segs)).toBe(2);
+    const c = segs.find((s) => s.type === "conflict")!;
+    if (c.type !== "conflict") throw new Error();
+    c.hunk.choice = "current";
+    expect(unresolvedCount(segs)).toBe(1);
+  });
+});
+
+describe("sideDescriptors", () => {
+  it("merge uses the current branch name and incoming role", () => {
+    const d = sideDescriptors("merge", "main");
+    expect(d.current.label).toBe("main");
+    expect(d.incoming.label).toBe("Incoming");
+    expect(d.incoming.role).toBe("incoming branch");
+  });
+
+  it("rebase flips the roles", () => {
+    const d = sideDescriptors("rebase", "main");
+    expect(d.current.role).toBe("rebase target (onto)");
+    expect(d.incoming.role).toBe("your commit (replayed)");
+  });
+
+  it("falls back to a generic label with no known branch", () => {
+    expect(sideDescriptors("merge", null).current.label).toBe("current branch");
   });
 });
