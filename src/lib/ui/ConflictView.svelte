@@ -24,6 +24,7 @@
   import { changesRepoPath, loadStatus } from "$lib/sourceControl";
   import { detectLanguage } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
+  import { sideDescriptors, type ConflictOp } from "$lib/conflictModel";
 
   let oursHost = $state<HTMLDivElement>();
   let baseHost = $state<HTMLDivElement>();
@@ -39,6 +40,7 @@
   let error = $state<string | null>(null);
   let binary = $state(false);
   let hasBase = $state(true);
+  let showBase = $state(false);
   let conflictsLeft = $state(0);
   let busy = $state(false);
   let loadSession = 0;
@@ -48,20 +50,11 @@
   // ONTO (the target), and "theirs" is your commit being replayed — the reverse
   // of a merge. Label the sides by the in-progress op so the user doesn't pick
   // the wrong one.
-  const sideLabels = $derived.by(() => {
-    switch (appState.pendingOp) {
-      case "rebase":
-        return { ours: "rebase target (onto)", theirs: "your commit (replayed)" };
-      case "cherry-pick":
-        return { ours: "current branch", theirs: "picked commit" };
-      case "revert":
-        return { ours: "current branch", theirs: "being reverted" };
-      default: // merge (or none)
-        return { ours: "current branch", theirs: "incoming branch" };
-    }
-  });
+  const sides = $derived(
+    sideDescriptors(appState.pendingOp as ConflictOp, appState.currentBranch),
+  );
 
-  // A floating Ours/Theirs/Both toolbar rendered above each conflict's
+  // A floating Current/Incoming/Both toolbar rendered above each conflict's
   // `<<<<<<<` marker. Clicking replaces the whole region [from, to] with the
   // chosen side, dropping the markers. Positions are captured at build time and
   // stay valid until the next edit — and a click *is* an edit, which rebuilds
@@ -125,11 +118,13 @@
         };
         return btn;
       };
-      wrap.appendChild(mk("Ours", "ours", this.ours, `Keep ours — ${this.oursLabel}`));
       wrap.appendChild(
-        mk("Theirs", "theirs", this.theirs, `Keep theirs — ${this.theirsLabel}`),
+        mk("Use Current", "ours", this.ours, `Keep current — ${this.oursLabel}`),
       );
-      wrap.appendChild(mk("Both", "both", both, "Keep both, ours then theirs"));
+      wrap.appendChild(
+        mk("Use Incoming", "theirs", this.theirs, `Keep incoming — ${this.theirsLabel}`),
+      );
+      wrap.appendChild(mk("Both", "both", both, "Keep both, current then incoming"));
       return wrap;
     }
   }
@@ -202,8 +197,8 @@
                 line.to,
                 ours,
                 theirs,
-                sideLabels.ours,
-                sideLabels.theirs,
+                sides.current.role,
+                sides.incoming.role,
               ),
               block: true,
               side: -1,
@@ -440,26 +435,36 @@
     <button
       type="button"
       disabled={busy}
-      title="Use the whole ours side — {sideLabels.ours}"
+      title="Use the whole Current side — {sides.current.role}"
       onclick={() => takeSide("ours")}
     >
-      Take ours
+      Take Current
     </button>
     <button
       type="button"
       disabled={busy}
-      title="Use the whole theirs side — {sideLabels.theirs}"
+      title="Use the whole Incoming side — {sides.incoming.role}"
       onclick={() => takeSide("theirs")}
     >
-      Take theirs
+      Take Incoming
     </button>
+    {#if !binary && hasBase}
+      <button
+        type="button"
+        class:active={showBase}
+        title="Show the common ancestor (base)"
+        onclick={() => (showBase = !showBase)}
+      >
+        Base
+      </button>
+    {/if}
     {#if !binary}
       <button
         type="button"
         class="resolve"
         disabled={busy}
         title={conflictsLeft > 0
-          ? "There are still conflict markers — resolve them or use Take ours/theirs"
+          ? "There are still conflict markers — resolve them or use Take Current/Incoming"
           : "Stage the resolved file"}
         onclick={markResolved}
       >
@@ -476,21 +481,21 @@
     <div class="cv-placeholder">Loading conflict…</div>
   {:else if binary}
     <div class="cv-placeholder">
-      This is a binary file. Pick <strong>Take ours</strong> or
-      <strong>Take theirs</strong> above to resolve it.
+      This is a binary file. Pick <strong>Take Current</strong> or
+      <strong>Take Incoming</strong> above to resolve it.
     </div>
   {:else}
     <div class="cv-panes">
       <div class="cv-col">
-        <header class="cv-h ours">Ours · {sideLabels.ours}</header>
+        <header class="cv-h current">Current · {sides.current.label}</header>
         <div class="cv-host" bind:this={oursHost}></div>
       </div>
-      <div class="cv-col" class:empty={!hasBase}>
-        <header class="cv-h base">Base{hasBase ? "" : " · none"}</header>
+      <div class="cv-col" class:hidden={!showBase || !hasBase}>
+        <header class="cv-h base">Base</header>
         <div class="cv-host" bind:this={baseHost}></div>
       </div>
       <div class="cv-col">
-        <header class="cv-h theirs">Theirs · {sideLabels.theirs}</header>
+        <header class="cv-h incoming">Incoming · {sides.incoming.role}</header>
         <div class="cv-host" bind:this={theirsHost}></div>
       </div>
     </div>
@@ -537,6 +542,11 @@
     opacity: 0.5;
     cursor: default;
   }
+  .cv-toolbar button.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
   .cv-nav {
     display: inline-flex;
     gap: 2px;
@@ -578,8 +588,8 @@
   .cv-col:last-child {
     border-right: none;
   }
-  .cv-col.empty {
-    opacity: 0.55;
+  .cv-col.hidden {
+    display: none;
   }
   .cv-result {
     display: flex;
@@ -597,10 +607,10 @@
     border-bottom: 1px solid var(--border);
     color: var(--muted);
   }
-  .cv-h.ours {
+  .cv-h.current {
     color: #4a9d5b;
   }
-  .cv-h.theirs {
+  .cv-h.incoming {
     color: #5a9bd4;
   }
   .cv-h.result {
