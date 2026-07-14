@@ -136,7 +136,9 @@ merge is non-diff3 / base is empty). Colors reuse today's palette (Current green
 `#4a9d5b`, Incoming blue `#5a9bd4`, base grey).
 
 **Structured Result (default, marker-free).** The Result renders from the segment
-model. Non-conflict text renders as normal, syntax-highlighted code. Each
+model. Non-conflict text renders as normal (plain) text — the Result pane is not
+syntax-highlighted (matching the pre-redesign editor, which had none); the
+Current/Incoming reference panes keep their shiki highlighting. Each
 **unresolved** conflict renders as a distinct, labeled block — Current content
 above Incoming content, each with its side color gutter — carrying an inline
 **[Use Current] [Use Incoming] [Both]** toolbar and a one-line hint ("Pick a side
@@ -219,6 +221,14 @@ presentational — it does not alter parsing, assembly, or the segment model.
 ## Edge cases / limitations
 - **Non-diff3 merges** → `base` empty → Base toggle disabled; parser emits
   `base: ""`.
+- **Empty-base diff3 conflicts** (diff3/zdiff3 `conflictStyle` where the base section
+  is empty — a "both sides added" hunk) → routed to **manual mode**: `parseConflicts`
+  collapses the empty base to `base: ""` and `renderMarkers` then omits the `|||||||`
+  line, so the `safeParse` round-trip mismatches. Safe (manual mode is lossless), but
+  such hunks show markers instead of structured blocks. Only affects users who set
+  diff3/zdiff3 (git default is `merge`, no `|||||||`). **Tracked follow-up:** add a
+  `hasBase` boolean to `ConflictHunk` and key `renderMarkers` on it before any
+  diff3-user-facing push.
 - **Malformed / unparseable markers** → automatic fallback to manual (marker) mode;
   never trap the user.
 - **Manual edits after structured picks** → escape hatch owns the text; counter
