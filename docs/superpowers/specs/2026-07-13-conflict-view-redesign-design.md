@@ -22,7 +22,8 @@ This is the "conflict view is confusing" half of the Fork-parity VCS initiative
 Redesign `ConflictView.svelte` into a **structured 3-pane merge editor**:
 two side panes (**Current** | **Incoming**) plus a **Result** pane, with Base on a
 toggle; conflicts resolved by **structured per-hunk accept** (no raw markers in the
-default view); manual editing preserved as an escape hatch. Relabel all Ours/Theirs
+default view); manual editing preserved as an escape hatch. **Highlight what
+actually differs within each conflict** (line/token-level). Relabel all Ours/Theirs
 wording to **Current/Incoming** view-wide. Add legible next-step guidance.
 
 **Frontend-only. No backend changes.** The existing bindings already suffice:
@@ -38,7 +39,8 @@ assembled on the frontend and handed to `resolveConflict`.
 | Resolution | Parse `merged` into structured segments; Result shows **no raw markers**. Per-hunk **[Use Current] / [Use Incoming] / [Both]**; manual-edit escape hatch. |
 | Labels | **Current / Incoming**, applied view-wide (headers, side-pane buttons, whole-file buttons, inline toolbar, tooltips). Current enriched with the real branch name; Incoming shows the op-aware role. Op-role sublabel kept for both. |
 | Next step | Per-file progress ("N of M resolved"); on **Mark resolved** → stage + **auto-advance to the next conflicted file** (v1: always on). Banner reworded as ① resolve → ② stage → ③ continue. |
-| Non-goals (v1) | Intra-hunk word-level diff; smarter auto-merge; real Incoming ref name (needs backend read). Binary conflicts keep today's take-a-side flow. |
+| Highlighting | Region shading per side + **intra-hunk diff highlight**: base→each side when diff3, else Current↔Incoming. Reuses `@codemirror/merge` line/token highlighting; frontend-only (hunks are small — no `scanLimit` concern). |
+| Non-goals (v1) | Smarter auto-merge; real Incoming ref name (needs backend read). Binary conflicts keep today's take-a-side flow. |
 
 ## Architecture
 The redesign splits the conflict logic into a **pure, testable model** plus a
@@ -63,7 +65,7 @@ conflictVersions() ──▶ merged (with markers)
 |---|---|---|
 | Conflict model | `src/lib/conflictModel.ts` (new, pure) | parse markers → segments; assemble result; count unresolved; side descriptors |
 | Model tests | `src/lib/conflictModel.test.ts` (new, vitest) | parse/assemble/count/labels over sample docs |
-| Conflict view | `src/lib/ui/ConflictView.svelte` (major rework) | 2-pane + Base toggle; structured Result; per-hunk accept; manual escape hatch; auto-advance |
+| Conflict view | `src/lib/ui/ConflictView.svelte` (major rework) | 2-pane + Base toggle; structured Result; per-hunk accept; **intra-hunk diff highlight**; manual escape hatch; auto-advance |
 | Conflict banner | `src/lib/ui/ConflictBanner.svelte` (copy) | clearer ①→②→③ step wording (behavior unchanged) |
 | Next-conflict nav | `src/lib/sourceControl.ts` | `openNextConflict()` helper for auto-advance |
 
@@ -160,6 +162,19 @@ is never trapped.
 resolved". Prev/Next jump between remaining conflicts (kept from today). Reveal the
 first conflict on load.
 
+**Intra-hunk diff highlighting.** Within each conflict, highlight *what actually
+differs* so a large hunk with a one-line change is obvious. Computed on the frontend
+per hunk (small texts — the `scanLimit` that forces backend-computed diffs for whole
+large files doesn't apply here), reusing `@codemirror/merge`'s line/token diff and
+the existing `--diff-add-token` / `--diff-del-token` styling:
+- **diff3 (base present):** highlight base→Current in the Current pane and
+  base→Incoming in the Incoming pane — each side shows what it changed vs the common
+  ancestor.
+- **No base (2-way):** highlight Current↔Incoming directly.
+
+The same highlighting carries into the Result's unresolved conflict blocks. Purely
+presentational — it does not alter parsing, assembly, or the segment model.
+
 ## Next-step guidance
 - **Per file.** Status reads "N of M conflicts resolved". When 0 remain, the
   **Mark resolved** button is emphasized.
@@ -196,9 +211,10 @@ first conflict on load.
   - `unresolvedCount`: matches the number of null-choice hunks.
   - `sideDescriptors`: each op, with and without a known `currentBranch`.
 - View — manual checklist (riff does not unit-test Svelte / git ops): a merge
-  conflict and a rebase conflict; multi-conflict file; diff3 vs non-diff3; binary
-  conflict; malformed markers → falls back to manual mode; auto-advance lands on the
-  next file; Take Current/Incoming whole-file; banner Continue gating.
+  conflict and a rebase conflict; multi-conflict file; diff3 vs non-diff3 (incl. its
+  intra-hunk diff highlight — base→sides vs Current↔Incoming); binary conflict;
+  malformed markers → falls back to manual mode; auto-advance lands on the next file;
+  Take Current/Incoming whole-file; banner Continue gating.
 
 ## Edge cases / limitations
 - **Non-diff3 merges** → `base` empty → Base toggle disabled; parser emits
@@ -227,6 +243,5 @@ first conflict on load.
 ## Out of scope (v1) — later
 - **Real Incoming ref name** (Current-style enrichment for the incoming side) —
   small backend addition to read MERGE_HEAD / rebase head-name.
-- **Intra-hunk word/line-level diff** highlighting within Current/Incoming.
 - **Smarter 3-way auto-merge** (auto-resolve non-overlapping hunks).
 - **Per-user preference** for auto-advance (v1 hardcodes on).
