@@ -33,6 +33,19 @@
   // (rapid j/k, worktree-refresh swap, theme/mode changes).
   let loadSession = 0;
 
+  // Signature of what the on-screen editor currently renders, so a no-op
+  // refresh (the FS watcher re-runs status → openChange reassigns selectedFile
+  // to a fresh object even when nothing changed) can skip the rebuild and keep
+  // the live scroll position. Set on mount, cleared on teardown.
+  let mounted: {
+    path: string;
+    old: string;
+    new: string;
+    mode: string;
+    dark: boolean;
+    lang: string | null;
+  } | null = null;
+
   // VS Code-style responsive diff: side-by-side needs horizontal room, so when
   // the diff pane is narrower than this (e.g. the graph mode's left detail
   // column) it falls back to the unified inline view regardless of the user's
@@ -382,6 +395,29 @@
     loadError = nextErr;
 
     if (next?.kind === "text") {
+      // Skip the rebuild when the on-screen editor already renders exactly
+      // this — same file, same content, same view params. A no-op FS-watcher
+      // refresh reassigns selectedFile (a fresh object) and re-runs the load
+      // effect; without this guard mount() would tear down + rebuild the
+      // editor, losing the user's scroll (and needlessly re-deriving .uasset
+      // property views).
+      const guardDark = isDarkMode();
+      const guardLang =
+        langOverride ??
+        (next.derived_label ? "json" : detectLanguage(file.path));
+      if (
+        (mergeView || unifiedView) &&
+        mounted &&
+        mounted.path === file.path &&
+        mounted.old === next.old_content &&
+        mounted.new === next.new_content &&
+        mounted.mode === effectiveViewMode &&
+        mounted.dark === guardDark &&
+        mounted.lang === guardLang
+      ) {
+        diff = next; // refresh the toolbar/badge; editor + scroll untouched
+        return;
+      }
       // mount() prepares highlighting first, then tears down the old editor
       // and constructs the new one — keeping the previous diff on screen until
       // the last moment. `diff` is set now so the toolbar (lang dropdown)
@@ -501,6 +537,17 @@
         });
       }
     }
+
+    // Record exactly what this editor renders so a no-op refresh can skip the
+    // rebuild (see the guard in load()).
+    mounted = {
+      path: file.path,
+      old: oldText,
+      new: newText,
+      mode: effectiveViewMode,
+      dark,
+      lang: effectiveLang,
+    };
   }
 
   function teardown() {
@@ -509,6 +556,7 @@
     mergeView = null;
     unifiedView?.destroy();
     unifiedView = null;
+    mounted = null;
     if (host) host.innerHTML = "";
   }
 
