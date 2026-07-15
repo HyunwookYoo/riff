@@ -117,6 +117,24 @@
     <BranchChip />
   {/if}
   <SyncControls />
+  <button
+    type="button"
+    class="bar-btn"
+    title="Command palette (Ctrl+Shift+P)"
+    aria-label="Open command palette"
+    onclick={() => (appState.paletteOpen = true)}
+  >
+    Commands
+  </button>
+  <button
+    type="button"
+    class="bar-btn"
+    title="Keyboard shortcuts (?)"
+    aria-label="Show keyboard shortcuts"
+    onclick={() => (appState.shortcutsOpen = true)}
+  >
+    ?
+  </button>
   <span class="mode-hint">Ctrl+Shift+W to cycle</span>
 </div>
 
@@ -294,6 +312,10 @@
   }
   button {
     cursor: pointer;
+  }
+  .bar-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
   }
   button:disabled {
     cursor: default;
