@@ -186,8 +186,12 @@ untouched:
   changes in the working tree. Backed by a new helper in `sourceControl.ts`:
   ```ts
   export async function undoLastCommit(): Promise<void> {
-    if (!confirm("Undo the last commit? Its changes stay in your working tree."))
-      return;
+    const ok = await confirmAction(
+      "Undo the last commit? Its changes stay in your working tree.",
+      { title: "Undo last commit" },
+    );
+    if (!ok) return;
+    appState.error = null;
     try {
       await reset(changesRepoPath(), "HEAD~1", "soft");
       invalidateGraph();
@@ -195,9 +199,11 @@ untouched:
     finally { await loadStatus(); }
   }
   ```
-  Uses native `confirm()` (matches the existing hard-reset confirm in
-  `CommitList.svelte:279`). `reset(path, "HEAD~1", "soft")` — `target` is a rev
-  string, so `HEAD~1` is valid.
+  Uses **`confirmAction`** from `$lib/dialogs` (already imported in
+  `sourceControl.ts`), **not** native `confirm()` — `dialogs.ts` documents that
+  `window.confirm()` returns immediately in the WebView2 shell, silently
+  cancelling the action. `reset(path, "HEAD~1", "soft")` — `target` is a rev
+  string, so `HEAD~1` is valid. `reset` must be added to the `./git` import.
 - **"Keyboard shortcuts"** (category e.g. `Help`) — sets
   `appState.shortcutsOpen = true`.
 
