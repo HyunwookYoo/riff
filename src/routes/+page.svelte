@@ -17,6 +17,7 @@
   import CheckoutDialog from "$lib/ui/CheckoutDialog.svelte";
   import OpRecoveryDialog from "$lib/ui/OpRecoveryDialog.svelte";
   import CommandPalette from "$lib/ui/CommandPalette.svelte";
+  import ShortcutsOverlay from "$lib/ui/ShortcutsOverlay.svelte";
   import Timelapse from "$lib/ui/Timelapse.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
@@ -209,7 +210,8 @@
 
     // Modal surfaces own the keyboard — suppress every other global shortcut
     // while one is open (each handles its own Esc).
-    if (appState.checkoutPrompt || appState.paletteOpen) return;
+    if (appState.checkoutPrompt || appState.paletteOpen || appState.shortcutsOpen)
+      return;
 
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName?.toLowerCase();
@@ -266,6 +268,14 @@
 
     // Always yield to form controls so typing in path/branch inputs is untouched.
     if (tag === "input" || tag === "textarea" || tag === "select") return;
+
+    // `?` (Shift+/) opens the keyboard cheat-sheet. Placed after the
+    // form-control yield so typing `?` in an input is untouched.
+    if (e.key === "?") {
+      appState.shortcutsOpen = true;
+      e.preventDefault();
+      return;
+    }
 
     const isCtrlF = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f";
     if (isCtrlF) {
@@ -428,6 +438,7 @@
   <CheckoutDialog />
   <OpRecoveryDialog />
   <CommandPalette />
+  <ShortcutsOverlay />
   <Timelapse />
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />

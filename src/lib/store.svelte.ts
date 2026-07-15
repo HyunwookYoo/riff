@@ -169,6 +169,7 @@ class AppState {
   bcDiffRange = $state<{ start: string; target: string } | null>(null);
   // Command palette (Ctrl+Shift+P) visibility. Session-only.
   paletteOpen = $state(false);
+  shortcutsOpen = $state(false);
   // Graph "new branch here": remembers the "check out after creating" checkbox
   // across creates within the session (sticky). Default off. Session-only.
   graphCheckoutAfterCreate = $state(false);
