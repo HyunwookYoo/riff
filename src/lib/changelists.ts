@@ -238,23 +238,55 @@ export function deleteChangelist(id: string): void {
 
 /// Commit one changelist with the current commit-box message. A whole-file
 /// changelist uses the atomic path-scoped commit; a hunk-split one stages
-/// exactly its content (whole files + selected hunks) into a clean index, then
-/// commits the index, leaving the unselected hunks uncommitted.
+/// exactly its content into a clean index, then commits it. When
+/// `appState.commitAmend` is set, the changelist's content is folded into HEAD
+/// and its message replaced (an empty changelist is a message-only reword);
+/// other changelists are left untouched.
 export async function commitChangelist(id: string): Promise<void> {
   const subject = appState.commitSubject.trim();
+  const amend = appState.commitAmend;
   if (!subject || appState.committing) return;
   const files = filesInChangelist(id);
-  if (files.length === 0) return;
+  if (files.length === 0 && !amend) return;
   const repo = changesRepoPath();
   const coauthors = appState.commitCoauthors
     .map((c) => c.trim())
     .filter(Boolean);
   const whole = files.filter((f) => !f.partial).map((f) => f.path);
   const partial = files.filter((f) => f.partial);
+
+  // Stage exactly this changelist (whole files + selected hunks) into a clean
+  // index. Shared by the amend and hunk-split paths.
+  async function stageIntoIndex(): Promise<void> {
+    await unstage(repo, null);
+    if (whole.length > 0) await stage(repo, whole);
+    for (const f of partial) {
+      const sub = fileHunksInList(f.path, id);
+      if (!sub || sub.ids.length === 0) continue;
+      // Resolve hunk ids → current indices against the (index==HEAD) diff.
+      const cur = await fileHunks(repo, f.path, false);
+      const idx: number[] = [];
+      cur.forEach((h, i) => {
+        if (sub.ids.includes(h.id)) idx.push(i);
+      });
+      if (idx.length > 0) await applyHunks(repo, f.path, false, idx);
+    }
+  }
+
   appState.committing = true;
   appState.error = null;
   try {
-    if (partial.length === 0) {
+    if (amend) {
+      await stageIntoIndex();
+      await commit(
+        repo,
+        subject,
+        appState.commitBody,
+        true,
+        appState.commitSignoff,
+        coauthors,
+      );
+    } else if (partial.length === 0) {
       await commitPaths(
         repo,
         whole,
@@ -264,20 +296,7 @@ export async function commitChangelist(id: string): Promise<void> {
         coauthors,
       );
     } else {
-      // Clean index, then stage exactly this changelist's content.
-      await unstage(repo, null);
-      if (whole.length > 0) await stage(repo, whole);
-      for (const f of partial) {
-        const sub = fileHunksInList(f.path, id);
-        if (!sub || sub.ids.length === 0) continue;
-        // Resolve hunk ids → current indices against the (index==HEAD) diff.
-        const cur = await fileHunks(repo, f.path, false);
-        const idx: number[] = [];
-        cur.forEach((h, i) => {
-          if (sub.ids.includes(h.id)) idx.push(i);
-        });
-        if (idx.length > 0) await applyHunks(repo, f.path, false, idx);
-      }
+      await stageIntoIndex();
       await commit(
         repo,
         subject,
@@ -290,6 +309,7 @@ export async function commitChangelist(id: string): Promise<void> {
     appState.commitSubject = "";
     appState.commitBody = "";
     appState.commitCoauthors = [];
+    appState.commitAmend = false;
     invalidateGraph();
   } catch (e) {
     appState.error = String(e);

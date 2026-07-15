@@ -1,6 +1,7 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import { commitChangelist, filesInChangelist } from "$lib/changelists";
+  import { loadAmendMessage } from "$lib/sourceControl";
 
   const branch = $derived(appState.repoStatus?.branch ?? null);
   const subjectLen = $derived(appState.commitSubject.trim().length);
@@ -14,11 +15,26 @@
     filesInChangelist(appState.activeChangelistId).length,
   );
   const canCommit = $derived(
-    subjectLen > 0 && activeCount > 0 && !appState.committing,
+    subjectLen > 0 &&
+      (activeCount > 0 || appState.commitAmend) &&
+      !appState.committing,
   );
 
   function commit() {
     void commitChangelist(appState.activeChangelistId);
+  }
+
+  // Toggling Amend ON pre-fills HEAD's message; OFF clears the box (that text
+  // belonged to the amend, not a new commit).
+  function onToggleAmend(e: Event) {
+    const on = (e.currentTarget as HTMLInputElement).checked;
+    appState.commitAmend = on;
+    if (on) {
+      void loadAmendMessage();
+    } else {
+      appState.commitSubject = "";
+      appState.commitBody = "";
+    }
   }
 
   function addCoauthor() {
@@ -80,6 +96,14 @@
       <input type="checkbox" bind:checked={appState.commitSignoff} />
       <span>Sign-off</span>
     </label>
+    <label title="Replace the last commit with this content and message (--amend)">
+      <input
+        type="checkbox"
+        checked={appState.commitAmend}
+        onchange={onToggleAmend}
+      />
+      <span>Amend</span>
+    </label>
     <button type="button" class="add-co" onclick={addCoauthor}>
       + Co-author
     </button>
@@ -93,7 +117,9 @@
     title="Ctrl+Enter"
   >
     {#if appState.committing}
-      Committing…
+      {appState.commitAmend ? "Amending…" : "Committing…"}
+    {:else if appState.commitAmend}
+      Amend last commit
     {:else}
       Commit “{activeCl?.name ?? "Default"}” ({activeCount}){branch
         ? ` to ${branch}`
