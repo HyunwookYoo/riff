@@ -8,6 +8,7 @@ import {
   doStashSave,
   doStashApply,
   doStashDrop,
+  undoLastCommit,
 } from "./sourceControl";
 import { enterGraphView, restoreCompareContext } from "./commitHistory";
 import { requestCheckout } from "./checkout";
@@ -102,6 +103,24 @@ export function buildCommands(): Command[] {
       { id: `stash.drop.${s.index}`, title: `Stash: drop — ${s.message}`, category: "Stash", run: () => void doStashDrop(s.index) },
     );
   }
+
+  // Commit history / help
+  cmds.push(
+    {
+      id: "commit.undo",
+      title: "Undo last commit",
+      category: "Commit",
+      run: () => void undoLastCommit(),
+    },
+    {
+      id: "help.shortcuts",
+      title: "Keyboard shortcuts",
+      category: "Help",
+      run: () => {
+        appState.shortcutsOpen = true;
+      },
+    },
+  );
 
   // Checkout — one entry per local/remote branch in the active repo
   const repoPath = changesRepoPath();

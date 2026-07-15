@@ -12,6 +12,7 @@ import {
   pendingOp,
   pull as pullCmd,
   push as pushCmd,
+  reset,
   stage as stageCmd,
   stashApply,
   stashDrop,
@@ -578,6 +579,27 @@ export async function loadAmendMessage(): Promise<void> {
     }
   } catch {
     // Unborn branch / no HEAD — leave the box as-is.
+  }
+}
+
+/// Undo the last commit, keeping its changes in the working tree
+/// (`git reset --soft HEAD~1`). Confirms first via the Tauri dialog (native
+/// confirm silently cancels in WebView2). HEAD moves, so the graph cache is
+/// invalidated and status reloaded.
+export async function undoLastCommit(): Promise<void> {
+  const ok = await confirmAction(
+    "Undo the last commit? Its changes stay in your working tree.",
+    { title: "Undo last commit" },
+  );
+  if (!ok) return;
+  appState.error = null;
+  try {
+    await reset(changesRepoPath(), "HEAD~1", "soft");
+    invalidateGraph();
+  } catch (e) {
+    appState.error = String(e);
+  } finally {
+    await loadStatus();
   }
 }
 
