@@ -13,6 +13,7 @@ import type {
   FileViewMode,
   Hunk,
   PersistedState,
+  ReflogEntry,
   RepoStatus,
   Stash,
   SubmoduleInfo,
@@ -209,6 +210,11 @@ export function reset(
   mode: "soft" | "mixed" | "hard",
 ): Promise<void> {
   return invoke("reset", { path, target, mode });
+}
+
+/** The 200 most recent HEAD reflog entries, newest first (`git reflog show`). */
+export function reflog(path: string): Promise<ReflogEntry[]> {
+  return invoke("reflog", { path });
 }
 
 /** Apply a commit onto the current branch (`git cherry-pick`). */

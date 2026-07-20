@@ -112,6 +112,19 @@ pub struct Stash {
     pub message: String,
 }
 
+/// One entry from HEAD's reflog. `selector` is the `HEAD@{N}` form; `subject`
+/// is git's reflog message (e.g. `commit: fix login`, `reset: moving to
+/// HEAD~3`); `time` is the committer date in UNIX seconds. The reflog is the
+/// only record of commits no ref points at any more, so these entries can
+/// reference commits the graph cannot show.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReflogEntry {
+    pub sha: String,
+    pub selector: String,
+    pub subject: String,
+    pub time: i64,
+}
+
 /// One hunk of a file's unified diff, for the Changes screen's per-hunk
 /// stage/unstage + changelist-assignment controls. `header` is the
 /// `@@ -a,b +c,d @@` line (with any section heading); `added`/`removed` count
@@ -426,6 +439,10 @@ pub trait GitLayer {
     /// of "soft" | "mixed" | "hard". Hard discards working-tree changes — the
     /// caller must confirm first.
     fn reset(&self, path: &Path, target: &str, mode: &str) -> Result<(), GitError>;
+    /// The most recent HEAD reflog entries (`git reflog show`), newest first.
+    /// Read-only. Feeds the recovery panel, which resets HEAD back to one of
+    /// them — including commits that are no longer reachable from any ref.
+    fn reflog(&self, path: &Path) -> Result<Vec<ReflogEntry>, GitError>;
     /// Apply `target`'s changes onto the current branch (`git cherry-pick`).
     fn cherry_pick(&self, path: &Path, target: &str) -> Result<(), GitError>;
     /// Create a commit that undoes `target` (`git revert --no-edit`).

@@ -7,7 +7,8 @@ use std::path::Path;
 
 use git::{
     Blame, Branch, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions, DiffMode,
-    FileDiff, FileStatus, GitCli, GitError, GitLayer, Hunk, RepoStatus, Stash, SubmoduleInfo,
+    FileDiff, FileStatus, GitCli, GitError, GitLayer, Hunk, ReflogEntry, RepoStatus, Stash,
+    SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
@@ -415,6 +416,14 @@ async fn reset(
 }
 
 #[tauri::command]
+async fn reflog(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+) -> Result<Vec<ReflogEntry>, GitError> {
+    state.reflog(Path::new(&path))
+}
+
+#[tauri::command]
 async fn cherry_pick(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -792,6 +801,7 @@ pub fn run() {
             delete_tag,
             push_tag,
             reset,
+            reflog,
             cherry_pick,
             revert,
             rebase,

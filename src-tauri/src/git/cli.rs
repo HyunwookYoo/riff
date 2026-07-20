@@ -13,8 +13,8 @@ use super::diff;
 use super::uasset;
 use super::{
     Branch, BranchKind, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions,
-    DiffMode, FileDiff, FileStatus, GitError, GitLayer, Hunk, RepoStatus, Stash, StatusEntry,
-    SubmoduleInfo,
+    DiffMode, FileDiff, FileStatus, GitError, GitLayer, Hunk, ReflogEntry, RepoStatus, Stash,
+    StatusEntry, SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -648,6 +648,31 @@ fn parse_stash_list(text: &str) -> Vec<Stash> {
                 .parse::<u32>()
                 .ok()?;
             Some(Stash { index, message })
+        })
+        .collect()
+}
+
+/// Parse `git reflog show --format=%H%x1f%gD%x1f%gs%x1f%ct` output: one entry
+/// per line — full SHA, `HEAD@{N}` selector, reflog subject, and committer
+/// UNIX time, separated by \x1f. Lines without a SHA are skipped so a trailing
+/// newline cannot yield a bogus entry.
+fn parse_reflog(text: &str) -> Vec<ReflogEntry> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(4, '\x1f');
+            let sha = parts.next()?;
+            if sha.is_empty() {
+                return None;
+            }
+            let selector = parts.next()?.to_string();
+            let subject = parts.next().unwrap_or("").to_string();
+            let time = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
+            Some(ReflogEntry {
+                sha: sha.to_string(),
+                selector,
+                subject,
+                time,
+            })
         })
         .collect()
 }
@@ -1865,6 +1890,23 @@ impl GitLayer for GitCli {
         self.run(path, &["reset", flag, target])?;
         self.drop_session();
         Ok(())
+    }
+
+    fn reflog(&self, path: &Path) -> Result<Vec<ReflogEntry>, GitError> {
+        // Read-only: no write_lock and no drop_session (mirrors `stash_list`).
+        // Bounded to the 200 most recent moves — this is a recovery list, not
+        // an audit log.
+        let out = self.run(
+            path,
+            &[
+                "reflog",
+                "show",
+                "--format=%H%x1f%gD%x1f%gs%x1f%ct",
+                "-n",
+                "200",
+            ],
+        )?;
+        Ok(parse_reflog(&String::from_utf8_lossy(&out)))
     }
 
     fn cherry_pick(&self, path: &Path, target: &str) -> Result<(), GitError> {
@@ -3091,6 +3133,22 @@ z\n";
         assert_eq!((s[0].index, s[0].message.as_str()), (0, "WIP on main: a1b2 fix"));
         assert_eq!((s[1].index, s[1].message.as_str()), (1, "On dev: wip"));
         assert!(parse_stash_list("").is_empty());
+    }
+
+    #[test]
+    fn parse_reflog_basic() {
+        let input = "a1b2c3d\u{1f}HEAD@{0}\u{1f}reset: moving to HEAD~3\u{1f}1752624000\n\
+                     f6a1b2c\u{1f}HEAD@{1}\u{1f}commit: fix login\u{1f}1752623400\n";
+        let r = parse_reflog(input);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].sha, "a1b2c3d");
+        assert_eq!(r[0].selector, "HEAD@{0}");
+        assert_eq!(r[0].subject, "reset: moving to HEAD~3");
+        assert_eq!(r[0].time, 1752624000);
+        assert_eq!(r[1].sha, "f6a1b2c");
+        assert_eq!(r[1].subject, "commit: fix login");
+        // A trailing/blank line must not produce a bogus entry.
+        assert!(parse_reflog("").is_empty());
     }
 
     #[test]
