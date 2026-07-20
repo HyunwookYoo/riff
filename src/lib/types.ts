@@ -200,8 +200,9 @@ export interface Stash {
 
 /// One HEAD reflog entry. Mirrors Rust `ReflogEntry`. `selector` is the
 /// `HEAD@{N}` form; `subject` is git's reflog message (e.g. `commit: …`,
-/// `reset: moving to …`); `time` is the committer date in UNIX seconds.
-/// The short SHA is derived in the UI via `sha.slice(0, 7)`.
+/// `reset: moving to …`); `time` is when the reflog entry was written — i.e.
+/// when HEAD actually moved — in UNIX seconds, deliberately NOT the commit's
+/// own date. The short SHA is derived in the UI via `sha.slice(0, 7)`.
 export interface ReflogEntry {
   sha: string;
   selector: string;

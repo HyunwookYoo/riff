@@ -177,8 +177,24 @@
     await run(deleteTag(repoPath, b.name));
   }
 
-  function doPushTag(b: Branch) {
-    void run(pushTag(repoPath, b.name));
+  // Push is a network op, so it shows progress and keeps its own error rather
+  // than going through the local-only `run` helper.
+  async function doPushTag(b: Branch) {
+    if (busy) return;
+    busy = true;
+    appState.beginGitOp("Pushing tag…");
+    appState.error = null;
+    let failure: string | null = null;
+    try {
+      await pushTag(repoPath, b.name);
+    } catch (e) {
+      failure = String(e);
+    } finally {
+      await load();
+      if (failure) appState.error = failure;
+      appState.endGitOp();
+      busy = false;
+    }
   }
 
   // ── Stash message entry ─────────────────────────────────────────────────
@@ -552,6 +568,7 @@
             bind:this={stashInputEl}
             bind:value={stashMsg}
             placeholder="Stash message (optional)"
+            aria-label="Stash message"
             onkeydown={(e) => e.key === "Escape" && (stashEditing = false)}
           />
         </form>

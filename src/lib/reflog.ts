@@ -22,22 +22,30 @@ export async function loadReflog(): Promise<ReflogEntry[]> {
 }
 
 /// Restore HEAD to `sha` with a hard reset. Destructive — uncommitted changes
-/// are lost — so it always confirms first. Returns true when the user
-/// confirmed (i.e. the reset was attempted), false when they cancelled.
+/// are lost — so it always confirms first. Returns true only when the reset
+/// actually SUCCEEDED, so the caller closes the panel on success and leaves it
+/// open (with the error visible) on failure.
 export async function resetToReflog(sha: string): Promise<boolean> {
   const ok = await confirmAction(
     "Reset to this point? Uncommitted changes will be lost.",
     { title: "Reset to reflog entry" },
   );
   if (!ok) return false;
+  appState.beginGitOp("Restoring…");
   appState.error = null;
+  let failure: string | null = null;
   try {
     await reset(changesRepoPath(), sha, "hard");
     invalidateGraph();
   } catch (e) {
-    appState.error = String(e);
+    failure = String(e);
   } finally {
+    // Keep the failure message: loadStatus() clears appState.error, so without
+    // this a rejected reset would vanish and read as a silent no-op — on the
+    // one path in this feature that can destroy work.
     await loadStatus();
+    if (failure) appState.error = failure;
+    appState.endGitOp();
   }
-  return true;
+  return failure === null;
 }

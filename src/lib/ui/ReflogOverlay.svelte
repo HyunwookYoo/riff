@@ -267,6 +267,9 @@
   .rl-row:hover .rl-branch {
     opacity: 1;
   }
+  .rl-branch:focus-visible {
+    opacity: 1;
+  }
   .rl-branch:hover {
     border-color: var(--accent);
     color: var(--accent);
