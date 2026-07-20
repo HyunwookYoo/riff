@@ -170,6 +170,8 @@ class AppState {
   // Command palette (Ctrl+Shift+P) visibility. Session-only.
   paletteOpen = $state(false);
   shortcutsOpen = $state(false);
+  // Reflog recovery panel visibility. Session-only.
+  reflogOpen = $state(false);
   // Graph "new branch here": remembers the "check out after creating" checkbox
   // across creates within the session (sticky). Default off. Session-only.
   graphCheckoutAfterCreate = $state(false);

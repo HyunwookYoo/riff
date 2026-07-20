@@ -113,6 +113,14 @@ export function buildCommands(): Command[] {
       run: () => void undoLastCommit(),
     },
     {
+      id: "reflog.open",
+      title: "Reflog / Undo history",
+      category: "Commit",
+      run: () => {
+        appState.reflogOpen = true;
+      },
+    },
+    {
       id: "help.shortcuts",
       title: "Keyboard shortcuts",
       category: "Help",

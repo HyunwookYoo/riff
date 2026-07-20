@@ -43,7 +43,10 @@ export const SHORTCUTS: ShortcutGroup[] = [
   },
   {
     title: "Commit",
-    items: [{ keys: "Ctrl+Enter", desc: "Commit" }],
+    items: [
+      { keys: "Ctrl+Enter", desc: "Commit" },
+      { keys: "Ctrl+Shift+P", desc: "Reflog / Undo history (via palette)" },
+    ],
   },
   {
     title: "Mouse",

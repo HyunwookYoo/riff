@@ -18,6 +18,7 @@
   import OpRecoveryDialog from "$lib/ui/OpRecoveryDialog.svelte";
   import CommandPalette from "$lib/ui/CommandPalette.svelte";
   import ShortcutsOverlay from "$lib/ui/ShortcutsOverlay.svelte";
+  import ReflogOverlay from "$lib/ui/ReflogOverlay.svelte";
   import Timelapse from "$lib/ui/Timelapse.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
@@ -210,7 +211,12 @@
 
     // Modal surfaces own the keyboard — suppress every other global shortcut
     // while one is open (each handles its own Esc).
-    if (appState.checkoutPrompt || appState.paletteOpen || appState.shortcutsOpen)
+    if (
+      appState.checkoutPrompt ||
+      appState.paletteOpen ||
+      appState.shortcutsOpen ||
+      appState.reflogOpen
+    )
       return;
 
     const t = e.target as HTMLElement | null;
@@ -439,6 +445,7 @@
   <OpRecoveryDialog />
   <CommandPalette />
   <ShortcutsOverlay />
+  <ReflogOverlay />
   <Timelapse />
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />
