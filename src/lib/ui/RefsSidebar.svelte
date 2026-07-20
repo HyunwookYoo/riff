@@ -167,8 +167,8 @@
     }
   }
 
-  // Tags get Delete + Push; both reuse `run` for the busy guard, error
-  // surfacing, and the ref re-list that follows.
+  // Deleting a tag is a local op, so it reuses `run` for the busy guard, error
+  // surfacing, and the ref re-list that follows. (Push does not — see below.)
   async function doDeleteTag(b: Branch) {
     const ok = await confirmAction(`Delete tag '${b.name}'?`, {
       title: "Delete tag",
