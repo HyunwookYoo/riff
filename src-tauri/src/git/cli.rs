@@ -1837,6 +1837,23 @@ impl GitLayer for GitCli {
         Ok(())
     }
 
+    fn delete_tag(&self, path: &Path, name: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
+        validate_ref(name)?;
+        self.run(path, &["tag", "-d", name])?;
+        Ok(())
+    }
+
+    fn push_tag(&self, path: &Path, name: &str) -> Result<(), GitError> {
+        let _w = self.write_lock.lock().unwrap();
+        validate_ref(name)?;
+        // Explicit refspec: `origin <name>` alone is ambiguous when a branch
+        // shares the tag's name. `origin` matches the remote `push` hardcodes.
+        let refspec = format!("refs/tags/{name}");
+        self.run_network(path, &["push", "origin", &refspec])?;
+        Ok(())
+    }
+
     fn reset(&self, path: &Path, target: &str, mode: &str) -> Result<(), GitError> {
         let _w = self.write_lock.lock().unwrap();
         validate_ref(target)?;

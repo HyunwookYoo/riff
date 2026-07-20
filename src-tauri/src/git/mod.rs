@@ -416,6 +416,12 @@ pub trait GitLayer {
     fn set_upstream(&self, path: &Path, branch: &str, upstream: &str) -> Result<(), GitError>;
     /// Create a lightweight tag `name` at `target` (`git tag`).
     fn create_tag(&self, path: &Path, name: &str, target: &str) -> Result<(), GitError>;
+    /// Delete the local tag `name` (`git tag -d`). Does not touch any remote.
+    fn delete_tag(&self, path: &Path, name: &str) -> Result<(), GitError>;
+    /// Publish tag `name` to `origin` (`git push origin refs/tags/<name>`).
+    /// The explicit `refs/tags/` refspec stops a same-named branch from
+    /// winning the ambiguity.
+    fn push_tag(&self, path: &Path, name: &str) -> Result<(), GitError>;
     /// Move the current branch to `target` (`git reset --<mode>`); `mode` is one
     /// of "soft" | "mixed" | "hard". Hard discards working-tree changes — the
     /// caller must confirm first.

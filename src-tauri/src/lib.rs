@@ -387,6 +387,24 @@ async fn create_tag(
 }
 
 #[tauri::command]
+async fn delete_tag(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    name: String,
+) -> Result<(), GitError> {
+    state.delete_tag(Path::new(&path), &name)
+}
+
+#[tauri::command]
+async fn push_tag(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    name: String,
+) -> Result<(), GitError> {
+    state.push_tag(Path::new(&path), &name)
+}
+
+#[tauri::command]
 async fn reset(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -771,6 +789,8 @@ pub fn run() {
             delete_branch,
             set_upstream,
             create_tag,
+            delete_tag,
+            push_tag,
             reset,
             cherry_pick,
             revert,

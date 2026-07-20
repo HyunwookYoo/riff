@@ -192,6 +192,16 @@ export function createTag(
   return invoke("create_tag", { path, name, target });
 }
 
+/** Delete a local tag (`git tag -d`). Does not affect the remote. */
+export function deleteTag(path: string, name: string): Promise<void> {
+  return invoke("delete_tag", { path, name });
+}
+
+/** Publish a tag to `origin` (`git push origin refs/tags/<name>`). */
+export function pushTag(path: string, name: string): Promise<void> {
+  return invoke("push_tag", { path, name });
+}
+
 /** Move the current branch to `target`. `mode`: "soft" | "mixed" | "hard". */
 export function reset(
   path: string,
