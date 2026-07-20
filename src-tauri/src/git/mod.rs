@@ -114,9 +114,11 @@ pub struct Stash {
 
 /// One entry from HEAD's reflog. `selector` is the `HEAD@{N}` form; `subject`
 /// is git's reflog message (e.g. `commit: fix login`, `reset: moving to
-/// HEAD~3`); `time` is the committer date in UNIX seconds. The reflog is the
-/// only record of commits no ref points at any more, so these entries can
-/// reference commits the graph cannot show.
+/// HEAD~3`); `time` is when the reflog entry was written — i.e. when HEAD
+/// actually moved — in UNIX seconds. That is deliberately NOT the commit's own
+/// date: a `checkout:` onto an old commit happens now but points at something
+/// authored long ago. The reflog is the only record of commits no ref points at
+/// any more, so these entries can reference commits the graph cannot show.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReflogEntry {
     pub sha: String,
