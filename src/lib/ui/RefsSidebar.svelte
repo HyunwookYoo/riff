@@ -181,6 +181,30 @@
     void run(pushTag(repoPath, b.name));
   }
 
+  // ── Stash message entry ─────────────────────────────────────────────────
+  // The ＋ opens an inline field so a stash can carry a name. Submitting it
+  // empty still saves an unnamed stash — the old one-click behavior.
+  let stashEditing = $state(false);
+  let stashMsg = $state("");
+  let stashInputEl = $state<HTMLInputElement | null>(null);
+
+  $effect(() => {
+    if (stashEditing) stashInputEl?.focus();
+  });
+
+  function openStashEditor() {
+    stashMsg = "";
+    stashEditing = true;
+  }
+
+  function submitStash(e: Event) {
+    e.preventDefault();
+    const m = stashMsg.trim();
+    stashEditing = false;
+    stashMsg = "";
+    void doStashSave(m || undefined);
+  }
+
   // ── Tree (collapse by "/") ──────────────────────────────────────────────
   type Row =
     | { kind: "dir"; name: string; path: string; depth: number }
@@ -517,11 +541,21 @@
           class="new"
           title="Stash working-tree changes"
           aria-label="Stash changes"
-          onclick={() => void doStashSave()}
+          onclick={openStashEditor}
         >
           ＋
         </button>
       </div>
+      {#if stashEditing}
+        <form class="stash-editor" onsubmit={submitStash}>
+          <input
+            bind:this={stashInputEl}
+            bind:value={stashMsg}
+            placeholder="Stash message (optional)"
+            onkeydown={(e) => e.key === "Escape" && (stashEditing = false)}
+          />
+        </form>
+      {/if}
       {#each appState.stashes as s (s.index)}
         <div class="stash">
           <span class="stash-msg" title={s.message}>{s.message}</span>
@@ -875,6 +909,19 @@
     padding: 6px 12px;
     color: var(--muted);
     font-size: 0.8em;
+  }
+  .stash-editor {
+    padding: 4px 8px 6px;
+  }
+  .stash-editor input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 3px 6px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: var(--fg);
+    font-size: 0.82em;
   }
   .stash {
     display: flex;
