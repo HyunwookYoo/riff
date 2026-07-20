@@ -3,7 +3,9 @@
   import {
     createBranch,
     deleteBranch,
+    deleteTag,
     listRefs,
+    pushTag,
     renameBranch,
     setUpstream,
     status,
@@ -163,6 +165,20 @@
       await load();
       void loadCurrentBranch();
     }
+  }
+
+  // Tags get Delete + Push; both reuse `run` for the busy guard, error
+  // surfacing, and the ref re-list that follows.
+  async function doDeleteTag(b: Branch) {
+    const ok = await confirmAction(`Delete tag '${b.name}'?`, {
+      title: "Delete tag",
+    });
+    if (!ok) return;
+    await run(deleteTag(repoPath, b.name));
+  }
+
+  function doPushTag(b: Branch) {
+    void run(pushTag(repoPath, b.name));
   }
 
   // ── Tree (collapse by "/") ──────────────────────────────────────────────
@@ -593,6 +609,19 @@
           Delete
         </button>
       {/if}
+    {/if}
+    {#if ref.kind === "tag"}
+      <button type="button" role="menuitem" onclick={() => doPushTag(ref)}>
+        Push
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        class="danger"
+        onclick={() => void doDeleteTag(ref)}
+      >
+        Delete
+      </button>
     {/if}
   </div>
 {/if}
