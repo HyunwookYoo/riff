@@ -652,27 +652,43 @@ fn parse_stash_list(text: &str) -> Vec<Stash> {
         .collect()
 }
 
-/// Parse `git reflog show --format=%H%x1f%gD%x1f%gs%x1f%ct` output: one entry
-/// per line — full SHA, `HEAD@{N}` selector, reflog subject, and committer
-/// UNIX time, separated by \x1f. Lines without a SHA are skipped so a trailing
-/// newline cannot yield a bogus entry.
+/// Parse `git reflog show --date=unix --format=%H%x1f%gd%x1f%gs` output: one
+/// entry per line — full SHA, the date-form selector `HEAD@{<unix>}`, and the
+/// reflog subject, separated by \x1f.
+///
+/// `--date=unix` puts the time the reflog entry was WRITTEN (when HEAD moved)
+/// into the selector. The `HEAD@{N}` index form is synthesized from the row
+/// position, since `git reflog show` walks HEAD's reflog newest-first with
+/// contiguous indices — the two forms are not available from one pass.
+///
+/// A line whose selector carries no parseable time is dropped rather than
+/// admitted with a bogus timestamp. `selector` is display-only (restores target
+/// `sha`), so if a malformed line were ever dropped the synthesized index would
+/// drift from git's own numbering without affecting which commit is restored.
 fn parse_reflog(text: &str) -> Vec<ReflogEntry> {
     text.lines()
         .filter_map(|line| {
-            let mut parts = line.splitn(4, '\x1f');
+            let mut parts = line.splitn(3, '\x1f');
             let sha = parts.next()?;
             if sha.is_empty() {
                 return None;
             }
-            let selector = parts.next()?.to_string();
+            let time = parts
+                .next()?
+                .rsplit_once("@{")?
+                .1
+                .strip_suffix('}')?
+                .parse::<i64>()
+                .ok()?;
             let subject = parts.next().unwrap_or("").to_string();
-            let time = parts.next().unwrap_or("0").parse::<i64>().unwrap_or(0);
-            Some(ReflogEntry {
-                sha: sha.to_string(),
-                selector,
-                subject,
-                time,
-            })
+            Some((sha.to_string(), time, subject))
+        })
+        .enumerate()
+        .map(|(i, (sha, time, subject))| ReflogEntry {
+            sha,
+            selector: format!("HEAD@{{{i}}}"),
+            subject,
+            time,
         })
         .collect()
 }
@@ -1894,14 +1910,18 @@ impl GitLayer for GitCli {
 
     fn reflog(&self, path: &Path) -> Result<Vec<ReflogEntry>, GitError> {
         // Read-only: no write_lock and no drop_session (mirrors `stash_list`).
-        // Bounded to the 200 most recent moves — this is a recovery list, not
-        // an audit log.
+        // `--date=unix` makes %gd render as `HEAD@{<unix>}`, carrying the time
+        // the reflog entry was written — i.e. when HEAD actually moved. The
+        // commit's own %ct would be misleading here: a `checkout:` onto an old
+        // commit renders as that commit's age, not "a minute ago".
+        // Bounded to the 200 most recent moves — a recovery list, not an audit log.
         let out = self.run(
             path,
             &[
                 "reflog",
                 "show",
-                "--format=%H%x1f%gD%x1f%gs%x1f%ct",
+                "--date=unix",
+                "--format=%H%x1f%gd%x1f%gs",
                 "-n",
                 "200",
             ],
@@ -3137,18 +3157,23 @@ z\n";
 
     #[test]
     fn parse_reflog_basic() {
-        let input = "a1b2c3d\u{1f}HEAD@{0}\u{1f}reset: moving to HEAD~3\u{1f}1752624000\n\
-                     f6a1b2c\u{1f}HEAD@{1}\u{1f}commit: fix login\u{1f}1752623400\n";
+        let input = "a1b2c3d\u{1f}HEAD@{1752624000}\u{1f}reset: moving to HEAD~3\n\
+                     f6a1b2c\u{1f}HEAD@{1752623400}\u{1f}commit: fix login\n";
         let r = parse_reflog(input);
         assert_eq!(r.len(), 2);
         assert_eq!(r[0].sha, "a1b2c3d");
+        // The index form is synthesized from row position, not read from git.
         assert_eq!(r[0].selector, "HEAD@{0}");
         assert_eq!(r[0].subject, "reset: moving to HEAD~3");
+        // `time` is the reflog ACTION time carried in the date-form selector.
         assert_eq!(r[0].time, 1752624000);
         assert_eq!(r[1].sha, "f6a1b2c");
+        assert_eq!(r[1].selector, "HEAD@{1}");
         assert_eq!(r[1].subject, "commit: fix login");
-        // A trailing/blank line must not produce a bogus entry.
+        assert_eq!(r[1].time, 1752623400);
         assert!(parse_reflog("").is_empty());
+        // A selector with no parseable time is dropped, not admitted with 0.
+        assert!(parse_reflog("a1b2c3d\u{1f}HEAD@{nope}\u{1f}commit: x\n").is_empty());
     }
 
     #[test]
