@@ -492,10 +492,14 @@ export async function loadStashes(): Promise<void> {
 }
 
 /// Stash the working tree (including untracked) under an optional message.
-export async function doStashSave(message?: string): Promise<void> {
+/// `paths` limits the stash to those files; omit it to stash everything.
+export async function doStashSave(
+  message?: string,
+  paths?: string[],
+): Promise<void> {
   appState.error = null;
   try {
-    await stashSave(changesRepoPath(), message ?? null, true, null);
+    await stashSave(changesRepoPath(), message ?? null, true, paths ?? null);
   } catch (e) {
     appState.error = String(e);
   }

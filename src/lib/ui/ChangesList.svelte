@@ -3,6 +3,7 @@
   import {
     conflictedEntries,
     discardPath,
+    doStashSave,
     entryToChangedFile,
     selectChange,
   } from "$lib/sourceControl";
@@ -130,6 +131,25 @@
   function moveTo(targetId: string) {
     if (moveMenu) moveFileToChangelist(moveMenu.path, targetId);
     moveMenu = null;
+  }
+
+  // Stash a single file: open an inline message field, then stash just that
+  // path. An empty message defaults to the path, so the entry is identifiable.
+  let stashingPath = $state<string | null>(null);
+  let stashMsg = $state("");
+  function openStash() {
+    if (!moveMenu) return;
+    stashingPath = moveMenu.path;
+    stashMsg = "";
+    moveMenu = null;
+  }
+  function submitStash() {
+    const path = stashingPath;
+    stashingPath = null;
+    if (!path) return;
+    const m = stashMsg.trim() || path;
+    stashMsg = "";
+    void doStashSave(m, [path]);
   }
   function currentListOf(path: string): string {
     return (
@@ -262,6 +282,20 @@
 {/snippet}
 
 <div class="cl-root">
+  {#if stashingPath}
+    <form class="cl-stash" onsubmit={(e) => (e.preventDefault(), submitStash())}>
+      <span class="cl-stash-label" title={stashingPath}>Stash {stashingPath}:</span>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        autofocus
+        bind:value={stashMsg}
+        placeholder="message (optional)"
+        aria-label="Stash message"
+        onkeydown={(e) =>
+          e.key === "Escape" && ((stashingPath = null), (stashMsg = ""))}
+      />
+    </form>
+  {/if}
   <div class="cl-toolbar">
     {#if creating}
       <form class="cl-create" onsubmit={(e) => (e.preventDefault(), submitCreate())}>
@@ -399,6 +433,10 @@
         {l.id === cur ? "● " : ""}{l.name}
       </button>
     {/each}
+    <div class="cl-menu-sep"></div>
+    <button type="button" role="menuitem" onclick={openStash}>
+      Stash this file…
+    </button>
   </div>
 {/if}
 
@@ -459,6 +497,39 @@
   .cl-menu button:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+  .cl-menu-sep {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+  }
+  .cl-stash {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cl-stash-label {
+    flex: 0 0 auto;
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8em;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+  .cl-stash input {
+    flex: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 4px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: inherit;
+    font-size: 0.85em;
   }
   .cl-root {
     display: flex;
