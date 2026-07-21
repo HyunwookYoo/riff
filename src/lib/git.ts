@@ -273,13 +273,17 @@ export function stashList(path: string): Promise<Stash[]> {
   return invoke("stash_list", { path });
 }
 
-/** Save the working tree to a new stash. */
+/**
+ * Save the working tree to a new stash. `paths = null` stashes everything;
+ * an array stashes just those pathspecs (`git stash push -- <paths>`).
+ */
 export function stashSave(
   path: string,
   message: string | null,
   includeUntracked: boolean,
+  paths: string[] | null,
 ): Promise<void> {
-  return invoke("stash_save", { path, message, includeUntracked });
+  return invoke("stash_save", { path, message, includeUntracked, paths });
 }
 
 /** Apply `stash@{index}`; `pop` removes it after applying. */

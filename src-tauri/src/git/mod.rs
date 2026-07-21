@@ -485,12 +485,15 @@ pub trait GitLayer {
     /// List the stash entries (`git stash list`).
     fn stash_list(&self, path: &Path) -> Result<Vec<Stash>, GitError>;
     /// Save the working tree to a new stash (`git stash push`). `message` sets a
-    /// custom subject; `include_untracked` also stashes untracked files.
+    /// custom subject; `include_untracked` also stashes untracked files. `paths`
+    /// limits the stash to those pathspecs (`… -- <paths>`); `None` stashes the
+    /// whole working tree (mirrors `stage`).
     fn stash_save(
         &self,
         path: &Path,
         message: Option<&str>,
         include_untracked: bool,
+        paths: Option<&[String]>,
     ) -> Result<(), GitError>;
     /// Apply `stash@{index}`; `pop` removes it after applying.
     fn stash_apply(&self, path: &Path, index: u32, pop: bool) -> Result<(), GitError>;

@@ -483,8 +483,14 @@ async fn stash_save(
     path: String,
     message: Option<String>,
     include_untracked: bool,
+    paths: Option<Vec<String>>,
 ) -> Result<(), GitError> {
-    state.stash_save(Path::new(&path), message.as_deref(), include_untracked)
+    state.stash_save(
+        Path::new(&path),
+        message.as_deref(),
+        include_untracked,
+        paths.as_deref(),
+    )
 }
 
 #[tauri::command]

@@ -495,7 +495,7 @@ export async function loadStashes(): Promise<void> {
 export async function doStashSave(message?: string): Promise<void> {
   appState.error = null;
   try {
-    await stashSave(changesRepoPath(), message ?? null, true);
+    await stashSave(changesRepoPath(), message ?? null, true, null);
   } catch (e) {
     appState.error = String(e);
   }

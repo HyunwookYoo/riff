@@ -2067,6 +2067,7 @@ impl GitLayer for GitCli {
         path: &Path,
         message: Option<&str>,
         include_untracked: bool,
+        paths: Option<&[String]>,
     ) -> Result<(), GitError> {
         let _w = self.write_lock.lock().unwrap();
         let mut args = vec!["stash", "push"];
@@ -2078,6 +2079,16 @@ impl GitLayer for GitCli {
                 args.push("-m");
                 args.push(m);
             }
+        }
+        // A pathspec limits the stash to the named files (mirrors `stage`).
+        // `None` keeps the whole-tree behavior; `--` guards paths that look
+        // like options, and validate_path rejects the obviously-malformed.
+        if let Some(ps) = paths {
+            for p in ps {
+                validate_path(p)?;
+            }
+            args.push("--");
+            args.extend(ps.iter().map(String::as_str));
         }
         self.run(path, &args)?;
         self.drop_session();
