@@ -6,8 +6,6 @@ import {
   doPull,
   doPush,
   doStashSave,
-  doStashApply,
-  doStashDrop,
   undoLastCommit,
 } from "./sourceControl";
 import { enterGraphView, restoreCompareContext } from "./commitHistory";
@@ -95,14 +93,11 @@ export function buildCommands(): Command[] {
     { id: "sync.push", title: "Push", category: "Sync", run: () => void doPush(false) },
   );
 
-  // Stash — save plus pop/drop for each existing stash
-  cmds.push({ id: "stash.save", title: "Stash: save changes", category: "Stash", run: () => void doStashSave() });
-  for (const s of appState.stashes) {
-    cmds.push(
-      { id: `stash.pop.${s.index}`, title: `Stash: pop — ${s.message}`, category: "Stash", run: () => void doStashApply(s.index, true) },
-      { id: `stash.drop.${s.index}`, title: `Stash: drop — ${s.message}`, category: "Stash", run: () => void doStashDrop(s.index) },
-    );
-  }
+  // Stash — quick whole-tree save, plus the panel that lists/manages stashes.
+  cmds.push(
+    { id: "stash.save", title: "Stash: save changes", category: "Stash", run: () => void doStashSave() },
+    { id: "stash.view", title: "View stashes", category: "Stash", run: () => { appState.stashesOpen = true; } },
+  );
 
   // Commit history / help
   cmds.push(

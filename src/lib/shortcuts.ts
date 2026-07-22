@@ -46,6 +46,7 @@ export const SHORTCUTS: ShortcutGroup[] = [
     items: [
       { keys: "Ctrl+Enter", desc: "Commit" },
       { keys: "Ctrl+Shift+P", desc: "Reflog / Undo history (via palette)" },
+      { keys: "Ctrl+Shift+P", desc: "View stashes (via palette)" },
     ],
   },
   {
