@@ -172,6 +172,8 @@ class AppState {
   shortcutsOpen = $state(false);
   // Reflog recovery panel visibility. Session-only.
   reflogOpen = $state(false);
+  // Stashes panel visibility. Session-only.
+  stashesOpen = $state(false);
   // Graph "new branch here": remembers the "check out after creating" checkbox
   // across creates within the session (sticky). Default off. Session-only.
   graphCheckoutAfterCreate = $state(false);
