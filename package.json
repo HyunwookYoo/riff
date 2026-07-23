@@ -1,6 +1,6 @@
 {
   "name": "riff",
-  "version": "1.1.11",
+  "version": "1.2.0",
   "description": "Lightweight Git client: branch compare, source control, commit graph, and blame",
   "type": "module",
   "scripts": {
