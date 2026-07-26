@@ -1197,6 +1197,26 @@ impl GitLayer for GitCli {
             let old_link = ls_tree_gitlink(path, &old_ref, old_target);
             let new_link = ls_tree_gitlink(path, &new_ref, file_path);
             if old_link.is_some() || new_link.is_some() {
+                // Both SHAs present → try rendering the submodule's own commit
+                // log. Falls through to the SHA text below when the log can't
+                // be computed (submodule not fetched, SHA missing, empty range).
+                if let (Some(old), Some(new)) = (&old_link, &new_link) {
+                    if let Some((added, added_count, removed, removed_count)) =
+                        submodule_commits(&path.join(file_path), old, new)
+                    {
+                        if !added.is_empty() || !removed.is_empty() {
+                            return Ok(FileDiff::Submodule {
+                                name: file_path.to_string(),
+                                old_sha: old.clone(),
+                                new_sha: new.clone(),
+                                added,
+                                removed,
+                                added_count,
+                                removed_count,
+                            });
+                        }
+                    }
+                }
                 let to_text = |s: &Option<String>| {
                     s.as_deref()
                         .map(|sha| format!("Subproject commit {sha}\n"))
@@ -1369,6 +1389,25 @@ impl GitLayer for GitCli {
                 // The parent's worktree gitlink is the submodule's checked-out HEAD.
                 gitlink_sha(&fs_path, "HEAD")
             };
+            // Both SHAs present → try rendering the submodule's own commit log
+            // (see file_diff). Falls through to the SHA text on any failure.
+            if let (Some(old), Some(new)) = (&old_sha, &new_sha) {
+                if let Some((added, added_count, removed, removed_count)) =
+                    submodule_commits(&fs_path, old, new)
+                {
+                    if !added.is_empty() || !removed.is_empty() {
+                        return Ok(FileDiff::Submodule {
+                            name: file_path.to_string(),
+                            old_sha: old.clone(),
+                            new_sha: new.clone(),
+                            added,
+                            removed,
+                            added_count,
+                            removed_count,
+                        });
+                    }
+                }
+            }
             let to_text = |s: &Option<String>| {
                 s.as_deref()
                     .map(|sha| format!("Subproject commit {sha}\n"))
