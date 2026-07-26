@@ -72,6 +72,20 @@ export type FileDiff =
       kind: "too-large";
       old_size: number;
       new_size: number;
+    }
+  | {
+      kind: "submodule";
+      /// Gitlink path; the view shows its basename.
+      name: string;
+      old_sha: string;
+      new_sha: string;
+      /// old..new, newest first, capped to 50.
+      added: SubmoduleCommit[];
+      /// new..old, newest first, capped to 50.
+      removed: SubmoduleCommit[];
+      /// Full counts (>= list length); drive the ▲/▼ header and "+N more".
+      added_count: number;
+      removed_count: number;
     };
 
 export type ViewMode = "side-by-side" | "unified";
@@ -113,6 +127,18 @@ export interface Commit {
   refs: string[];
   /// Message body past the subject; empty when there is none.
   body: string;
+}
+
+/// One commit in a submodule's log between two gitlink SHAs. Mirrors Rust
+/// `git::SubmoduleCommit` — a lean subset of `Commit` for the static list.
+export interface SubmoduleCommit {
+  sha: string;
+  short_sha: string;
+  author: string;
+  /// Author time, unix seconds.
+  time: number;
+  /// Subject line (first line of the message).
+  subject: string;
 }
 
 /// Graph "Compare against" containment vs one target ref. Mirrors Rust

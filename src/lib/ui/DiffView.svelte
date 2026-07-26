@@ -19,6 +19,7 @@
   import { adjustFontSize, resetFontSize } from "$lib/font";
   import Dropdown from "./Dropdown.svelte";
   import ImageDiff from "./ImageDiff.svelte";
+  import SubmoduleDiff from "./SubmoduleDiff.svelte";
 
   let host: HTMLDivElement;
   let mergeView: MergeView | null = null;
@@ -597,7 +598,7 @@
           onchange={(v) => (langOverride = v === "" ? null : v)}
         />
       {/if}
-      {#if diff && diff.kind !== "text"}
+      {#if diff && diff.kind !== "text" && diff.kind !== "submodule"}
         <span class="sizes">
           {fmt(diff.old_size)} → {fmt(diff.new_size)}
         </span>
@@ -685,6 +686,8 @@
       Large file ({fmt(diff.old_size)} → {fmt(diff.new_size)}). Collapsed for performance.
       <button type="button" class="primary" onclick={loadAnyway}>Load anyway</button>
     </div>
+  {:else if diff.kind === "submodule"}
+    <SubmoduleDiff {diff} />
   {/if}
 
   <div
