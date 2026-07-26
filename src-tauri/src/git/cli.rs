@@ -14,11 +14,15 @@ use super::uasset;
 use super::{
     Branch, BranchKind, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions,
     DiffMode, FileDiff, FileStatus, GitError, GitLayer, Hunk, ReflogEntry, RepoStatus, Stash,
-    StatusEntry, SubmoduleInfo,
+    StatusEntry, SubmoduleCommit, SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
 const LARGE_FILE_BYTES: u64 = 1_000_000;
+
+/// Max submodule commits listed per direction in a `FileDiff::Submodule`. The
+/// header still reports the exact full count; excess rows collapse to "+N more".
+const SUBMODULE_LOG_CAP: usize = 50;
 
 /// Bytes scanned for NUL when sniffing for binary content.
 const BINARY_SNIFF_BYTES: usize = 8192;
@@ -843,6 +847,72 @@ fn ls_tree_gitlink(repo: &Path, tree_ish: &str, file_path: &str) -> Option<Strin
         return None;
     }
     parse_gitlink_sha(&out.stdout).ok().flatten()
+}
+
+/// Parse `git log --format=%H%x1f%h%x1f%an%x1f%at%x1f%s -z` output. Records are
+/// NUL-terminated; the five fields within a record are separated by \x1f (unit
+/// separator), in order: full-sha, short-sha, author, author-time (unix secs),
+/// subject. Records with fewer than 5 fields or an unparseable time are dropped.
+fn parse_submodule_log(bytes: &[u8]) -> Vec<SubmoduleCommit> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = Vec::new();
+    for record in text.split('\0') {
+        if record.is_empty() {
+            continue;
+        }
+        let mut f = record.splitn(5, '\u{1f}');
+        let (Some(sha), Some(short_sha), Some(author), Some(at), Some(subject)) =
+            (f.next(), f.next(), f.next(), f.next(), f.next())
+        else {
+            continue;
+        };
+        let Ok(time) = at.parse::<i64>() else {
+            continue;
+        };
+        out.push(SubmoduleCommit {
+            sha: sha.to_string(),
+            short_sha: short_sha.to_string(),
+            author: author.to_string(),
+            time,
+            subject: subject.to_string(),
+        });
+    }
+    out
+}
+
+/// Commit log of a submodule between two of its own SHAs, both directions.
+/// Returns (added, added_count, removed, removed_count): `added` is `old..new`
+/// and `removed` is `new..old`, each newest-first and capped to
+/// SUBMODULE_LOG_CAP, with the full counts alongside. Returns None when the
+/// submodule repo can't answer — not initialized, commits not fetched, a SHA
+/// not in its object DB — so the caller falls back to the SHA text. Read-only:
+/// no write lock, no session drop.
+fn submodule_commits(
+    sub_worktree: &Path,
+    old: &str,
+    new: &str,
+) -> Option<(Vec<SubmoduleCommit>, usize, Vec<SubmoduleCommit>, usize)> {
+    validate_ref(old).ok()?;
+    validate_ref(new).ok()?;
+    let one = |range: &str| -> Option<(Vec<SubmoduleCommit>, usize)> {
+        let out = git_command()
+            .arg("-C")
+            .arg(sub_worktree)
+            .args(["log", "--format=%H%x1f%h%x1f%an%x1f%at%x1f%s", "-z", range])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let all = parse_submodule_log(&out.stdout);
+        let count = all.len();
+        let mut capped = all;
+        capped.truncate(SUBMODULE_LOG_CAP);
+        Some((capped, count))
+    };
+    let (added, added_count) = one(&format!("{old}..{new}"))?;
+    let (removed, removed_count) = one(&format!("{new}..{old}"))?;
+    Some((added, added_count, removed, removed_count))
 }
 
 /// Unmerged paths whose working-tree file still contains conflict markers — the
@@ -2960,6 +3030,37 @@ mod tests {
     fn parse_gitlink_sha_rejects_missing_tab() {
         let input = b"160000 commit abc123 vendor/sub\n";
         assert!(parse_gitlink_sha(input).is_err());
+    }
+
+    #[test]
+    fn parse_submodule_log_two_records() {
+        let input = b"abc123\x1fabc123\x1fAlice\x1f1700000000\x1fFirst commit\0\
+def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
+        let out = parse_submodule_log(input);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].sha, "abc123");
+        assert_eq!(out[0].author, "Alice");
+        assert_eq!(out[0].time, 1_700_000_000);
+        assert_eq!(out[0].subject, "First commit");
+        assert_eq!(out[1].subject, "Second commit");
+    }
+
+    #[test]
+    fn parse_submodule_log_empty() {
+        assert!(parse_submodule_log(b"").is_empty());
+    }
+
+    #[test]
+    fn parse_submodule_log_drops_short_record() {
+        // Only 3 fields (missing time + subject) → dropped.
+        let input = b"abc\x1fabc\x1fAlice\0";
+        assert!(parse_submodule_log(input).is_empty());
+    }
+
+    #[test]
+    fn parse_submodule_log_drops_bad_time() {
+        let input = b"abc\x1fabc\x1fAlice\x1fnotanumber\x1fSubject\0";
+        assert!(parse_submodule_log(input).is_empty());
     }
 
     #[test]

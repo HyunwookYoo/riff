@@ -51,6 +51,19 @@ pub struct Commit {
     pub body: String,
 }
 
+/// One commit in a submodule's log between two gitlink SHAs. A lean subset of
+/// `Commit` (no parents/refs/body) — the submodule diff view is a static list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmoduleCommit {
+    pub sha: String,
+    pub short_sha: String,
+    pub author: String,
+    /// Author time, unix seconds.
+    pub time: i64,
+    /// Subject line (first line of the commit message).
+    pub subject: String,
+}
+
 /// Per-commit containment of the loaded commit graph against one `target` ref,
 /// powering the graph's "Compare against" highlight. `not_in_target` holds the
 /// SHAs reachable from `source` (or every ref, when source is empty) that are
@@ -231,6 +244,25 @@ pub enum FileDiff {
     TooLarge {
         old_size: u64,
         new_size: u64,
+    },
+    /// A submodule gitlink pointer move, rendered as the submodule's own commit
+    /// log between the two SHAs (both directions) rather than the raw
+    /// "Subproject commit <sha>" text. Emitted only when both SHAs resolve and
+    /// the submodule's object DB can produce the log; otherwise `file_diff`
+    /// falls back to `Text`.
+    Submodule {
+        /// Gitlink path as it appears in the parent tree; the UI shows its basename.
+        name: String,
+        old_sha: String,
+        new_sha: String,
+        /// old..new, newest first, capped to SUBMODULE_LOG_CAP.
+        added: Vec<SubmoduleCommit>,
+        /// new..old, newest first, capped to SUBMODULE_LOG_CAP.
+        removed: Vec<SubmoduleCommit>,
+        /// Full count of added commits (>= added.len()).
+        added_count: usize,
+        /// Full count of removed commits (>= removed.len()).
+        removed_count: usize,
     },
 }
 
