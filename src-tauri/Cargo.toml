@@ -1,6 +1,6 @@
 [package]
 name = "riff"
-version = "1.2.0"
+version = "1.2.1"
 description = "Lightweight Git client: branch compare, source control, commit graph, and blame"
 authors = ["hyunw"]
 edition = "2021"
