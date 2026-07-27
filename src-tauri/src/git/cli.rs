@@ -880,39 +880,62 @@ fn parse_submodule_log(bytes: &[u8]) -> Vec<SubmoduleCommit> {
     out
 }
 
-/// Commit log of a submodule between two of its own SHAs, both directions.
-/// Returns (added, added_count, removed, removed_count): `added` is `old..new`
-/// and `removed` is `new..old`, each newest-first and capped to
-/// SUBMODULE_LOG_CAP, with the full counts alongside. Returns None when the
-/// submodule repo can't answer — not initialized, commits not fetched, a SHA
-/// not in its object DB — so the caller falls back to the SHA text. Read-only:
-/// no write lock, no session drop.
-fn submodule_commits(
-    sub_worktree: &Path,
-    old: &str,
-    new: &str,
-) -> Option<(Vec<SubmoduleCommit>, usize, Vec<SubmoduleCommit>, usize)> {
+/// One `git log` invocation in a submodule worktree, parsed. `extra` is appended
+/// after the fixed `log --format=… -z`. Returns None when git exits non-zero
+/// (submodule not fetched, SHA not in its object DB). Read-only: no write lock,
+/// no session drop. stdin is nulled so a submodule never blocks on a prompt.
+fn sub_log(sub_worktree: &Path, extra: &[&str]) -> Option<Vec<SubmoduleCommit>> {
+    let mut args: Vec<&str> = vec!["log", "--format=%H%x1f%h%x1f%an%x1f%at%x1f%s", "-z"];
+    args.extend_from_slice(extra);
+    let out = git_command()
+        .arg("-C")
+        .arg(sub_worktree)
+        .args(&args)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(parse_submodule_log(&out.stdout))
+}
+
+/// Build a `FileDiff::Submodule` for a gitlink move from `old` to `new` inside
+/// the submodule at `sub_worktree`: the two endpoint commits (with their
+/// messages) plus the commits gained (`old..new` → `added`) and lost
+/// (`new..old` → `removed`), each newest-first and capped to SUBMODULE_LOG_CAP
+/// with the full counts alongside. Returns None when the submodule repo can't
+/// answer — not initialized, commits not fetched, a SHA not in its object DB —
+/// or the two SHAs have no commits between them, so the caller falls back to the
+/// "Subproject commit <sha>" text. Read-only: no write lock, no session drop.
+fn submodule_diff(name: &str, sub_worktree: &Path, old: &str, new: &str) -> Option<FileDiff> {
     validate_ref(old).ok()?;
     validate_ref(new).ok()?;
-    let one = |range: &str| -> Option<(Vec<SubmoduleCommit>, usize)> {
-        let out = git_command()
-            .arg("-C")
-            .arg(sub_worktree)
-            .args(["log", "--format=%H%x1f%h%x1f%an%x1f%at%x1f%s", "-z", range])
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let all = parse_submodule_log(&out.stdout);
-        let count = all.len();
-        let mut capped = all;
-        capped.truncate(SUBMODULE_LOG_CAP);
-        Some((capped, count))
+    let cap = |mut v: Vec<SubmoduleCommit>| -> (Vec<SubmoduleCommit>, usize) {
+        let count = v.len();
+        v.truncate(SUBMODULE_LOG_CAP);
+        (v, count)
     };
-    let (added, added_count) = one(&format!("{old}..{new}"))?;
-    let (removed, removed_count) = one(&format!("{new}..{old}"))?;
-    Some((added, added_count, removed, removed_count))
+    let range_added = format!("{old}..{new}");
+    let range_removed = format!("{new}..{old}");
+    let (added, added_count) = cap(sub_log(sub_worktree, &[range_added.as_str()])?);
+    let (removed, removed_count) = cap(sub_log(sub_worktree, &[range_removed.as_str()])?);
+    if added.is_empty() && removed.is_empty() {
+        return None;
+    }
+    // Endpoints are resolved explicitly: on a fast-forward the old endpoint is in
+    // neither `added` nor `removed`, so it can't be harvested from those lists.
+    let old_commit = sub_log(sub_worktree, &["-1", old])?.into_iter().next()?;
+    let new_commit = sub_log(sub_worktree, &["-1", new])?.into_iter().next()?;
+    Some(FileDiff::Submodule {
+        name: name.to_string(),
+        old_commit,
+        new_commit,
+        added,
+        removed,
+        added_count,
+        removed_count,
+    })
 }
 
 /// Unmerged paths whose working-tree file still contains conflict markers — the
@@ -1201,20 +1224,8 @@ impl GitLayer for GitCli {
                 // log. Falls through to the SHA text below when the log can't
                 // be computed (submodule not fetched, SHA missing, empty range).
                 if let (Some(old), Some(new)) = (&old_link, &new_link) {
-                    if let Some((added, added_count, removed, removed_count)) =
-                        submodule_commits(&path.join(file_path), old, new)
-                    {
-                        if !added.is_empty() || !removed.is_empty() {
-                            return Ok(FileDiff::Submodule {
-                                name: file_path.to_string(),
-                                old_sha: old.clone(),
-                                new_sha: new.clone(),
-                                added,
-                                removed,
-                                added_count,
-                                removed_count,
-                            });
-                        }
+                    if let Some(fd) = submodule_diff(file_path, &path.join(file_path), old, new) {
+                        return Ok(fd);
                     }
                 }
                 let to_text = |s: &Option<String>| {
@@ -1392,20 +1403,8 @@ impl GitLayer for GitCli {
             // Both SHAs present → try rendering the submodule's own commit log
             // (see file_diff). Falls through to the SHA text on any failure.
             if let (Some(old), Some(new)) = (&old_sha, &new_sha) {
-                if let Some((added, added_count, removed, removed_count)) =
-                    submodule_commits(&fs_path, old, new)
-                {
-                    if !added.is_empty() || !removed.is_empty() {
-                        return Ok(FileDiff::Submodule {
-                            name: file_path.to_string(),
-                            old_sha: old.clone(),
-                            new_sha: new.clone(),
-                            added,
-                            removed,
-                            added_count,
-                            removed_count,
-                        });
-                    }
+                if let Some(fd) = submodule_diff(file_path, &fs_path, old, new) {
+                    return Ok(fd);
                 }
             }
             let to_text = |s: &Option<String>| {

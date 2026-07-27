@@ -24,6 +24,18 @@
     {#if diff.removed_count > 0}<span class="sm-behind">▼{diff.removed_count}</span>{/if}
   </div>
 
+  <div class="sm-endpoints">
+    <div class="sm-endpoint">
+      <span class="sm-sha">{diff.old_commit.short_sha}</span>
+      <span class="sm-esub">{diff.old_commit.subject}</span>
+    </div>
+    <span class="sm-arrow">↓</span>
+    <div class="sm-endpoint">
+      <span class="sm-sha">{diff.new_commit.short_sha}</span>
+      <span class="sm-esub">{diff.new_commit.subject}</span>
+    </div>
+  </div>
+
   {#if diff.added.length > 0}
     <div class="sm-group">added ({diff.added_count})</div>
     {#each diff.added as c (c.sha)}
@@ -82,6 +94,28 @@
   }
   .sm-behind {
     color: var(--muted);
+  }
+  .sm-endpoints {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+    margin: -4px 0 4px;
+  }
+  .sm-endpoint {
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+    align-items: baseline;
+  }
+  .sm-esub {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sm-arrow {
+    color: var(--muted);
+    line-height: 1;
   }
   .sm-group {
     font-size: 11px;

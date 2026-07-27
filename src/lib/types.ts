@@ -77,8 +77,10 @@ export type FileDiff =
       kind: "submodule";
       /// Gitlink path; the view shows its basename.
       name: string;
-      old_sha: string;
-      new_sha: string;
+      /// The old endpoint (commit the parent links to), with its message.
+      old_commit: SubmoduleCommit;
+      /// The new endpoint (submodule's checked-out HEAD), with its message.
+      new_commit: SubmoduleCommit;
       /// old..new, newest first, capped to 50.
       added: SubmoduleCommit[];
       /// new..old, newest first, capped to 50.

@@ -253,8 +253,10 @@ pub enum FileDiff {
     Submodule {
         /// Gitlink path as it appears in the parent tree; the UI shows its basename.
         name: String,
-        old_sha: String,
-        new_sha: String,
+        /// The old endpoint (the commit the parent links to), with its message.
+        old_commit: SubmoduleCommit,
+        /// The new endpoint (the submodule's checked-out HEAD), with its message.
+        new_commit: SubmoduleCommit,
         /// old..new, newest first, capped to SUBMODULE_LOG_CAP.
         added: Vec<SubmoduleCommit>,
         /// new..old, newest first, capped to SUBMODULE_LOG_CAP.
