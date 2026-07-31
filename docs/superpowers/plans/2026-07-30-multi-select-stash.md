@@ -575,13 +575,13 @@ export function moveFilesToChangelist(
   }));
   void persist();
 }
-
-export function moveFileToChangelist(filePath: string, targetId: string): void {
-  moveFilesToChangelist([filePath], targetId);
-}
 ```
 
-Note: the doc comment that sat above the old `moveFileToChangelist` describes the move-via-menu behavior; keep it above `moveFilesToChangelist` if it is still accurate, otherwise the comment above is the replacement.
+The singular `moveFileToChangelist` is **replaced, not kept**: its only two
+call sites are both in `ChangesList.svelte` and both move to the plural form in
+Tasks 3–4, so leaving a delegating wrapper would ship a dead export. Delete the
+old function and its doc comment entirely; carry over anything still accurate
+from that comment into the one above.
 
 - [ ] **Step 2: Update the ChangesList imports**
 
@@ -1075,7 +1075,7 @@ No spec requirement is unassigned.
 - **`CHANGELOG.md` is dropped.** The spec's file table listed it, but this repo writes CHANGELOG entries in the `release: vX.Y.Z` commit (`d1074c7` changed only CHANGELOG + version files; the feature commits before it changed none). Following the spec literally would break that convention. README and the cheat sheet are still updated in Task 5.
 - **The action bar ships in Task 3, not Task 2.** The spec describes selection and actions in separate sections; the plan introduces the bar complete (count + Stash… + Clear) rather than adding a count-only bar in one commit and a button in the next.
 - **Task 3 Step 5 routes the existing single-file drag through `moveFilesToChangelist([dragPath], …)`** before Task 4 widens it. This keeps `moveFileToChangelist` out of `ChangesList.svelte` entirely from Task 3 onward, so no commit is left importing both names.
-- **`moveFileToChangelist` is kept** (delegating to the plural form) even though `ChangesList.svelte` stops calling it, because it is an exported module function and removing a public helper is outside this feature's scope.
+- **`moveFileToChangelist` is deleted, not kept as a wrapper.** Its only two call sites are in `ChangesList.svelte` and both move to the plural form in Tasks 3–4, so a delegating wrapper would be a dead export — which CLAUDE.md §3 ("remove functions that YOUR changes made unused") and §2 (simplicity) both rule against. Decided with the human partner during the pre-flight scan.
 
 **3. Placeholder scan:** No "TBD", "TODO", "handle edge cases", "add validation", or "similar to Task N". Every code step carries literal code; every verification step names the exact command and its expected result; the manual steps name the exact expected strings (`3 selected`, `Move 3 files to`, `Stash 3 files…`, `3 files: …, +2 more`).
 
