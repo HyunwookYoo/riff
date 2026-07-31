@@ -111,8 +111,8 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 `git status --porcelain=v2` 기반의 작업 트리 변경 화면입니다. 변경 파일을 **changelist**(Perforce/JetBrains식 명명 버킷)로 묶어 버킷 단위로 커밋합니다.
 
 - **Changelist**: `+ New changelist` 로 버킷을 만들고, 파일을 **드래그**하거나 **우클릭 → Move to** 로 분류. 기본 버킷은 **Default**. 배정은 repo별로 영속됩니다(`.git/riff-changelists.json`).
-- **멀티 셀렉트**: **`Ctrl`+클릭**으로 파일을 하나씩 더하고 **`Shift`+클릭**으로 범위를 선택합니다. 선택 중에는 상단에 `N selected` 바가 뜨고, **우클릭 메뉴**와 **드래그**가 선택 전체에 적용됩니다. **`Esc`** 또는 **Clear** 로 해제.
-- **Stash**: 우클릭 → **Stash this file…** / **Stash N files…** 로 고른 파일만 따로 빼둡니다. 메시지를 비우면 파일 경로(여러 개면 `3 files: a.ts, b.ts, c.ts`)가 제목이 됩니다. **선택하지 않은 변경은 작업 트리에 그대로** 남습니다.
+- **멀티 셀렉트**: **`Ctrl`+클릭**으로 파일을 선택에 넣고 뺍니다(토글). **`Shift`+클릭**은 기준점부터 클릭한 행까지 **화면에 보이는 행만** 범위 선택합니다(접힌 그룹·충돌 파일은 제외). 선택 중에는 상단에 `N selected` 바가 뜨고, **선택된 행**을 우클릭하거나 드래그하면 선택 전체에 적용됩니다. **`Esc`** 또는 **Clear** 로 해제.
+- **Stash**: 우클릭 → **Stash this file…** / **Stash N files…** 로 고른 파일만 따로 빼둡니다. 메시지를 비우면 파일 경로(여러 개면 `3 files: a.ts, b.ts, c.ts`, 4개 이상이면 `, +N more`)가 제목이 됩니다. **선택하지 않은 변경은 작업 트리에 그대로** 남습니다.
 - **버킷 커밋**: 버킷을 활성화하고 메시지(subject/body, sign-off, co-author)를 입력해 **그 버킷의 파일만** 커밋. git 인덱스 스테이징은 커밋 순간에만 일시적으로 사용되어 사용자가 따로 stage/unstage 할 필요가 없습니다.
 - 파일 클릭 → diff(HEAD ↔ 작업 트리). Unreal `.uasset`/`.umap` 은 번들된 UAssetGUI로 파싱한 **속성 뷰**로 표시.
 - **창 포커스 복귀 시 자동 새로고침** + **`F5`/`Ctrl+R`**. Untracked 파일도 표시됩니다.
