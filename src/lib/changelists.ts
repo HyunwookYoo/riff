@@ -187,15 +187,20 @@ function pruneHunkAssignments(): void {
   appState.hunksByFile = nextCache;
 }
 
-export function moveFileToChangelist(filePath: string, targetId: string): void {
+/// Move several files into `targetId` in one pass. One map + one persist, so a
+/// bulk move costs a single backend write instead of one per file. A path can
+/// only live in one list, so every other list drops the moved paths.
+export function moveFilesToChangelist(
+  filePaths: string[],
+  targetId: string,
+): void {
+  const moving = new Set(filePaths);
   appState.changelists = appState.changelists.map((l) => ({
     ...l,
     files:
       l.id === targetId
-        ? l.files.includes(filePath)
-          ? l.files
-          : [...l.files, filePath]
-        : l.files.filter((f) => f !== filePath),
+        ? [...l.files, ...filePaths.filter((p) => !l.files.includes(p))]
+        : l.files.filter((f) => !moving.has(f)),
   }));
   void persist();
 }

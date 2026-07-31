@@ -16,11 +16,15 @@
     deleteChangelist,
     fileHunksInList,
     filesInChangelist,
-    moveFileToChangelist,
+    moveFilesToChangelist,
     renameChangelist,
   } from "$lib/changelists";
   import { buildPathTree, type TreePathNode } from "./pathTree";
-  import { applyClick, type ClickKind } from "./changesSelect";
+  import {
+    applyClick,
+    defaultStashMessage,
+    type ClickKind,
+  } from "./changesSelect";
   import type { ChangedFile, FileStatus, StatusEntry } from "$lib/types";
 
   // path → status entry, to resolve a file's badge/diff from its changelist.
@@ -164,35 +168,57 @@
       deleteChangelist(id);
   }
 
-  // Move a file to another changelist via a right-click menu (HTML5 drag is
-  // intercepted by Tauri's file-drop; a menu is reliable for v1).
-  let moveMenu = $state<{ x: number; y: number; path: string } | null>(null);
+  // Move / stash menu (HTML5 drag is intercepted by Tauri's file-drop; a menu
+  // is reliable). `paths` is the whole multi-selection when the click landed
+  // inside it, else just the clicked file.
+  let moveMenu = $state<{ x: number; y: number; paths: string[] } | null>(null);
   function openMove(e: MouseEvent, path: string) {
     e.preventDefault();
-    moveMenu = { x: e.clientX, y: e.clientY, path };
+    if (sel.has(path)) {
+      moveMenu = { x: e.clientX, y: e.clientY, paths: [...sel] };
+      return;
+    }
+    // Right-clicking outside the selection re-selects that one row, so the
+    // menu can never act on files the user is no longer pointing at.
+    appState.changesSelectedPaths = new Set();
+    anchor = path;
+    pick(path);
+    moveMenu = { x: e.clientX, y: e.clientY, paths: [path] };
   }
   function moveTo(targetId: string) {
-    if (moveMenu) moveFileToChangelist(moveMenu.path, targetId);
+    // The selection survives a move — regrouping and then stashing is common.
+    if (moveMenu) moveFilesToChangelist(moveMenu.paths, targetId);
     moveMenu = null;
   }
 
-  // Stash a single file: open an inline message field, then stash just that
-  // path. An empty message defaults to the path, so the entry is identifiable.
-  let stashingPath = $state<string | null>(null);
+  // Stash the selection (or one file): open an inline message field, then stash
+  // just those paths. An empty message falls back to a generated subject so the
+  // entry is identifiable in the stash list.
+  let stashTargets = $state<string[] | null>(null);
   let stashMsg = $state("");
   function openStash() {
     if (!moveMenu) return;
-    stashingPath = moveMenu.path;
+    stashTargets = moveMenu.paths;
     stashMsg = "";
     moveMenu = null;
   }
-  function submitStash() {
-    const path = stashingPath;
-    stashingPath = null;
-    if (!path) return;
-    const m = stashMsg.trim() || path;
+  function stashSelection() {
+    stashTargets = [...sel];
     stashMsg = "";
-    void doStashSave(m, [path]);
+  }
+  function cancelStash() {
+    stashTargets = null;
+    stashMsg = "";
+  }
+  function submitStash() {
+    const paths = stashTargets;
+    stashTargets = null;
+    if (!paths || paths.length === 0) return;
+    const m = stashMsg.trim() || defaultStashMessage(paths);
+    stashMsg = "";
+    appState.changesSelectedPaths = new Set();
+    anchor = null;
+    void doStashSave(m, paths);
   }
   function currentListOf(path: string): string {
     return (
@@ -237,7 +263,7 @@
   function onWinPointerUp(e: PointerEvent) {
     if (dragPath) {
       const target = groupUnder(e.clientX, e.clientY);
-      if (target) moveFileToChangelist(dragPath, target);
+      if (target) moveFilesToChangelist([dragPath], target);
       dragPath = null;
       ghost = null;
       dropList = null;
@@ -331,19 +357,36 @@
 {/snippet}
 
 <div class="cl-root" bind:this={rootEl}>
-  {#if stashingPath}
+  {#if stashTargets}
+    {@const n = stashTargets.length}
     <form class="cl-stash" onsubmit={(e) => (e.preventDefault(), submitStash())}>
-      <span class="cl-stash-label" title={stashingPath}>Stash {stashingPath}:</span>
+      <span class="cl-stash-label" title={stashTargets.join("\n")}>
+        {n > 1 ? `Stash ${n} files:` : `Stash ${stashTargets[0]}:`}
+      </span>
       <!-- svelte-ignore a11y_autofocus -->
       <input
         autofocus
         bind:value={stashMsg}
         placeholder="message (optional)"
         aria-label="Stash message"
-        onkeydown={(e) =>
-          e.key === "Escape" && ((stashingPath = null), (stashMsg = ""))}
+        onkeydown={(e) => e.key === "Escape" && cancelStash()}
       />
     </form>
+  {/if}
+  {#if sel.size > 0}
+    <div class="cl-selbar">
+      <span class="cl-selcount">{sel.size} selected</span>
+      <button type="button" class="cl-selact" onclick={stashSelection}>
+        Stash…
+      </button>
+      <button
+        type="button"
+        class="cl-selact"
+        onclick={() => (appState.changesSelectedPaths = new Set())}
+      >
+        Clear
+      </button>
+    </div>
   {/if}
   <div class="cl-toolbar">
     {#if creating}
@@ -469,22 +512,26 @@
 </div>
 
 {#if moveMenu}
-  {@const cur = currentListOf(moveMenu.path)}
+  {@const paths = moveMenu.paths}
+  {@const n = paths.length}
   <div class="cl-menu" style="left: {moveMenu.x}px; top: {moveMenu.y}px" role="menu">
-    <div class="cl-menu-head">Move to changelist</div>
+    <div class="cl-menu-head">
+      {n > 1 ? `Move ${n} files to` : "Move to changelist"}
+    </div>
     {#each appState.changelists as l (l.id)}
+      {@const here = paths.every((p) => currentListOf(p) === l.id)}
       <button
         type="button"
         role="menuitem"
-        disabled={l.id === cur}
+        disabled={here}
         onclick={() => moveTo(l.id)}
       >
-        {l.id === cur ? "● " : ""}{l.name}
+        {here ? "● " : ""}{l.name}
       </button>
     {/each}
     <div class="cl-menu-sep"></div>
     <button type="button" role="menuitem" onclick={openStash}>
-      Stash this file…
+      {n > 1 ? `Stash ${n} files…` : "Stash this file…"}
     </button>
   </div>
 {/if}
@@ -579,6 +626,34 @@
     background: var(--input-bg);
     color: inherit;
     font-size: 0.85em;
+  }
+  .cl-selbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--accent-soft);
+  }
+  .cl-selcount {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.8em;
+    color: var(--accent);
+  }
+  .cl-selact {
+    flex: 0 0 auto;
+    padding: 3px 9px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.78em;
+  }
+  .cl-selact:hover {
+    color: var(--accent);
+    border-color: var(--accent);
   }
   .cl-root {
     display: flex;
