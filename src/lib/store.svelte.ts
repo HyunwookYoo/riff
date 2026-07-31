@@ -237,6 +237,12 @@ class AppState {
   // 0 = main; submodule/manual repos let you stage & commit inside them. Like
   // History's `historyRepoIdx`, independent of the compare Focus. Session-only.
   changesRepoIdx = $state(0);
+  // Ad-hoc multi-selection in the Changes list, for bulk stash / move. EMPTY is
+  // the normal single-selection mode — only Ctrl/Shift+click populates it. That
+  // invariant keeps `selectedFile` (which drives the diff pane) unchanged, and
+  // keeps Esc from swallowing a drill-in pop when nothing is multi-selected.
+  // Session-only.
+  changesSelectedPaths = $state(new Set<string>());
   // Top (Unstaged) share of the Changes list area; the draggable divider
   // between the Unstaged and Staged panes adjusts it. Session-only.
   changesPaneFraction = $state(0.5);

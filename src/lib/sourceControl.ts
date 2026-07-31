@@ -73,6 +73,7 @@ export function setChangesRepo(idx: number): void {
   appState.selectedCommitSha = null;
   appState.repoStatus = null;
   appState.selectedFile = null;
+  appState.changesSelectedPaths = new Set();
   appState.commitSubject = "";
   appState.commitBody = "";
   appState.commitAmend = false;

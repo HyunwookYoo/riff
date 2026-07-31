@@ -20,6 +20,7 @@
     renameChangelist,
   } from "$lib/changelists";
   import { buildPathTree, type TreePathNode } from "./pathTree";
+  import { applyClick, type ClickKind } from "./changesSelect";
   import type { ChangedFile, FileStatus, StatusEntry } from "$lib/types";
 
   // path → status entry, to resolve a file's badge/diff from its changelist.
@@ -28,6 +29,14 @@
     for (const e of appState.repoStatus?.entries ?? []) m.set(e.path, e);
     return m;
   });
+
+  // The multi-selection, pruned to files that are still changed. Every read
+  // goes through this — never the raw store set — so a path that has just been
+  // stashed or committed cannot reach a git call, and no $effect is needed to
+  // clean up after a refresh.
+  const sel = $derived(
+    new Set([...appState.changesSelectedPaths].filter((p) => byPath.has(p))),
+  );
 
   // Unmerged files, surfaced in a dedicated group above the changelists.
   const conflicts = $derived(conflictedEntries());
@@ -50,6 +59,40 @@
   function pick(path: string) {
     const e = byPath.get(path);
     if (e) selectChange(entryToChangedFile(e, "unstaged"), "unstaged");
+  }
+
+  // On-screen row order, read straight from the DOM so a range fill always
+  // matches what the user sees — collapsed changelists, collapsed directories
+  // and flat-vs-tree all fall out for free. Conflict rows carry no data-path,
+  // so they can never be selected (git stash fails on unmerged paths).
+  let rootEl = $state<HTMLElement | null>(null);
+  function rowOrder(): string[] {
+    if (!rootEl) return [];
+    return [...rootEl.querySelectorAll<HTMLElement>("[data-path]")].map(
+      (el) => el.dataset.path ?? "",
+    );
+  }
+
+  // Ctrl/Cmd+click toggles a file, Shift+click fills the range from the anchor,
+  // a plain click drops back to single selection. The diff pane always follows
+  // the clicked row.
+  let anchor = $state<string | null>(null);
+  function onRowClick(e: MouseEvent, path: string) {
+    const kind: ClickKind = e.shiftKey
+      ? "range"
+      : e.ctrlKey || e.metaKey
+        ? "toggle"
+        : "plain";
+    const next = applyClick(
+      kind,
+      { selected: appState.changesSelectedPaths, anchor },
+      appState.selectedFile?.path ?? null,
+      path,
+      rowOrder(),
+    );
+    appState.changesSelectedPaths = next.selected;
+    anchor = next.anchor;
+    pick(path);
   }
 
   // Discard a file's changes (destructive) after confirming. A new file (staged-
@@ -172,7 +215,8 @@
     return el?.dataset.cl ?? null;
   }
   function onFilePointerDown(e: PointerEvent, path: string) {
-    if (e.button !== 0) return;
+    // A modifier-click is a selection gesture, not the start of a drag.
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
     pending = { path, x: e.clientX, y: e.clientY };
   }
   function onWinPointerMove(e: PointerEvent) {
@@ -224,12 +268,17 @@
   {#if e}
     {@const cf = entryToChangedFile(e, "unstaged") as ChangedFile}
     {@const hb = hunkBadge(path, clId)}
-    <div class="cl-file" class:active={isSel(path)}>
+    <div
+      class="cl-file"
+      class:active={isSel(path)}
+      class:multi={sel.has(path)}
+      data-path={path}
+    >
       <button
         type="button"
         class="cl-pick"
         style={depth === null ? "" : `padding-left: ${18 + depth * 12}px`}
-        onclick={() => pick(path)}
+        onclick={(ev) => onRowClick(ev, path)}
         onpointerdown={(ev) => onFilePointerDown(ev, path)}
         oncontextmenu={(ev) => openMove(ev, path)}
         title={cf.old_path
@@ -281,7 +330,7 @@
   {/each}
 {/snippet}
 
-<div class="cl-root">
+<div class="cl-root" bind:this={rootEl}>
   {#if stashingPath}
     <form class="cl-stash" onsubmit={(e) => (e.preventDefault(), submitStash())}>
       <span class="cl-stash-label" title={stashingPath}>Stash {stashingPath}:</span>
@@ -737,6 +786,10 @@
     border-radius: 7px;
     padding: 0 6px;
     margin-right: 2px;
+  }
+  .cl-file.multi {
+    background: var(--accent-soft);
+    box-shadow: inset 2px 0 0 var(--accent);
   }
   .cl-file.active {
     background: var(--accent-soft);
