@@ -240,7 +240,7 @@
   // Pointer-based drag to move a file onto a changelist group (HTML5 drag is
   // intercepted by Tauri's file-drop). A press becomes a drag past a threshold;
   // the group under the cursor is found via its data-cl attribute.
-  let dragPath = $state<string | null>(null);
+  let dragPaths = $state<string[] | null>(null);
   let ghost = $state<{ x: number; y: number; label: string } | null>(null);
   let dropList = $state<string | null>(null);
   let pending: { path: string; x: number; y: number } | null = null;
@@ -256,8 +256,8 @@
     pending = { path, x: e.clientX, y: e.clientY };
   }
   function onWinPointerMove(e: PointerEvent) {
-    if (dragPath) {
-      ghost = { x: e.clientX, y: e.clientY, label: basename(dragPath) };
+    if (dragPaths) {
+      ghost = { x: e.clientX, y: e.clientY, label: dragLabel(dragPaths) };
       dropList = groupUnder(e.clientX, e.clientY);
       return;
     }
@@ -265,16 +265,18 @@
     const dx = e.clientX - pending.x;
     const dy = e.clientY - pending.y;
     if (dx * dx + dy * dy >= DRAG_THRESHOLD * DRAG_THRESHOLD) {
-      dragPath = pending.path;
-      ghost = { x: e.clientX, y: e.clientY, label: basename(pending.path) };
+      // Dragging a selected row drags the whole selection; an unselected row
+      // drags alone and leaves the selection untouched.
+      dragPaths = sel.has(pending.path) ? [...sel] : [pending.path];
+      ghost = { x: e.clientX, y: e.clientY, label: dragLabel(dragPaths) };
       pending = null;
     }
   }
   function onWinPointerUp(e: PointerEvent) {
-    if (dragPath) {
+    if (dragPaths) {
       const target = groupUnder(e.clientX, e.clientY);
-      if (target) moveFilesToChangelist([dragPath], target);
-      dragPath = null;
+      if (target) moveFilesToChangelist(dragPaths, target);
+      dragPaths = null;
       ghost = null;
       dropList = null;
     }
@@ -283,6 +285,9 @@
   function basename(p: string): string {
     const i = p.lastIndexOf("/");
     return i < 0 ? p : p.slice(i + 1);
+  }
+  function dragLabel(paths: string[]): string {
+    return paths.length > 1 ? `${paths.length} files` : basename(paths[0]);
   }
 </script>
 
