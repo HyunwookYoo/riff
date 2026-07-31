@@ -89,7 +89,13 @@
         : "plain";
     const next = applyClick(
       kind,
-      { selected: appState.changesSelectedPaths, anchor },
+      {
+        selected: appState.changesSelectedPaths,
+        // The pivot only means anything while a selection is live. After any
+        // clear (Esc, Clear, repo switch, stash) a Shift+click pivots on the
+        // file the diff pane is showing instead of a stale row.
+        anchor: appState.changesSelectedPaths.size > 0 ? anchor : null,
+      },
       appState.selectedFile?.path ?? null,
       path,
       rowOrder(),
@@ -178,11 +184,15 @@
       moveMenu = { x: e.clientX, y: e.clientY, paths: [...sel] };
       return;
     }
-    // Right-clicking outside the selection re-selects that one row, so the
-    // menu can never act on files the user is no longer pointing at.
-    appState.changesSelectedPaths = new Set();
-    anchor = path;
-    pick(path);
+    if (sel.size > 0) {
+      // Right-clicking outside an active selection re-selects that one row, so
+      // the menu can never act on files the user is no longer pointing at.
+      appState.changesSelectedPaths = new Set();
+      anchor = path;
+      pick(path);
+    }
+    // With no selection at all this stays the pure peek it has always been:
+    // the menu targets the clicked row without touching the diff pane.
     moveMenu = { x: e.clientX, y: e.clientY, paths: [path] };
   }
   function moveTo(targetId: string) {
