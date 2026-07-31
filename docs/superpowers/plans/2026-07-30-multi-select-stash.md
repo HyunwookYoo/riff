@@ -1118,3 +1118,14 @@ updated to match; the task steps above are left as they were executed.
    selected; and the generated stash subject caps names at three with `, +N more`.
    The cheat-sheet chord was also reformatted to `Ctrl+Click / Shift+Click`, which
    is how the rest of `shortcuts.ts` writes alternatives. Landed in `17b8c78`.
+
+5. **Final whole-branch review — the raw store field needed pruning at the
+   source.** The design leaned on the pruned `sel` derived alone, but the global
+   `Esc` handler reads the raw store field, which nothing ever pruned: after the
+   working tree changed under a live selection, `Esc` cleared an invisible
+   selection and swallowed the keypress instead of exiting Focus. Resolution: a
+   prune in `loadStatus`, which also drops paths that have become conflicted.
+   Folded into the same wave: two boundary tests that pin the `> 3` name cap and
+   the anchor-over-`current` range precedence, and the removal of a dead
+   `anchor = path` assignment in `openMove`. Landed in `dba944f`; spec §5 and the
+   edge-case list updated.

@@ -235,10 +235,33 @@ const sel = $derived(
 ```
 
 `byPath` is the existing path→`StatusEntry` map (`ChangesList.svelte:26`), so a
-path that is no longer changed simply cannot reach a git call. Two explicit
-resets back this up: after submitting a stash, and in `setChangesRepo`
-(`src/lib/sourceControl.ts:66`, alongside the `selectedFile` / changelist resets
-already there).
+path that is no longer changed simply cannot reach a git call.
+
+That derived view is the safety net, not the whole story. The **store field must
+be pruned too**, at the one point where reality changes — in `loadStatus`, right
+after `appState.repoStatus = st` (and therefore after its stale-session guard):
+
+```ts
+const selectable = new Set(
+  st.entries.filter((e) => !entryConflicted(e)).map((e) => e.path),
+);
+appState.changesSelectedPaths = new Set(
+  [...appState.changesSelectedPaths].filter((p) => selectable.has(p)),
+);
+```
+
+Without it the raw field keeps stale paths forever, and the global `Esc` handler
+reads that raw field: stash the whole tree from the sidebar while two files are
+multi-selected, and `Esc` would clear a selection nothing on screen shows —
+swallowing the keypress instead of exiting Focus. The pruned `sel` hides the
+symptom everywhere except there, which is exactly what made it worth fixing at
+the source. Reassign a new `Set`; mutating in place does not trip Svelte 5
+reactivity. Dropping conflicted entries in the same pass is what makes the
+"a stash can never reach an unmerged path" guarantee below actually true.
+
+Two explicit resets back this up: after submitting a stash, and in
+`setChangesRepo` (`src/lib/sourceControl.ts:66`, alongside the `selectedFile` /
+changelist resets already there).
 
 ## 6. Selection action bar
 
@@ -351,8 +374,16 @@ and never reaches here.
 - **Single-repo by construction.** The Changes screen operates on one repo
   (`changesRepoIdx`), so a selection can never mix paths from a submodule and its
   parent.
-- **Conflicted files are unselectable** (§3), so a stash can never hit an
-  unmerged path.
+- **Conflicted files are unselectable** (§3) — they carry no `data-path`, so a
+  click can never put one in the selection. A file that *becomes* conflicted
+  while already selected (select files → merge or rebase from Graph → back to
+  Changes) is dropped by §5's `loadStatus` prune. Between the two, a stash can
+  never reach an unmerged path.
+- **`↑`/`↓` do not collapse a live multi-selection.** `moveSelection` is
+  deliberately untouched, so the arrows move `selectedFile` — and therefore the
+  `.active` row — without clearing the highlighted set; the `.active` row can
+  walk outside it. That follows from the mouse-only scope. Explorer would
+  collapse the selection instead.
 - **Failed stash / move** surfaces through the existing `appState.error` banner;
   no new error path.
 - Shift+click cannot select page text: `.cl-pick` already sets
