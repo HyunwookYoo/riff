@@ -1109,3 +1109,12 @@ updated to match; the task steps above are left as they were executed.
    second store field. Spec §1 updated.
 
    Both Task 3 rulings landed in `637c565`.
+
+4. **Task 5 fix round 1 — the README bullets this plan prescribed were inaccurate
+   about what shipped.** Four corrections, all to text authored here: Ctrl+click
+   *toggles* rather than only adding; the Shift+click range covers on-screen rows
+   only (collapsed groups and conflicted files excluded); the right-click menu and
+   drag act on the whole selection only when the row you clicked is itself
+   selected; and the generated stash subject caps names at three with `, +N more`.
+   The cheat-sheet chord was also reformatted to `Ctrl+Click / Shift+Click`, which
+   is how the rest of `shortcuts.ts` writes alternatives. Landed in `17b8c78`.
