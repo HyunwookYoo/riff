@@ -188,7 +188,6 @@
       // Right-clicking outside an active selection re-selects that one row, so
       // the menu can never act on files the user is no longer pointing at.
       appState.changesSelectedPaths = new Set();
-      anchor = path;
       pick(path);
     }
     // With no selection at all this stays the pure peek it has always been:

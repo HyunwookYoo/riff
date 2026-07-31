@@ -176,6 +176,16 @@ export async function loadStatus(): Promise<void> {
     // A newer loadStatus started while we awaited — drop this stale result.
     if (session !== statusSession) return;
     appState.repoStatus = st;
+    // Keep the multi-selection honest at the one point where reality changes.
+    // `sel` prunes on read, but the raw field feeds the global Esc handler —
+    // left stale, Esc silently eats a keypress clearing a selection nothing on
+    // screen shows. Conflicted paths go too: git stash fails on unmerged paths.
+    const selectable = new Set(
+      st.entries.filter((e) => !entryConflicted(e)).map((e) => e.path),
+    );
+    appState.changesSelectedPaths = new Set(
+      [...appState.changesSelectedPaths].filter((p) => selectable.has(p)),
+    );
     appState.currentBranch = st.branch;
     appState.currentUpstream = st.upstream;
     appState.currentAhead = st.ahead;

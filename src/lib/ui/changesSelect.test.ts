@@ -107,6 +107,18 @@ describe("applyClick", () => {
     );
     expect([...r.selected]).toEqual(["a.ts", "d.ts"]);
   });
+
+  it("Shift+click prefers the anchor over the single selection", () => {
+    const r = applyClick(
+      "range",
+      { selected: new Set(["a.ts"]), anchor: "a.ts" },
+      "c.ts",
+      "b.ts",
+      ORDER,
+    );
+    expect([...r.selected]).toEqual(["a.ts", "b.ts"]);
+    expect(r.anchor).toBe("a.ts");
+  });
 });
 
 describe("defaultStashMessage", () => {
@@ -124,5 +136,17 @@ describe("defaultStashMessage", () => {
     expect(
       defaultStashMessage(["a/1.ts", "a/2.ts", "a/3.ts", "a/4.ts", "a/5.ts"]),
     ).toBe("5 files: 1.ts, 2.ts, 3.ts, +2 more");
+  });
+
+  it("keeps all three names at exactly three files", () => {
+    expect(defaultStashMessage(["a/1.ts", "a/2.ts", "a/3.ts"])).toBe(
+      "3 files: 1.ts, 2.ts, 3.ts",
+    );
+  });
+
+  it("starts capping at four files", () => {
+    expect(defaultStashMessage(["a/1.ts", "a/2.ts", "a/3.ts", "a/4.ts"])).toBe(
+      "4 files: 1.ts, 2.ts, 3.ts, +1 more",
+    );
   });
 });
