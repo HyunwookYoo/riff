@@ -107,7 +107,13 @@ regress drill-in navigation: after an ordinary click the set is empty, so the
 `Esc` handler falls straight through to the existing behavior.
 
 `anchor` (the Shift+click pivot) is component-local `$state` in
-`ChangesList.svelte` — nothing outside the list needs it.
+`ChangesList.svelte` — nothing outside the list needs it. It is only meaningful
+while a selection is live: `onRowClick` passes `anchor` to `applyClick` only when
+`changesSelectedPaths` is non-empty, otherwise `null`. That one condition covers
+every way a selection can end (`Esc`, `Clear`, a repo switch, a stash) without
+those call sites — two of which live outside the component — having to reach in
+and reset it. After any clear, the next Shift+click pivots on the file the diff
+pane is showing.
 
 ## 2. Click semantics
 
@@ -260,11 +266,20 @@ Selected rows get `class:multi`, styled `background: var(--accent-soft)` plus an
 
 `moveMenu` widens from `{ x, y, path }` to `{ x, y, paths: string[] }`.
 
-`openMove(e, path)`:
+`openMove(e, path)`, three cases:
 
 - `path` **is** in `sel` → the menu targets the whole selection.
-- `path` is **not** in `sel` → clear the selection, `pick(path)`, and target just
-  that file (Explorer behavior: right-clicking outside a selection re-selects).
+- `path` is **not** in `sel`, **and a selection is live** → clear the selection,
+  `pick(path)`, and target just that file (Explorer behavior: right-clicking
+  outside a selection re-selects).
+- **no selection at all** → the menu targets the clicked row and touches nothing
+  else.
+
+The third case is what keeps the ordinary right-click a pure peek. `pick` moves
+the diff pane, and the menu's only dismiss path (`onclick` on the window) cannot
+undo it — so re-selecting unconditionally would mean right-clicking a file and
+pressing Escape leaves the diff pane somewhere the user never chose. That is a
+change to single-file behavior, which this feature does not get to make.
 
 Labels follow the count: the head reads `Move to changelist` for one file and
 `Move 3 files to` for several; the stash item reads `Stash this file…` or

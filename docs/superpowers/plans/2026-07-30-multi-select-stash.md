@@ -1080,3 +1080,32 @@ No spec requirement is unassigned.
 **3. Placeholder scan:** No "TBD", "TODO", "handle edge cases", "add validation", or "similar to Task N". Every code step carries literal code; every verification step names the exact command and its expected result; the manual steps name the exact expected strings (`3 selected`, `Move 3 files to`, `Stash 3 files…`, `3 files: …, +2 more`).
 
 **4. Type consistency:** `ClickKind`, `SelectState`, `applyClick(kind, state, current, path, order)` and `defaultStashMessage(paths)` are declared once in Task 1 Step 3 and called with exactly those types in Task 2 Step 6 and Task 3 Step 4. `sel: Set<string>` (Task 2 Step 5) is read as `sel.has(…)`, `sel.size`, `[...sel]` in Tasks 3–4. `anchor: string | null` is written by Task 2 Step 6 and Task 3 Steps 3–4. `moveMenu` is `{ x: number; y: number; paths: string[] }` from Task 3 Step 3 onward and is read as `moveMenu.paths` in Steps 4 and 7. `moveFilesToChangelist(filePaths: string[], targetId: string)` (Task 3 Step 1) is called with `moveMenu.paths` (Step 3), `[dragPath]` (Step 5) and `dragPaths` (Task 4 Step 4) — all `string[]`. `stashTargets: string[] | null` (Task 3 Step 4) is guarded before every use. `dragPaths: string[] | null` (Task 4 Step 1) is non-null in both branches that read it.
+
+---
+
+## Amendments during implementation
+
+Rulings made with the project owner while executing this plan. The spec was
+updated to match; the task steps above are left as they were executed.
+
+1. **Pre-flight (before Task 1) — the singular changelist move helper is deleted,
+   not kept as a delegating wrapper.** Both its call sites move to the plural form
+   in Tasks 3–4, so a wrapper would ship a dead export. Task 3 Step 1 above
+   already reflects this. (Plan amended at `6065cfd`.)
+
+2. **Task 3 fix round 1 — the context menu re-selects only when a selection is
+   live.** As first written, `openMove`'s "outside the selection" branch ran on
+   every right-click where the row was not in `sel`, including the ordinary case
+   of no selection at all — so a plain right-click moved the diff pane and the
+   Shift+click pivot, with no way back when the menu was dismissed. That
+   contradicted the Global Constraint "the single-file context menu … behave
+   exactly as before". Resolution: three branches, with the no-selection case
+   restored to its historic pure peek. Spec §7 updated.
+
+3. **Task 3 fix round 1 — the Shift+click pivot is scoped to a live selection.**
+   `submitStash` reset `anchor`, but `Esc`, `Clear` and a repo switch did not, and
+   two of those live outside the component. Resolution: `onRowClick` passes
+   `anchor` to `applyClick` only while `changesSelectedPaths` is non-empty. No
+   second store field. Spec §1 updated.
+
+   Both Task 3 rulings landed in `637c565`.
