@@ -97,6 +97,27 @@ change" is still the right first question after the reduction.
 The **Stashes section is removed** from the sidebar. The **Tags section stays**
 — read-only, as a checkout and compare target.
 
+### 2.1 Working Copy shows one HEAD-relative list
+
+Today the screen splits into Unstaged (index↔worktree) and Staged
+(HEAD↔index) and remembers which side you are on (`appState.changesSide`).
+Without staging there is no reason to show two lists — but the split cannot
+simply be dropped in favour of the unstaged side, because a file staged in Fork
+and untouched since would then show an *empty* diff.
+
+So Working Copy shows **one list, one gap: `HEAD` ↔ working tree.** Two
+consequences:
+
+- **`changes_file_diff` loses its `staged: bool` parameter** and always reads
+  the old side as `HEAD:<path>` and the new side from disk. Both branches
+  already exist (`cli.rs:1385` picks the old spec, and the `!staged` arm always
+  reads disk) — this deletes a parameter rather than adding one.
+- **A file's badge needs a HEAD-relative status.** Neither porcelain code alone
+  is right: `AM` (added then modified) is *added* relative to HEAD, while `MD`
+  (staged edit, deleted on disk) is *deleted*. This needs a small pure function
+  with its own unit test — see the `headRelativeStatus` task in the plan. It
+  replaces `entryToChangedFile(entry, side)` with `entryToChangedFile(entry)`.
+
 ## 3. Backend — the command surface is the contract
 
 ### Delete (30 commands)
@@ -163,7 +184,7 @@ Reference points for the move: `checkout` `cli.rs:1852`, `fast_forward`
 
 ## 4. Frontend
 
-### Delete outright (≈1,470 lines)
+### Delete outright (≈1,505 lines)
 
 | File | Lines | Why |
 |---|---|---|
@@ -173,12 +194,19 @@ Reference points for the move: `checkout` `cli.rs:1852`, `fast_forward`
 | `src/lib/ui/OpRecoveryDialog.svelte` | 217 | same question on the op-failure path |
 | `src/lib/changelists.ts` | 326 | changelist model + index round-trip (`changelists.ts:266`) |
 | `src/lib/ui/changesSelect.ts` + `.test.ts` | 69 + 152 | multi-selection, which existed for bulk stash/move |
+| `src/lib/recovery.ts` | 35 | `offerRecovery`, the "stash or discard?" prompt model |
 
 `CheckoutDialog` and `OpRecoveryDialog` both exist to ask which auto-stash
 strategy to retry with. With auto-stash gone there is nothing to ask: checkout
 runs, and if git refuses, its stderr goes to the error banner unchanged.
 
-### Rewrite / shrink (≈2,130 lines removed)
+**`gitError.ts` survives** even though `recovery.ts` — its only caller — does
+not. `classifyGitError` is exactly what decides whether the §7 hint ("변경을
+정리한 뒤 다시 시도하세요") belongs under a raw error, and it already has tests
+(`gitError.test.ts`). A 217-line dialog plus a 35-line model collapse into one
+line of hint text on top of a classifier that stays as-is.
+
+### Rewrite / shrink (≈2,360 lines removed)
 
 | File | Lines | Removing |
 |---|---|---|
@@ -189,26 +217,35 @@ runs, and if git refuses, its stderr goes to the error banner unchanged.
 | `git.ts` | 662 → ~430 | 30 bindings |
 | `SyncControls.svelte` | 189 → ~120 | push button, force-push |
 | `commands.ts` | 145 → ~90 | Stash and Commit categories, push, pull-rebase |
+| `DiffView.svelte` | 992 → ~760 | the whole hunk-interaction layer: `fileHunks` load, `hunkRanges`, the hover Discard/Assign pill, the hunk→changelist menu, `changesSide` (`:144`–`:305`, `:700`–`:745`, `.hunk-*` CSS) |
 | `ReflogOverlay.svelte` | 290 → ~250 | the reset action (`:58`) |
 | `reflog.ts` | 51 → ~35 | `resetToReflog` (`:28`) |
-| `checkout.ts` | 128 → ~40 | dirty pre-check + strategy selection; keeps `runCheckout` + `refreshAfterCheckout` |
+| `checkout.ts` | 128 → ~40 | `isDirty`, `CheckoutStrategy`, `offerRecovery`; keeps `runCheckout` + `refreshAfterCheckout` |
+
+**One-line trims:** `repoWatch.ts:26` and `CommandPalette.svelte:20` both call
+`loadStashes()`; `shortcuts.ts:45` lists a "Commit" section with `Ctrl+Enter`
+and "View stashes".
 
 `store.svelte.ts` drops the write-side state: `stashes` `stashesOpen`
-`changelists` `hunkAssignments` `hunksByFile` `commitSubject` `commitBody`
-`commitAmend` `commitSignoff` `commitCoauthors` `committing` `recovery`, and the
-Changes multi-selection.
+`changelists` `activeChangelistId` `hunkAssignments` `hunksByFile`
+`changesSide` `changesSelectedPaths` `changesPaneFraction` `checkoutPrompt`
+`recovery` `commitSubject` `commitBody` `commitAmend` `commitSignoff`
+`commitCoauthors` `committing`.
 
 ### Untouched
 
-`DiffView` · `ConflictView` · `BlameView` · `Timelapse` · `ImageDiff` ·
-`SubmoduleDiff` · `FileList`/`TreeNode`/`PathTreeNode` · `BranchPicker` ·
-`BranchContainment` · `RepoChip`/`RepoTabs`/`TabBar` · `CommandPalette` ·
-`ShortcutsOverlay` · `UnrealSettings` · `graph.ts` · `compare.ts` ·
-`workspace.ts` · `history.ts` · `commitHistory.ts` · `diff/*`.
+`ConflictView` · `BlameView` · `Timelapse` · `ImageDiff` · `SubmoduleDiff` ·
+`FileList`/`TreeNode`/`PathTreeNode` · `BranchPicker` · `BranchContainment` ·
+`RepoChip`/`RepoTabs`/`TabBar` · `ConflictBanner` · `OpProgressBanner` ·
+`ShortcutsOverlay` (the component) · `UnrealSettings` · `gitError.ts` ·
+`graph.ts` · `compare.ts` · `workspace.ts` · `history.ts` · `commitHistory.ts` ·
+`diff/*`.
 
-Every asset that makes riff worth using survives untouched.
+`ConflictView`'s "hunk" vocabulary refers to *conflict* hunks parsed from merge
+markers — unrelated to the diff hunks being removed from `DiffView`. It is not
+touched.
 
-**Estimated total: ~4.8k lines removed (frontend ~3.6k, Rust ~1.2k), about 18%
+**Estimated total: ~5.1k lines removed (frontend ~3.9k, Rust ~1.2k), about 19%
 of the codebase.** Estimates, not measurements — the plan should not treat them
 as acceptance criteria.
 
