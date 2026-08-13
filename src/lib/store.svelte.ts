@@ -2,19 +2,16 @@ import type {
   AppMode,
   Branch,
   ChangedFile,
-  Changelist,
   Commit,
   Containment,
   ContainmentDetail,
   CompareCtx,
-  Hunk,
   CompareMode,
   DiffMode,
   FileViewMode,
   RepoEntry,
   RepoFile,
   RepoStatus,
-  Stash,
   ThemeChoice,
   ViewMode,
   WorkspaceLayout,
@@ -177,28 +174,6 @@ class AppState {
   // Graph "new branch here": remembers the "check out after creating" checkbox
   // across creates within the session (sticky). Default off. Session-only.
   graphCheckoutAfterCreate = $state(false);
-  // Pending "switch with local changes" prompt. Set when a checkout is
-  // requested on a dirty working tree; the CheckoutDialog reads it to offer
-  // stash / bring / discard. `ffTo` (a remote ref) fast-forwards the local to
-  // the remote after the switch. null = no prompt open. Session-only.
-  checkoutPrompt = $state<{
-    repoPath: string;
-    target: string;
-    ffTo?: string;
-  } | null>(null);
-  // Reactive recovery prompt for an op refused by local changes (error-recovery
-  // design, case A). Set by the op wrappers via offerRecovery() when
-  // classifyGitError flags a recoverable failure; read by OpRecoveryDialog.
-  // `retry` re-runs the op with a strategy ("stash" always; "discard" only when
-  // offerDiscard). null = closed. Session-only.
-  recovery = $state<{
-    op: "checkout" | "pull" | "merge";
-    title: string;
-    reason: string;
-    paths: string[];
-    offerDiscard: boolean;
-    retry: (strategy: "stash" | "discard") => Promise<void>;
-  } | null>(null);
   // The user's compare context, snapshotted when entering history mode (which
   // reuses start/target + per-repo overrides + focus to render parent..commit)
   // and restored when returning to compare — so peeking at history doesn't
@@ -209,43 +184,15 @@ class AppState {
     activeRepoIdx: number | null;
     overrides: Record<number, { startBranch: string; targetBranch: string }>;
   } | null>(null);
-  // Source-control status (VC Phase 0 scaffold). Populated from
-  // `git status --porcelain=v2` once the Changes screen (Phase 1) wires it in;
-  // entries split there into staged (index_status≠'.') / unstaged
-  // (worktree_status≠'.') / untracked. `ahead`/`behind`/`upstream` feed the
-  // network toolbar. Session-only; additive until Phase 1 consumes it.
+  // Working-tree status from `git status --porcelain=v2` for the Working Copy
+  // repo. Entries render as one HEAD-relative list; `ahead`/`behind`/`upstream`
+  // feed the sync toolbar and the sidebar badge. Session-only.
   repoStatus = $state<RepoStatus | null>(null);
   loadingStatus = $state(false);
-  // Which side of the Changes screen the selected file is being viewed on:
-  // "unstaged" (index↔worktree) or "staged" (HEAD↔index). DiffView reads this
-  // to pick the per-side diff. Session-only.
-  changesSide = $state<"staged" | "unstaged">("unstaged");
-  // Changelists (Perforce/JetBrains-style named buckets) for the changes repo,
-  // loaded + reconciled against status. `activeChangelistId` is the bucket the
-  // commit box targets. Persisted per-repo via the backend. Session mirror.
-  changelists = $state<Changelist[]>([]);
-  activeChangelistId = $state("default");
-  // Hunk-level changelist assignment (session-only). `hunkAssignments` maps a
-  // file path → (hunk id → changelist id) for hunks reassigned away from the
-  // file's home changelist; an absent hunk follows its file's home. `hunksByFile`
-  // caches a file's current hunks (with ids) — populated when the diff's HunkBar
-  // loads them — so the changelist list can show per-list hunk counts and the
-  // commit can resolve ids → indices. Both reset on reload / repo switch.
-  hunkAssignments = $state<Record<string, Record<string, string>>>({});
-  hunksByFile = $state<Record<string, Hunk[]>>({});
   // Which repo the Changes screen stages/commits against: index into `repos`.
   // 0 = main; submodule/manual repos let you stage & commit inside them. Like
   // History's `historyRepoIdx`, independent of the compare Focus. Session-only.
   changesRepoIdx = $state(0);
-  // Ad-hoc multi-selection in the Changes list, for bulk stash / move. EMPTY is
-  // the normal single-selection mode — only Ctrl/Shift+click populates it. That
-  // invariant keeps `selectedFile` (which drives the diff pane) unchanged, and
-  // keeps Esc from swallowing a drill-in pop when nothing is multi-selected.
-  // Session-only.
-  changesSelectedPaths = $state(new Set<string>());
-  // Top (Unstaged) share of the Changes list area; the draggable divider
-  // between the Unstaged and Staged panes adjusts it. Session-only.
-  changesPaneFraction = $state(0.5);
   // refs sidebar (Working/Graph nav + branches/tags) visibility. Toggleable
   // (Ctrl+B); shown by default so the Fork-style view nav is visible.
   // Session-only.
@@ -259,7 +206,7 @@ class AppState {
   currentUpstream = $state<string | null>(null);
   currentAhead = $state(0);
   currentBehind = $state(0);
-  // True while a fetch/pull/push runs (disables the sync buttons + spinner).
+  // True while a fetch/pull runs (disables the sync buttons + spinner).
   syncing = $state(false);
   // >0 while an in-app git op (rebase, merge, pull, continue/abort) is driving
   // the repo. The filesystem watcher skips its refresh while this is set, so a
@@ -274,21 +221,9 @@ class AppState {
   // In-progress operation that may need resolving: "merge" | "rebase" |
   // "cherry-pick" | "revert" | "none". Drives the conflict banner.
   pendingOp = $state("none");
-  // Stash entries (git stash list) for the source-control repo. Shown in the
-  // refs sidebar. Session-only.
-  stashes = $state<Stash[]>([]);
   // Bumped after network ops so the refs sidebar re-lists (new remotes/branches)
   // without going through a full status reload.
   refsRefresh = $state(0);
-  // Commit box state (Phase 1.3). `commitSignoff` is sticky across commits (a
-  // user preference); subject/body/amend/coauthors are cleared on success.
-  // Session-only.
-  commitSubject = $state("");
-  commitBody = $state("");
-  commitAmend = $state(false);
-  commitSignoff = $state(false);
-  commitCoauthors = $state<string[]>([]);
-  committing = $state(false);
 
   // Mark an in-app git op as started/finished. gitOpDepth gates the file watcher
   // (so a rebase doesn't redraw on every replayed commit); gitOpLabel drives the

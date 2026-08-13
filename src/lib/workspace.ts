@@ -16,7 +16,7 @@ import {
   loadCurrentBranch,
   loadPendingOp,
   loadStatus,
-  resetSourceControl,
+  resetWorkingCopy,
 } from "./workingCopy";
 import { clearBlameCache } from "./blameCache";
 import type { Branch, RepoEntry, RepoFile } from "./types";
@@ -292,7 +292,7 @@ export async function loadMainRepo(
   appState.blameTarget = null;
   // History browser's commit log belongs to the old repo — drop it.
   resetHistory();
-  resetSourceControl();
+  resetWorkingCopy();
   clearBlameCache();
   try {
     await validateRepo(path);

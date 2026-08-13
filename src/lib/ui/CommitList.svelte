@@ -41,10 +41,10 @@
   async function act(op: Promise<void>, label?: string) {
     if (busy) return;
     busy = true;
-    // Hold off the file-watcher's refreshes while we drive this op so a
-    // multi-commit rebase doesn't redraw the graph on every replayed commit;
-    // we refresh once below when it finishes or stops. A label also shows the
-    // "…in progress, please wait" banner (only for notable ops like rebase).
+    // Hold off the file-watcher's refresh while branch creation (and the
+    // optional checkout-after-create) runs; we refresh once below when it
+    // finishes. A label shows the "…in progress, please wait" banner only
+    // when switching after create.
     appState.beginGitOp(label);
     let ok = false;
     try {
@@ -63,10 +63,10 @@
         // the new/moved/deleted branch instead of the write-once cache.
         void reloadBranchesFor(appState.changesRepoIdx);
       } else {
-        // A conflicting cherry-pick/revert/rebase leaves the repo mid-operation.
-        // Don't loadCommits() here — it clears appState.error, swallowing the
-        // message. Load status so the conflict banner's count is accurate even
-        // from the graph.
+        // Branch creation (or the checkout after it) failed. Don't loadCommits()
+        // here — it clears appState.error, swallowing the message. Load status
+        // so the conflict banner stays accurate if the repo was already
+        // mid-operation for an unrelated reason.
         await loadPendingOp();
         if (appState.pendingOp !== "none") void loadStatus();
       }

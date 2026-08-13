@@ -140,7 +140,7 @@
 
 <div class="bar">
   {#if (appState.appMode === "changes" || appState.appMode === "history") && !appState.sidebarOpen}
-    <div class="subtoggle" role="group" aria-label="Source control view">
+    <div class="subtoggle" role="group" aria-label="Working Copy view">
       <button
         type="button"
         class:active={appState.appMode === "changes"}

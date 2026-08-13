@@ -83,15 +83,17 @@ export function mergeDuplicatePaths(entries: StatusEntry[]): StatusEntry[] {
   return out;
 }
 
-/// The repo the Changes screen reads status for — `changesRepoIdx` (main or a
-/// submodule/manual repo), independent of the compare Focus.
+/// The repo Working Copy identifies as current — `changesRepoIdx` (main or a
+/// submodule/manual repo), independent of the compare Focus. Every status
+/// read, fetch/pull, abort/continue, and conflict-resolution op targets
+/// whichever repo this resolves to.
 export function changesRepoPath(): string {
   return appState.repos[appState.changesRepoIdx]?.path ?? appState.repoPath;
 }
 
 /// Switch which repo the Changes screen operates on (main vs a submodule).
-/// Clears the per-repo commit box and selection, then reloads that repo's
-/// status. Used by the Changes-mode repo picker.
+/// Clears the per-repo selection, then reloads that repo's status. Used by
+/// the Changes-mode repo picker.
 export function setChangesRepo(idx: number): void {
   if (idx === appState.changesRepoIdx) return;
   appState.changesRepoIdx = idx;
@@ -102,10 +104,6 @@ export function setChangesRepo(idx: number): void {
   appState.selectedCommitSha = null;
   appState.repoStatus = null;
   appState.selectedFile = null;
-  appState.commitSubject = "";
-  appState.commitBody = "";
-  appState.commitAmend = false;
-  appState.commitCoauthors = [];
   void loadStatus();
 }
 
@@ -268,11 +266,7 @@ export async function refreshActiveView(): Promise<void> {
 
 /// Run a fetch/pull against the source-control repo with a busy flag,
 /// surfacing errors and refreshing afterward.
-async function runSync(
-  op: Promise<void>,
-  label: string,
-  onError?: (raw: string) => boolean,
-): Promise<void> {
+async function runSync(op: Promise<void>, label: string): Promise<void> {
   if (appState.syncing) return;
   appState.syncing = true;
   appState.beginGitOp(label);
@@ -280,12 +274,7 @@ async function runSync(
   try {
     await op;
   } catch (e) {
-    const raw = String(e);
-    // Always surface the raw message (the finally preserves it across the
-    // refresh); onError may open the recovery dialog on top, and Cancel reveals
-    // this banner.
-    appState.error = raw;
-    onError?.(raw);
+    appState.error = String(e);
   } finally {
     appState.syncing = false;
     // Keep a sync failure's message: refreshActiveView() runs loadStatus()/
@@ -372,13 +361,9 @@ export async function doPull(rebase: boolean): Promise<void> {
   }
   return runSync(pullCmd(changesRepoPath(), rebase), "Pulling…");
 }
-/// Clear all Changes-screen state on repo switch — the status, repo selection,
-/// and commit box belong to the old workspace.
-export function resetSourceControl(): void {
+/// Clear all Changes-screen state on repo switch — the status and repo
+/// selection belong to the old workspace.
+export function resetWorkingCopy(): void {
   appState.repoStatus = null;
   appState.changesRepoIdx = 0;
-  appState.commitSubject = "";
-  appState.commitBody = "";
-  appState.commitAmend = false;
-  appState.commitCoauthors = [];
 }
