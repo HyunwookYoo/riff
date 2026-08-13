@@ -210,8 +210,7 @@
     if (
       appState.paletteOpen ||
       appState.shortcutsOpen ||
-      appState.reflogOpen ||
-      appState.stashesOpen
+      appState.reflogOpen
     )
       return;
 

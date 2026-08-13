@@ -103,7 +103,7 @@
     // Create the branch at the commit via `git branch` (never `checkout -b`:
     // switching to an arbitrary commit could fail on a dirty tree). When "check
     // out after creating" is on, switch afterward through requestCheckout, which
-    // handles a dirty tree via the stash / bring / discard recovery flow.
+    // runs the checkout and surfaces git's error if local changes block it.
     const switchAfter = appState.graphCheckoutAfterCreate;
     void act(
       (async () => {

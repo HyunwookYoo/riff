@@ -347,7 +347,7 @@
   </header>
 
   {#if appState.appMode === "changes" || appState.appMode === "history"}
-    <nav class="views" aria-label="Source control view">
+    <nav class="views" aria-label="Working Copy view">
       <button
         type="button"
         class="view"

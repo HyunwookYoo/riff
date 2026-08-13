@@ -169,8 +169,6 @@ class AppState {
   shortcutsOpen = $state(false);
   // Reflog recovery panel visibility. Session-only.
   reflogOpen = $state(false);
-  // Stashes panel visibility. Session-only.
-  stashesOpen = $state(false);
   // Graph "new branch here": remembers the "check out after creating" checkbox
   // across creates within the session (sticky). Default off. Session-only.
   graphCheckoutAfterCreate = $state(false);
@@ -189,8 +187,8 @@ class AppState {
   // feed the sync toolbar and the sidebar badge. Session-only.
   repoStatus = $state<RepoStatus | null>(null);
   loadingStatus = $state(false);
-  // Which repo the Changes screen stages/commits against: index into `repos`.
-  // 0 = main; submodule/manual repos let you stage & commit inside them. Like
+  // Which repo Working Copy and the graph operate on: index into `repos`.
+  // 0 = main; submodule/manual repos can be viewed the same way. Like
   // History's `historyRepoIdx`, independent of the compare Focus. Session-only.
   changesRepoIdx = $state(0);
   // refs sidebar (Working/Graph nav + branches/tags) visibility. Toggleable
