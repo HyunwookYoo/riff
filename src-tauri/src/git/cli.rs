@@ -1365,7 +1365,6 @@ impl GitLayer for GitCli {
         file_path: &str,
         old_path: Option<&str>,
         status: FileStatus,
-        staged: bool,
         force: bool,
         uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError> {
@@ -1377,16 +1376,12 @@ impl GitLayer for GitCli {
         let needs_old = !matches!(status, FileStatus::Added);
         let needs_new = !matches!(status, FileStatus::Deleted);
 
-        // Old side is always a blob: HEAD for the staged gap, the index for the
-        // unstaged gap. Renames diff against the pre-rename path. Read fresh via
-        // one-shot cat-file — the session batch snapshots the index at startup,
-        // so it would serve stale `:path` content after a stage/unstage/apply.
+        // Old side is always the HEAD blob. Renames diff against the pre-rename
+        // path. Read fresh via one-shot cat-file — the session batch snapshots
+        // the index at startup, so it would serve stale `:path` content after an
+        // external change.
         let old_target = old_path.unwrap_or(file_path);
-        let old_spec = if staged {
-            format!("HEAD:{old_target}")
-        } else {
-            format!(":{old_target}")
-        };
+        let old_spec = format!("HEAD:{old_target}");
 
         // Submodule gitlink: the working-tree entry is a nested repo directory,
         // not a file. Reading it as bytes fails (EACCES on Windows), so show the
@@ -1394,12 +1389,8 @@ impl GitLayer for GitCli {
         let fs_path = path.join(file_path);
         if fs_path.is_dir() {
             let old_sha = gitlink_sha(path, &old_spec);
-            let new_sha = if staged {
-                gitlink_sha(path, &format!(":{file_path}"))
-            } else {
-                // The parent's worktree gitlink is the submodule's checked-out HEAD.
-                gitlink_sha(&fs_path, "HEAD")
-            };
+            // The parent's worktree gitlink is the submodule's checked-out HEAD.
+            let new_sha = gitlink_sha(&fs_path, "HEAD");
             // Both SHAs present → try rendering the submodule's own commit log
             // (see file_diff). Falls through to the SHA text on any failure.
             if let (Some(old), Some(new)) = (&old_sha, &new_sha) {
@@ -1441,8 +1432,6 @@ impl GitLayer for GitCli {
             };
             let new_asset = if !needs_new {
                 Vec::new()
-            } else if staged {
-                cat_file_filtered(path, &format!(":{file_path}")).unwrap_or_default()
             } else {
                 fs::read(&fs_path).unwrap_or_default()
             };
@@ -1457,11 +1446,7 @@ impl GitLayer for GitCli {
             }
             let old_uexp = if needs_old {
                 uasset::sibling_uexp(old_target).and_then(|sp| {
-                    let spec = if staged {
-                        format!("HEAD:{sp}")
-                    } else {
-                        format!(":{sp}")
-                    };
+                    let spec = format!("HEAD:{sp}");
                     cat_file_filtered(path, &spec)
                 })
             } else {
@@ -1469,9 +1454,6 @@ impl GitLayer for GitCli {
             };
             let new_uexp = if !needs_new {
                 None
-            } else if staged {
-                uasset::sibling_uexp(file_path)
-                    .and_then(|sp| cat_file_filtered(path, &format!(":{sp}")))
             } else {
                 uasset::sibling_uexp(file_path).and_then(|sp| fs::read(path.join(sp)).ok())
             };
@@ -1497,8 +1479,6 @@ impl GitLayer for GitCli {
             };
             let new_img = if !needs_new {
                 Vec::new()
-            } else if staged {
-                cat_file_filtered(path, &format!(":{file_path}")).unwrap_or_default()
             } else {
                 fs::read(&fs_path).unwrap_or_default()
             };
@@ -1526,15 +1506,11 @@ impl GitLayer for GitCli {
             Vec::new()
         };
 
-        // New side: the index blob (staged gap, fresh cat-file) or the
-        // working-tree file on disk. Disk files are unbounded, so guard their
-        // size before reading; git blobs are bounded by repo content.
+        // New side: the working-tree file on disk. Disk files are unbounded, so
+        // guard their size before reading; git blobs are bounded by repo
+        // content.
         let (new_bytes, new_size) = if !needs_new {
             (Vec::new(), 0u64)
-        } else if staged {
-            let b = cat_file_oneshot(path, &format!(":{file_path}")).unwrap_or_default();
-            let n = b.len() as u64;
-            (b, n)
         } else {
             let disk_size = fs::metadata(&fs_path).map(|m| m.len()).unwrap_or(0);
             if !force && disk_size.max(old_bytes.len() as u64) > LARGE_FILE_BYTES {

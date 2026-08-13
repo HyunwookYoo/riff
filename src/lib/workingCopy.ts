@@ -12,10 +12,9 @@ import {
 import { loadCommits, invalidateGraph, enterGraphView } from "./commitHistory";
 import type { ChangedFile, FileStatus, StatusEntry } from "./types";
 
-/// Map a porcelain-v2 status code (X or Y for one side) to a `FileStatus` for
-/// the diff header + per-side diff. `?` (untracked) shows as added; `U`
-/// (conflict) and anything unrecognized fall back to modified.
-function toFileStatus(code: string): FileStatus {
+/// Map one porcelain-v2 side code to a `FileStatus`. Unrecognized codes fall
+/// back to modified.
+function codeToStatus(code: string): FileStatus {
   switch (code) {
     case "A":
       return "added";
@@ -27,11 +26,23 @@ function toFileStatus(code: string): FileStatus {
       return "copied";
     case "T":
       return "typechanged";
-    case "?":
-      return "added";
     default:
       return "modified";
   }
+}
+
+/// A file's status relative to HEAD — what Working Copy's single list shows.
+/// Porcelain v2 reports two codes (X = index vs HEAD, Y = worktree vs index)
+/// and neither alone answers the question: `AM` is *added* since HEAD even
+/// though Y says modified, and `MD` is *deleted* even though X says modified.
+/// Read them newest-state-first: gone from disk wins, then never-in-HEAD, then
+/// whichever side actually changed.
+export function headRelativeStatus(e: StatusEntry): FileStatus {
+  const x = e.index_status;
+  const y = e.worktree_status;
+  if (x === "?" || y === "?") return "added";
+  if (y === "D") return "deleted";
+  return codeToStatus(x === "." ? y : x);
 }
 
 /// The repo the Changes screen reads status for — `changesRepoIdx` (main or a
@@ -60,16 +71,6 @@ export function setChangesRepo(idx: number): void {
   void loadStatus();
 }
 
-/// An entry belongs to the Staged list when its index side changed (and isn't
-/// untracked); to the Unstaged list when its worktree side changed (untracked
-/// `?` counts here). A file modified in both shows in both.
-export function isStaged(e: StatusEntry): boolean {
-  return e.index_status !== "." && e.index_status !== "?";
-}
-export function isUnstaged(e: StatusEntry): boolean {
-  return e.worktree_status !== ".";
-}
-
 // Porcelain v2 unmerged XY codes (both sides come from a `u` record).
 const CONFLICT_CODES = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
 export function entryConflicted(e: StatusEntry): boolean {
@@ -96,7 +97,7 @@ export function conflictedEntries(): StatusEntry[] {
 export async function enterConflictResolution(): Promise<void> {
   await enterChangesMode();
   const conflicts = conflictedEntries();
-  if (conflicts.length > 0) openChange(conflicts[0], "unstaged");
+  if (conflicts.length > 0) openChange(conflicts[0]);
 }
 
 /// Open the next still-conflicted file (the first unmerged entry that isn't the
@@ -107,7 +108,7 @@ export function openNextConflict(): void {
   if (conflicts.length === 0) return;
   const cur = appState.selectedFile?.path;
   const next = conflicts.find((e) => e.path !== cur) ?? conflicts[0];
-  openChange(next, "unstaged");
+  openChange(next);
 }
 
 export async function enterChangesMode(): Promise<void> {
@@ -155,24 +156,12 @@ export async function loadStatus(): Promise<void> {
     appState.currentUpstream = st.upstream;
     appState.currentAhead = st.ahead;
     appState.currentBehind = st.behind;
-    const unstaged = st.entries.filter(isUnstaged);
-    const staged = st.entries.filter(isStaged);
-    // Keep the current selection if it still has changes on its side (so
-    // staging a hunk/file doesn't jump the view); otherwise fall back to the
-    // first available change.
+    const changed = st.entries;
     const cur = appState.selectedFile;
-    const side = appState.changesSide;
-    const sameSide = side === "staged" ? staged : unstaged;
-    const kept = cur ? sameSide.find((e) => e.path === cur.path) : undefined;
-    if (kept) {
-      openChange(kept, side);
-    } else if (unstaged.length > 0) {
-      openChange(unstaged[0], "unstaged");
-    } else if (staged.length > 0) {
-      openChange(staged[0], "staged");
-    } else {
-      appState.selectedFile = null;
-    }
+    const kept = cur ? changed.find((e) => e.path === cur.path) : undefined;
+    if (kept) openChange(kept);
+    else if (changed.length > 0) openChange(changed[0]);
+    else appState.selectedFile = null;
   } catch (e) {
     if (session !== statusSession) return;
     appState.error = String(e);
@@ -183,37 +172,23 @@ export async function loadStatus(): Promise<void> {
   }
 }
 
-/// Build a `ChangedFile` (consumed verbatim by DiffView) from a status entry on
-/// a given side — the per-side status code drives the diff header + badge.
-export function entryToChangedFile(
-  entry: StatusEntry,
-  side: "staged" | "unstaged",
-): ChangedFile {
-  const code = side === "staged" ? entry.index_status : entry.worktree_status;
+/// Build a `ChangedFile` (consumed verbatim by DiffView) from a status entry.
+/// The badge and the diff both describe the HEAD↔worktree gap.
+export function entryToChangedFile(entry: StatusEntry): ChangedFile {
   return {
     path: entry.path,
     old_path: entry.orig_path,
-    status: toFileStatus(code),
+    status: headRelativeStatus(entry),
     repoIdx: appState.changesRepoIdx,
   };
 }
 
-/// Select a change (already a `ChangedFile`) on a side, recording the side so
-/// the diff loads the right gap.
-export function selectChange(
-  file: ChangedFile,
-  side: "staged" | "unstaged",
-): void {
-  appState.changesSide = side;
+export function selectChange(file: ChangedFile): void {
   appState.selectedFile = file;
 }
 
-/// Select a change from a status entry on a given side.
-export function openChange(
-  entry: StatusEntry,
-  side: "staged" | "unstaged",
-): void {
-  selectChange(entryToChangedFile(entry, side), side);
+export function openChange(entry: StatusEntry): void {
+  selectChange(entryToChangedFile(entry));
 }
 
 /// Refresh just the current-branch indicator (name + ahead/behind) for the
@@ -373,7 +348,6 @@ export function doPush(force: boolean): Promise<void> {
 export function resetSourceControl(): void {
   appState.repoStatus = null;
   appState.changesRepoIdx = 0;
-  appState.changesSide = "unstaged";
   appState.commitSubject = "";
   appState.commitBody = "";
   appState.commitAmend = false;

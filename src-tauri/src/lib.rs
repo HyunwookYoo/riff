@@ -131,7 +131,6 @@ async fn changes_file_diff(
     file_path: String,
     old_path: Option<String>,
     status: FileStatus,
-    staged: bool,
     force: bool,
     ue_version: Option<String>,
 ) -> Result<FileDiff, GitError> {
@@ -141,7 +140,6 @@ async fn changes_file_diff(
         &file_path,
         old_path.as_deref(),
         status,
-        staged,
         force,
         &cfg,
     )

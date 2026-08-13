@@ -431,15 +431,14 @@ export function fileDiff(
 
 
 /**
- * Per-side diff for the Changes screen. `staged` true → HEAD↔index gap;
- * false → index↔worktree gap. `status` is the porcelain status for that side.
+ * Per-file diff for the Changes screen: always the HEAD↔working-tree gap.
+ * `status` is the file's HEAD-relative porcelain status.
  */
 export function changesFileDiff(
   path: string,
   filePath: string,
   oldPath: string | null,
   status: FileStatus,
-  staged: boolean,
   force: boolean,
   ueVersion: string | null = null,
 ): Promise<FileDiff> {
@@ -448,7 +447,6 @@ export function changesFileDiff(
     filePath,
     oldPath,
     status,
-    staged,
     force,
     ueVersion,
   });

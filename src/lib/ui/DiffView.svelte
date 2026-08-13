@@ -173,7 +173,6 @@
           file.path,
           file.old_path,
           file.status,
-          appState.changesSide === "staged",
           force,
           ueVersion,
         );

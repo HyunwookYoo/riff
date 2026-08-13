@@ -312,19 +312,17 @@ pub trait GitLayer {
         force: bool,
         uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError>;
-    /// Per-file diff for the source-control Changes screen, one *side* at a
-    /// time. `staged` selects the HEAD↔index gap (old = `HEAD:path`, new = the
-    /// index blob); otherwise the index↔worktree gap (old = index blob, new =
-    /// the working-tree file). `status` is the porcelain status for *that side*,
-    /// driving which side is absent (added → no old, deleted → no new). Unreal
-    /// assets are derived to a property view per `uasset_cfg`.
+    /// Per-file diff for the source-control Changes screen. The gap is always
+    /// HEAD↔working tree (old = `HEAD:path`, new = the working-tree file).
+    /// `status` is the file's HEAD-relative porcelain status, driving which
+    /// side is absent (added → no old, deleted → no new). Unreal assets are
+    /// derived to a property view per `uasset_cfg`.
     fn changes_file_diff(
         &self,
         path: &Path,
         file_path: &str,
         old_path: Option<&str>,
         status: FileStatus,
-        staged: bool,
         force: bool,
         uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError>;

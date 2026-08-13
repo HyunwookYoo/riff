@@ -32,7 +32,7 @@
   }
   function pick(path: string) {
     const e = byPath.get(path);
-    if (e) selectChange(entryToChangedFile(e, "unstaged"), "unstaged");
+    if (e) selectChange(entryToChangedFile(e));
   }
 
   // Tree-view directory collapse, keyed by path.
@@ -60,7 +60,7 @@
 )}
   {@const e = byPath.get(path)}
   {#if e}
-    {@const cf = entryToChangedFile(e, "unstaged") as ChangedFile}
+    {@const cf = entryToChangedFile(e) as ChangedFile}
     <div class="cl-file" class:active={isSel(path)}>
       <button
         type="button"
