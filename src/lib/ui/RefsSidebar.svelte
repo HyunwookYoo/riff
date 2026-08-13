@@ -109,8 +109,8 @@
   function doCheckout(b: Branch) {
     void requestCheckout(repoPath, checkoutTarget(b), checkoutFf(b));
   }
-  // A clean tree switches immediately; a dirty tree opens the CheckoutDialog
-  // (stash / bring / discard) so local changes don't block the switch.
+  // Runs the switch directly; if git refuses (local changes in the way), the
+  // error banner shows its message instead of blocking the switch upfront.
   function confirmCheckout(b: Branch) {
     void requestCheckout(repoPath, checkoutTarget(b), checkoutFf(b));
   }

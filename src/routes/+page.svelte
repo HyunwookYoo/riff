@@ -13,8 +13,6 @@
   import ConflictBanner from "$lib/ui/ConflictBanner.svelte";
   import OpProgressBanner from "$lib/ui/OpProgressBanner.svelte";
   import ConflictView from "$lib/ui/ConflictView.svelte";
-  import CheckoutDialog from "$lib/ui/CheckoutDialog.svelte";
-  import OpRecoveryDialog from "$lib/ui/OpRecoveryDialog.svelte";
   import CommandPalette from "$lib/ui/CommandPalette.svelte";
   import ShortcutsOverlay from "$lib/ui/ShortcutsOverlay.svelte";
   import ReflogOverlay from "$lib/ui/ReflogOverlay.svelte";
@@ -210,7 +208,6 @@
     // Modal surfaces own the keyboard — suppress every other global shortcut
     // while one is open (each handles its own Esc).
     if (
-      appState.checkoutPrompt ||
       appState.paletteOpen ||
       appState.shortcutsOpen ||
       appState.reflogOpen ||
@@ -431,8 +428,6 @@
   {/if}
   <OpProgressBanner />
   <ConflictBanner />
-  <CheckoutDialog />
-  <OpRecoveryDialog />
   <CommandPalette />
   <ShortcutsOverlay />
   <ReflogOverlay />

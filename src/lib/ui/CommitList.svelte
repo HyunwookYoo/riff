@@ -23,8 +23,9 @@
     stashRebase,
     reset,
     revert,
+    status,
   } from "$lib/git";
-  import { isDirty, requestCheckout } from "$lib/checkout";
+  import { requestCheckout } from "$lib/checkout";
   import { reloadBranchesFor } from "$lib/workspace";
   import { confirmAction } from "$lib/dialogs";
   import type { Commit } from "$lib/types";
@@ -83,6 +84,21 @@
       }
     } finally {
       appState.endGitOp();
+    }
+  }
+
+  // True when the working tree has tracked modifications (staged or unstaged)
+  // that would block a clean rebase. Untracked-only trees return false (git
+  // carries new files over). Used to decide whether a rebase needs to stash
+  // first (stashRebase) and to warn about it.
+  async function isDirty(repoPath: string): Promise<boolean> {
+    try {
+      const st = await status(repoPath);
+      return st.entries.some(
+        (e) => !(e.index_status === "?" && e.worktree_status === "?"),
+      );
+    } catch {
+      return false;
     }
   }
 
@@ -261,12 +277,13 @@
   function filterToBranch(name: string) {
     setHistoryRef(appState.historyRef === name ? "" : name);
   }
-  // Double-click a branch label in the graph to check it out. A clean tree
-  // switches immediately; a dirty tree opens the CheckoutDialog (stash / bring
-  // / discard). A remote-tracking label (origin/x) DWIMs into a local branch of
-  // the same short name — checking out "origin/x" verbatim would detach HEAD.
-  // Local branches (even "feature/foo") are checked out as-is; the kind comes
-  // from the repo's ref list so a slash in a local name isn't mis-stripped.
+  // Double-click a branch label in the graph to check it out — runs the
+  // switch directly; if git refuses (local changes in the way), the error
+  // banner shows its message. A remote-tracking label (origin/x) DWIMs into a
+  // local branch of the same short name — checking out "origin/x" verbatim
+  // would detach HEAD. Local branches (even "feature/foo") are checked out
+  // as-is; the kind comes from the repo's ref list so a slash in a local name
+  // isn't mis-stripped.
   function confirmCheckoutRef(name: string) {
     const refs = appState.branchesByRepoIdx[appState.changesRepoIdx] ?? [];
     const isRemote = refs.find((r) => r.name === name)?.kind === "remote";
