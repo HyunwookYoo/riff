@@ -35,14 +35,54 @@ function codeToStatus(code: string): FileStatus {
 /// Porcelain v2 reports two codes (X = index vs HEAD, Y = worktree vs index)
 /// and neither alone answers the question: `AM` is *added* since HEAD even
 /// though Y says modified, and `MD` is *deleted* even though X says modified.
-/// Read them newest-state-first: gone from disk wins, then never-in-HEAD, then
-/// whichever side actually changed.
+/// Read them never-in-HEAD-first, then newest-state: `A` (added to the index,
+/// no HEAD or rename source) is *added* no matter what Y says next — even
+/// `AD` (added, then removed from disk again) — because there is no HEAD blob
+/// to call "deleted" against; only once HEAD is known to have real content
+/// does gone-from-disk win, then whichever side actually changed.
 export function headRelativeStatus(e: StatusEntry): FileStatus {
   const x = e.index_status;
   const y = e.worktree_status;
-  if (x === "?" || y === "?") return "added";
+  if (x === "?" || y === "?" || x === "A") return "added";
   if (y === "D") return "deleted";
   return codeToStatus(x === "." ? y : x);
+}
+
+/// Collapse porcelain v2's duplicate-record paths into one entry per path.
+/// `git rm --cached f.txt` (index entry dropped, disk file left alone) makes
+/// git emit two records for `f.txt` — an ordinary changed entry (X = `D`,
+/// gone from the index) and a separate untracked entry (`?`/`?`, since the
+/// disk file is no longer in the index to compare against):
+///   1 D. N... 100644 000000 000000 45b983b 0000000 f.txt
+///   ? f.txt
+/// Rendering both as-is would give Working Copy's single list two rows keyed
+/// on the same path. The path isn't cleanly "deleted" (disk still has it) or
+/// cleanly "added" (HEAD still has it) — HEAD and the working tree both have
+/// real content here and only a real diff can say whether it matches, so the
+/// merged record is synthetic `M`/`M`: through `headRelativeStatus` that's
+/// "modified", which reads both HEAD and disk fresh instead of trusting
+/// either duplicate's code alone.
+export function mergeDuplicatePaths(entries: StatusEntry[]): StatusEntry[] {
+  const byPath = new Map<string, StatusEntry[]>();
+  for (const e of entries) {
+    const group = byPath.get(e.path);
+    if (group) group.push(e);
+    else byPath.set(e.path, [e]);
+  }
+  const out: StatusEntry[] = [];
+  for (const group of byPath.values()) {
+    if (group.length === 1) {
+      out.push(group[0]);
+      continue;
+    }
+    out.push({
+      path: group[0].path,
+      orig_path: group.find((e) => e.orig_path)?.orig_path ?? null,
+      index_status: "M",
+      worktree_status: "M",
+    });
+  }
+  return out;
 }
 
 /// The repo the Changes screen reads status for — `changesRepoIdx` (main or a
@@ -156,7 +196,10 @@ export async function loadStatus(): Promise<void> {
     appState.currentUpstream = st.upstream;
     appState.currentAhead = st.ahead;
     appState.currentBehind = st.behind;
-    const changed = st.entries;
+    // Dedupe before picking a selection so a duplicate-path pair (see
+    // mergeDuplicatePaths) doesn't leave selectedFile pointing at a raw,
+    // wrongly-classified half of the pair.
+    const changed = mergeDuplicatePaths(st.entries);
     const cur = appState.selectedFile;
     const kept = cur ? changed.find((e) => e.path === cur.path) : undefined;
     if (kept) openChange(kept);

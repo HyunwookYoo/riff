@@ -4,23 +4,30 @@
     conflictedEntries,
     entryConflicted,
     entryToChangedFile,
+    mergeDuplicatePaths,
     selectChange,
   } from "$lib/workingCopy";
   import { setFileViewMode } from "$lib/git";
   import { buildPathTree, type TreePathNode } from "./pathTree";
   import type { ChangedFile, FileStatus, StatusEntry } from "$lib/types";
 
-  // path → status entry, to resolve a file's badge and diff.
+  // path → status entry, to resolve a file's badge and diff. Deduped first
+  // (see mergeDuplicatePaths) so a path with two porcelain records resolves
+  // to the same merged entry everywhere, not whichever raw record happens to
+  // be last in appState.repoStatus.entries.
   const byPath = $derived.by(() => {
     const m = new Map<string, StatusEntry>();
-    for (const e of appState.repoStatus?.entries ?? []) m.set(e.path, e);
+    for (const e of mergeDuplicatePaths(appState.repoStatus?.entries ?? []))
+      m.set(e.path, e);
     return m;
   });
 
   // Unmerged files, surfaced in a dedicated group above the rest.
   const conflicts = $derived(conflictedEntries());
   const changed = $derived(
-    (appState.repoStatus?.entries ?? []).filter((e) => !entryConflicted(e)),
+    mergeDuplicatePaths(
+      (appState.repoStatus?.entries ?? []).filter((e) => !entryConflicted(e)),
+    ),
   );
 
   function badge(s: FileStatus): string {
