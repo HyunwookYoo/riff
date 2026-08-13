@@ -6,7 +6,6 @@ import {
   doPull,
   doPush,
   doStashSave,
-  undoLastCommit,
 } from "./workingCopy";
 import { enterGraphView, restoreCompareContext } from "./commitHistory";
 import { requestCheckout } from "./checkout";
@@ -101,12 +100,6 @@ export function buildCommands(): Command[] {
 
   // Commit history / help
   cmds.push(
-    {
-      id: "commit.undo",
-      title: "Undo last commit",
-      category: "Commit",
-      run: () => void undoLastCommit(),
-    },
     {
       id: "reflog.open",
       title: "Reflog / Undo history",

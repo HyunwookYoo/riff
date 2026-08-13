@@ -8,7 +8,6 @@
   import CommitDetail from "$lib/ui/CommitDetail.svelte";
   import BranchContainment from "$lib/ui/BranchContainment.svelte";
   import WorkingCopyList from "$lib/ui/WorkingCopyList.svelte";
-  import CommitBox from "$lib/ui/CommitBox.svelte";
   import RepoTabs from "$lib/ui/RepoTabs.svelte";
   import RefsSidebar from "$lib/ui/RefsSidebar.svelte";
   import ConflictBanner from "$lib/ui/ConflictBanner.svelte";
@@ -524,7 +523,6 @@
     {:else if appState.appMode === "changes"}
       <div class="changes-col">
         <div class="changes-scroll"><WorkingCopyList /></div>
-        <CommitBox />
       </div>
       <div
         class="picker-resizer"

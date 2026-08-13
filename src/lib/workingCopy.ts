@@ -1,18 +1,15 @@
 import { appState } from "./store.svelte";
 import {
-  commit as commitCmd,
   discardHunks,
   discardPaths as discardCmd,
   fetch as fetchCmd,
   fileHunks,
-  headCommitMessage,
   merge as mergeCmd,
   opAbort,
   opContinue,
   pendingOp,
   pull as pullCmd,
   push as pushCmd,
-  reset,
   stage as stageCmd,
   stashApply,
   stashDrop,
@@ -576,87 +573,4 @@ export function resetSourceControl(): void {
   appState.commitBody = "";
   appState.commitAmend = false;
   appState.commitCoauthors = [];
-}
-
-/// Pre-fill the commit box with HEAD's message when "Amend" is toggled on.
-/// Splits the first line into the subject and the remainder (past the blank
-/// line) into the body. No-op on an unborn branch (no HEAD to read).
-export async function loadAmendMessage(): Promise<void> {
-  try {
-    const msg = await headCommitMessage(changesRepoPath());
-    const nl = msg.indexOf("\n");
-    if (nl === -1) {
-      appState.commitSubject = msg;
-      appState.commitBody = "";
-    } else {
-      appState.commitSubject = msg.slice(0, nl);
-      appState.commitBody = msg.slice(nl + 1).replace(/^\n/, "");
-    }
-  } catch {
-    // Unborn branch / no HEAD — leave the box as-is.
-  }
-}
-
-/// Undo the last commit, keeping its changes in the working tree
-/// (`git reset --soft HEAD~1`). Confirms first via the Tauri dialog (native
-/// confirm silently cancels in WebView2). HEAD moves, so the graph cache is
-/// invalidated and status reloaded.
-export async function undoLastCommit(): Promise<void> {
-  const ok = await confirmAction(
-    "Undo the last commit? Its changes stay in your working tree.",
-    { title: "Undo last commit" },
-  );
-  if (!ok) return;
-  appState.error = null;
-  try {
-    await reset(changesRepoPath(), "HEAD~1", "soft");
-    invalidateGraph();
-  } catch (e) {
-    appState.error = String(e);
-  } finally {
-    await loadStatus();
-  }
-}
-
-/// Number of entries currently staged — gates the Commit button.
-export function stagedCount(): number {
-  return (appState.repoStatus?.entries ?? []).filter(isStaged).length;
-}
-
-/// Commit the staged index from the box state. Validates a non-empty subject
-/// and (unless amending) a non-empty index. Surfaces hook/commit failures in
-/// the error banner; on success clears the box (sign-off stays sticky) and
-/// refreshes status so the lists, diff, and ahead/behind reflect the new HEAD.
-export async function doCommit(): Promise<void> {
-  const subject = appState.commitSubject.trim();
-  if (!subject || appState.committing) return;
-  if (stagedCount() === 0 && !appState.commitAmend) {
-    appState.error = "No staged changes to commit.";
-    return;
-  }
-  appState.committing = true;
-  appState.error = null;
-  try {
-    await commitCmd(
-      changesRepoPath(),
-      subject,
-      appState.commitBody,
-      appState.commitAmend,
-      appState.commitSignoff,
-      appState.commitCoauthors.map((c) => c.trim()).filter(Boolean),
-    );
-    appState.commitSubject = "";
-    appState.commitBody = "";
-    appState.commitAmend = false;
-    appState.commitCoauthors = [];
-    // HEAD moved — drop the graph's cached log so it refetches on next visit.
-    invalidateGraph();
-  } catch (e) {
-    appState.error = String(e);
-  } finally {
-    appState.committing = false;
-    const err = appState.error;
-    await loadStatus();
-    if (err) appState.error = err;
-  }
 }
