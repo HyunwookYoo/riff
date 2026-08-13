@@ -39,7 +39,7 @@ const COMMIT_LOG_FORMAT: &str =
 
 /// `Command::new("git")` with `CREATE_NO_WINDOW` on Windows so spawning git
 /// from a GUI app doesn't flash a console window. No-op on other platforms.
-fn git_command() -> Command {
+pub(super) fn git_command() -> Command {
     let cmd = Command::new("git");
     #[cfg(windows)]
     {
@@ -67,7 +67,7 @@ pub struct GitCli {
     /// thread (async) now, so writes the main thread used to serialize implicitly
     /// can otherwise overlap and collide on `.git/index.lock`. Read-only commands
     /// (log/diff/blame/status) don't take this lock, so the UI stays responsive.
-    write_lock: Mutex<()>,
+    pub(super) write_lock: Mutex<()>,
 }
 
 struct Session {
@@ -281,7 +281,7 @@ impl GitCli {
         }
     }
 
-    fn run(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+    pub(super) fn run(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
         let output = git_command().arg("-C").arg(path).args(args).output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -294,7 +294,7 @@ impl GitCli {
     /// terminal credential prompt so a GUI launch never hangs waiting on stdin.
     /// The user's credential helper (e.g. Git Credential Manager) still supplies
     /// cached creds or pops its own dialog; otherwise the command fails fast.
-    fn run_network(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+    pub(super) fn run_network(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
         let output = git_command()
             .arg("-C")
             .arg(path)
@@ -312,7 +312,7 @@ impl GitCli {
     /// state. Called after operations that move HEAD (checkout) — the long-lived
     /// cat-file processes would otherwise keep resolving `HEAD:path` against the
     /// previous tip.
-    fn drop_session(&self) {
+    pub(super) fn drop_session(&self) {
         self.session.lock().unwrap().take();
     }
 
@@ -324,7 +324,7 @@ impl Default for GitCli {
     }
 }
 
-fn validate_ref(s: &str) -> Result<&str, GitError> {
+pub(super) fn validate_ref(s: &str) -> Result<&str, GitError> {
     if s.is_empty() || s.starts_with('-') {
         return Err(GitError::InvalidRef(s.to_string()));
     }
@@ -568,7 +568,7 @@ fn parse_reflog(text: &str) -> Vec<ReflogEntry> {
 }
 
 /// Reject obviously-malformed path arguments. Real path validity is enforced by git.
-fn validate_path(s: &str) -> Result<(), GitError> {
+pub(super) fn validate_path(s: &str) -> Result<(), GitError> {
     if s.is_empty() || s.starts_with('-') {
         return Err(GitError::InvalidRef(format!("invalid path: {s}")));
     }
@@ -803,7 +803,7 @@ fn submodule_diff(name: &str, sub_worktree: &Path, old: &str, new: &str) -> Opti
 /// Unmerged paths whose working-tree file still contains conflict markers — the
 /// user hasn't actually resolved them. Used to guard the auto-stage on
 /// `op_continue` so a half-resolved file is never committed as a "resolution".
-fn unresolved_conflict_files(repo: &Path) -> Vec<String> {
+pub(super) fn unresolved_conflict_files(repo: &Path) -> Vec<String> {
     let out = match git_command()
         .arg("-C")
         .arg(repo)
@@ -1424,40 +1424,15 @@ impl GitLayer for GitCli {
         start_point: Option<&str>,
         checkout: bool,
     ) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(name)?;
-        if let Some(sp) = start_point {
-            validate_ref(sp)?;
-        }
-        let mut args: Vec<&str> = if checkout {
-            vec!["checkout", "-b", name]
-        } else {
-            vec!["branch", name]
-        };
-        if let Some(sp) = start_point {
-            args.push(sp);
-        }
-        self.run(path, &args)?;
-        if checkout {
-            self.drop_session();
-        }
-        Ok(())
+        self.create_branch_impl(path, name, start_point, checkout)
     }
 
     fn checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(ref_name)?;
-        self.run(path, &["checkout", ref_name])?;
-        self.drop_session();
-        Ok(())
+        self.checkout_impl(path, ref_name)
     }
 
     fn fast_forward(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(ref_name)?;
-        self.run(path, &["merge", "--ff-only", ref_name])?;
-        self.drop_session();
-        Ok(())
+        self.fast_forward_impl(path, ref_name)
     }
 
     fn conflict_versions(
@@ -1492,13 +1467,7 @@ impl GitLayer for GitCli {
         file_path: &str,
         content: &str,
     ) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_path(file_path)?;
-        fs::write(path.join(file_path), content).map_err(GitError::Io)?;
-        // Staging a path with no conflict markers marks it resolved for the op.
-        self.run(path, &["add", "--", file_path])?;
-        self.drop_session();
-        Ok(())
+        self.resolve_conflict_impl(path, file_path, content)
     }
 
     fn checkout_conflict_side(
@@ -1507,33 +1476,15 @@ impl GitLayer for GitCli {
         file_path: &str,
         side: &str,
     ) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_path(file_path)?;
-        let flag = match side {
-            "ours" => "--ours",
-            "theirs" => "--theirs",
-            _ => return Err(GitError::CommandFailed("invalid conflict side".into())),
-        };
-        self.run(path, &["checkout", flag, "--", file_path])?;
-        self.run(path, &["add", "--", file_path])?;
-        self.drop_session();
-        Ok(())
+        self.checkout_conflict_side_impl(path, file_path, side)
     }
 
     fn rename_branch(&self, path: &Path, old: &str, new: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(old)?;
-        validate_ref(new)?;
-        self.run(path, &["branch", "-m", old, new])?;
-        Ok(())
+        self.rename_branch_impl(path, old, new)
     }
 
     fn delete_branch(&self, path: &Path, name: &str, force: bool) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(name)?;
-        let flag = if force { "-D" } else { "-d" };
-        self.run(path, &["branch", flag, name])?;
-        Ok(())
+        self.delete_branch_impl(path, name, force)
     }
 
     fn reflog(&self, path: &Path) -> Result<Vec<ReflogEntry>, GitError> {
@@ -1558,20 +1509,11 @@ impl GitLayer for GitCli {
     }
 
     fn fetch(&self, path: &Path) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        self.run_network(path, &["fetch", "--all", "--prune"])?;
-        // Newly-fetched objects/refs won't be visible to the cached batch.
-        self.drop_session();
-        Ok(())
+        self.fetch_impl(path)
     }
 
     fn pull(&self, path: &Path) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        // Always a merge pull: `--rebase` would rewrite local history, which is
-        // outside riff's write surface.
-        self.run_network(path, &["pull"])?;
-        self.drop_session();
-        Ok(())
+        self.pull_impl(path)
     }
 
     fn pending_op(&self, path: &Path) -> Result<String, GitError> {
@@ -1594,53 +1536,11 @@ impl GitLayer for GitCli {
     }
 
     fn op_abort(&self, path: &Path, op: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        let sub = match op {
-            "merge" | "rebase" | "cherry-pick" | "revert" => op,
-            _ => return Err(GitError::CommandFailed("no operation in progress".into())),
-        };
-        self.run(path, &[sub, "--abort"])?;
-        self.drop_session();
-        Ok(())
+        self.op_abort_impl(path, op)
     }
 
     fn op_continue(&self, path: &Path, op: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        // For merge, complete the commit (--continue would open an editor);
-        // for the sequencer ops, --continue with the editor suppressed.
-        let args: &[&str] = match op {
-            "merge" => &["commit", "--no-edit"],
-            "rebase" => &["rebase", "--continue"],
-            "cherry-pick" => &["cherry-pick", "--continue"],
-            "revert" => &["revert", "--continue"],
-            _ => return Err(GitError::CommandFailed("no operation in progress".into())),
-        };
-        // A resolution left unstaged in the working tree (or any other tracked
-        // edit) makes git bail with "you have unstaged changes" / "unmerged
-        // files". Stage tracked changes so the working-tree resolution is picked
-        // up — but first refuse if a conflict still has markers, so a
-        // half-resolved file is never committed as the resolution.
-        let unresolved = unresolved_conflict_files(path);
-        if !unresolved.is_empty() {
-            return Err(GitError::CommandFailed(format!(
-                "resolve the remaining conflict markers first: {}",
-                unresolved.join(", ")
-            )));
-        }
-        self.run(path, &["add", "-u"])?;
-        let output = git_command()
-            .arg("-C")
-            .arg(path)
-            .args(args)
-            .env("GIT_EDITOR", "true")
-            .env("GIT_SEQUENCE_EDITOR", "true")
-            .output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(GitError::CommandFailed(stderr));
-        }
-        self.drop_session();
-        Ok(())
+        self.op_continue_impl(path, op)
     }
 
     fn list_repo_files(&self, path: &Path) -> Result<Vec<String>, GitError> {

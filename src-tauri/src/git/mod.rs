@@ -3,6 +3,7 @@ pub mod cli;
 pub mod diff;
 pub mod error;
 pub mod uasset;
+mod write;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
