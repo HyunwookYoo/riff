@@ -4,7 +4,7 @@
 
 **Goal:** Reduce riff's write surface to branch create/rename/delete, checkout, and fetch/pull (plus conflict resolution), deleting staging, commit, changelists, stash, history rewriting, tags, and push across the frontend and the Rust backend.
 
-**Architecture:** Frontend first, backend second — by the time a Rust command is deleted, "nothing calls this" is already proven. One exception, Task 6, spans both layers because Working Copy needs a `HEAD`↔worktree diff gap that the backend does not currently produce; that is a parameter *removal*, not an addition. Task 1 is a pure rename so every later task refers to final file names.
+**Architecture:** Frontend first, backend second — by the time a Rust command is deleted, "nothing calls this" is already proven. Two tasks span both layers, both because a signature must change on both sides at once or the commit will not compile or will not invoke: Task 6 drops `changes_file_diff`'s `staged` flag, and Task 13 drops `pull`'s `rebase` flag. Both are parameter *removals*, not additions. Task 1 is a pure rename so every later task refers to final file names.
 
 **Tech Stack:** Tauri 2 (Rust) + Svelte 5 (runes) + Vite + Vitest + CodeMirror 6.
 
@@ -14,7 +14,7 @@
 
 - **The invariant.** riff modifies a repository in exactly five ways: create a branch, rename a branch, delete a branch, checkout, and fetch/pull. The one exception is conflict resolution. If a change you are about to make does not fit that sentence, it does not belong.
 - **This is a removal plan.** Most tasks have no red-green cycle — the deliverable is that behaviour is *gone* and nothing else broke. Only Task 6 introduces new logic and therefore new tests. Deleting a test that covered a deleted feature is correct, not a regression.
-- **Four gates, green at every task boundary:** `npm run build`, `npx svelte-check --tsconfig ./tsconfig.json`, `npm test` (vitest), and — from `src-tauri/` — `cargo test`. Phases 1–2 do not need `cargo test` re-run unless Rust changed; Task 6 and Phases 3–4 do.
+- **Four gates, green at every task boundary, with no exceptions:** `npm run build`, `npx svelte-check --tsconfig ./tsconfig.json`, `npm test` (vitest), and — from `src-tauri/` — `cargo test`. Phases 1–2 do not need `cargo test` re-run unless Rust changed; Task 6 and Phases 3–4 do. Every commit must also *run*: never leave the frontend calling a command signature the backend no longer accepts.
 - **Do not rename** the `AppMode` string literal `"changes"`, `changesRepoIdx`, `setChangesRepo`, `changesRepoPath`, `enterChangesMode`, or the `changes_file_diff` command. Only user-facing labels and the two files in Task 1 change name. This is a recorded decision (spec §8), not an oversight.
 - **Never use `--no-verify`** and never add `--force`. No new git subcommand may be introduced by this plan.
 - **Commit per task**, with the task's own scope only.
@@ -994,11 +994,10 @@ resetSourceControl to resetWorkingCopy."
 **Files:**
 - Modify: `src/lib/git.ts`
 - Modify: `src/lib/types.ts`
-- Modify: `src/lib/workingCopy.ts` (`doPull`), `src/lib/commands.ts` (`sync.pullRebase`)
 
 **Interfaces:**
 - Consumes: Phase 1–2.
-- Produces: `git.ts` exports no binding for any of the 30 deleted commands. `pull(path: string): Promise<void>` — the `rebase` argument is gone. `doPull(): Promise<void>` — likewise.
+- Produces: `git.ts` exports no binding for any of the 30 deleted commands. `pull(path, rebase)` keeps its signature here — the whole `rebase` removal lands in Task 13, in one commit spanning both layers, so no commit has a frontend/backend arity mismatch.
 
 - [ ] **Step 1: Delete the bindings**
 
@@ -1006,7 +1005,77 @@ In `src/lib/git.ts` delete: `forceCheckout` `stashCheckout` `stashPull` `stashMe
 
 Keep `checkout` `fastForward` `createBranch` `renameBranch` `deleteBranch` `fetch` `pull` `conflictVersions` `resolveConflict` `checkoutConflictSide` `pendingOp` `opAbort` `opContinue` `reflog` and every read/settings binding.
 
-- [ ] **Step 2: Drop pull's rebase parameter**
+- [ ] **Step 2: Delete the dead types**
+
+In `src/lib/types.ts` delete the `Stash`, `Hunk`, and `Changelist` interfaces.
+
+- [ ] **Step 3: Verify**
+
+Check by name, not by count — a count is easy to satisfy accidentally:
+
+```bash
+grep -nE "\"(stage|unstage|discard_paths|commit|head_commit_message|commit_paths|load_changelists|save_changelists|file_hunks|apply_hunks|discard_hunks|force_checkout|stash_checkout|stash_pull|stash_merge|set_upstream|create_tag|delete_tag|push_tag|reset|cherry_pick|revert|rebase|stash_rebase|push|merge|stash_list|stash_save|stash_apply|stash_drop)\"" src/lib/git.ts
+```
+
+Expected: no matches.
+
+Run: `npx svelte-check --tsconfig ./tsconfig.json`
+Expected: no errors.
+
+- [ ] **Step 4: Run the gates**
+
+Run: `npm run build && npx svelte-check --tsconfig ./tsconfig.json && npm test`
+Expected: all green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "feat!: delete the removed command bindings
+
+Thirty bindings go, along with the Stash, Hunk, and Changelist types.
+Pull keeps its rebase flag one more task, so the frontend and backend
+drop it in the same commit."
+```
+
+---
+
+### Task 13: Delete the commands, the trait methods, and their implementations
+
+The Rust side comes out in one task. Splitting it would produce a commit that does not compile: dropping `pull`'s `rebase` argument in the command wrapper while the trait still declares it is an arity error, and the trait cannot be changed without its implementation. The `pull` signature change spans the frontend too, so it lands here — that keeps every commit both compiling and runnable.
+
+**Files:**
+- Modify: `src-tauri/src/lib.rs`, `src-tauri/src/git/mod.rs`, `src-tauri/src/git/cli.rs`
+- Modify: `src/lib/git.ts`, `src/lib/workingCopy.ts`, `src/lib/commands.ts`, `src/lib/ui/SyncControls.svelte` (the `pull` signature only)
+
+**Interfaces:**
+- Consumes: Task 12 (nothing invokes the 30 removed names any more).
+- Produces: `generate_handler!` lists 48 commands; `GitLayer` declares 11 write methods plus the read set; `Stash` and `Hunk` no longer exist in Rust; `pull(path)` / `doPull()` take no `rebase` argument at any layer.
+
+- [ ] **Step 1: Delete the command wrappers**
+
+In `src-tauri/src/lib.rs` delete the `#[tauri::command]` functions: `stage` `unstage` `discard_paths` `commit` `head_commit_message` `commit_paths` `load_changelists` `save_changelists` `file_hunks` `apply_hunks` `discard_hunks` `force_checkout` `stash_checkout` `stash_pull` `stash_merge` `set_upstream` `create_tag` `delete_tag` `push_tag` `reset` `cherry_pick` `revert` `rebase` `stash_rebase` `push` `merge` `stash_list` `stash_save` `stash_apply` `stash_drop`.
+
+- [ ] **Step 2: Update the handler list and imports**
+
+Delete the same 30 names from `generate_handler!` (`:774`). Remove `Hunk` and `Stash` from the `use git::{…}` list at `:8`.
+
+- [ ] **Step 3: Drop pull's rebase parameter at every layer**
+
+All four edits belong in this one commit — any subset leaves either a compile error or a broken invoke bridge.
+
+`src-tauri/src/lib.rs`:
+
+```rust
+#[tauri::command]
+async fn pull(state: tauri::State<'_, GitCli>, path: String) -> Result<(), GitError> {
+    state.pull(Path::new(&path))
+}
+```
+
+`src-tauri/src/git/mod.rs` — change the declaration (`:498`) to `fn pull(&self, path: &Path) -> Result<(), GitError>;` and say in its doc comment that riff only ever merge-pulls. `src-tauri/src/git/cli.rs` — drop the argument from the implementation and always run a merge pull.
+
+`src/lib/git.ts`:
 
 ```ts
 /**
@@ -1018,7 +1087,7 @@ export function pull(path: string): Promise<void> {
 }
 ```
 
-In `src/lib/workingCopy.ts`, `doPull` loses only its parameter — keep the no-upstream guard added in Task 10:
+`src/lib/workingCopy.ts` — `doPull` loses only its parameter; keep the no-upstream guard added in Task 10:
 
 ```ts
 export function doPull(): Promise<void> {
@@ -1035,69 +1104,9 @@ export function doPull(): Promise<void> {
 }
 ```
 
-In `src/lib/commands.ts`, delete the `sync.pullRebase` entry and change `sync.pull` to `run: () => void doPull()` with the title `Pull`. In `src/lib/ui/SyncControls.svelte`, the Pull button calls `doPull()`; if the `▾` options menu now has only one item, delete the split-button caret and the `menu` state entirely.
+`src/lib/commands.ts` — delete the `sync.pullRebase` entry and change `sync.pull` to `run: () => void doPull()` with the title `Pull`. `src/lib/ui/SyncControls.svelte` — the Pull button calls `doPull()`; the `▾` options menu now has nothing to offer, so delete the split-button caret and the `menu` state entirely.
 
-- [ ] **Step 3: Delete the dead types**
-
-In `src/lib/types.ts` delete the `Stash`, `Hunk`, and `Changelist` interfaces.
-
-- [ ] **Step 4: Verify**
-
-Check by name, not by count — a count is easy to satisfy accidentally:
-
-```bash
-grep -nE "\"(stage|unstage|discard_paths|commit|head_commit_message|commit_paths|load_changelists|save_changelists|file_hunks|apply_hunks|discard_hunks|force_checkout|stash_checkout|stash_pull|stash_merge|set_upstream|create_tag|delete_tag|push_tag|reset|cherry_pick|revert|rebase|stash_rebase|push|merge|stash_list|stash_save|stash_apply|stash_drop)\"" src/lib/git.ts
-```
-
-Expected: no matches.
-
-Run: `npx svelte-check --tsconfig ./tsconfig.json`
-Expected: no errors.
-
-- [ ] **Step 5: Run the gates**
-
-Run: `npm run build && npx svelte-check --tsconfig ./tsconfig.json && npm test`
-Expected: all green.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add -A
-git commit -m "feat!: delete the removed command bindings
-
-Thirty bindings go, along with the Stash, Hunk, and Changelist types.
-Pull loses its rebase flag - riff never rewrites local history."
-```
-
----
-
-### Task 13: Delete the Tauri commands
-
-**Files:**
-- Modify: `src-tauri/src/lib.rs`
-
-**Interfaces:**
-- Consumes: Task 12 (nothing invokes these names any more).
-- Produces: `generate_handler!` lists 48 commands.
-
-- [ ] **Step 1: Delete the command wrappers**
-
-In `src-tauri/src/lib.rs` delete the `#[tauri::command]` functions: `stage` `unstage` `discard_paths` `commit` `head_commit_message` `commit_paths` `load_changelists` `save_changelists` `file_hunks` `apply_hunks` `discard_hunks` `force_checkout` `stash_checkout` `stash_pull` `stash_merge` `set_upstream` `create_tag` `delete_tag` `push_tag` `reset` `cherry_pick` `revert` `rebase` `stash_rebase` `push` `merge` `stash_list` `stash_save` `stash_apply` `stash_drop`.
-
-- [ ] **Step 2: Drop pull's rebase parameter**
-
-```rust
-#[tauri::command]
-async fn pull(state: tauri::State<'_, GitCli>, path: String) -> Result<(), GitError> {
-    state.pull(Path::new(&path))
-}
-```
-
-- [ ] **Step 3: Update the handler list and imports**
-
-Delete the same 30 names from `generate_handler!` (`:774`). Remove `Hunk` and `Stash` from the `use git::{…}` list at `:8`.
-
-- [ ] **Step 4: Verify by name**
+- [ ] **Step 4: Verify the command list by name**
 
 ```bash
 grep -nE "^\s+(stage|unstage|discard_paths|commit|head_commit_message|commit_paths|load_changelists|save_changelists|file_hunks|apply_hunks|discard_hunks|force_checkout|stash_checkout|stash_pull|stash_merge|set_upstream|create_tag|delete_tag|push_tag|reset|cherry_pick|revert|rebase|stash_rebase|push|merge|stash_list|stash_save|stash_apply|stash_drop),$" src-tauri/src/lib.rs
@@ -1105,40 +1114,13 @@ grep -nE "^\s+(stage|unstage|discard_paths|commit|head_commit_message|commit_pat
 
 Expected: no matches (this pattern targets the `generate_handler!` entries, which are one bare name per line).
 
-Run (from `src-tauri/`): `cargo check`
-Expected: fails only on the `GitLayer` trait methods that no longer have callers — those go in Task 14. If it fails on anything else, fix it here.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add -A
-git commit -m "feat!: delete the removed Tauri commands
-
-Thirty command wrappers and their handler entries. Pull loses its rebase
-parameter. The trait methods they called go next."
-```
-
-> This is the one task that may end with `cargo check` still failing — the trait and its implementation are removed in Task 14, and splitting them keeps each diff readable. If your workflow requires every commit to build, do Tasks 13 and 14 as one commit.
-
----
-
-### Task 14: Delete the GitLayer methods and their implementations
-
-**Files:**
-- Modify: `src-tauri/src/git/mod.rs`
-- Modify: `src-tauri/src/git/cli.rs`
-
-**Interfaces:**
-- Consumes: Task 13.
-- Produces: `GitLayer` declares 11 write methods and the read set; `Stash` and `Hunk` no longer exist.
-
-- [ ] **Step 1: Delete the trait methods**
+- [ ] **Step 5: Delete the trait methods**
 
 In `src-tauri/src/git/mod.rs` delete these declarations: `stage` (`:334`) `unstage` (`:337`) `discard_paths` (`:344`) `commit` (`:350`) `head_commit_message` (`:361`) `commit_paths` (`:365`) `load_changelists` (`:376`) `save_changelists` (`:378`) `file_hunks` (`:382`) `apply_hunks` (`:388`) `discard_hunks` (`:401`) `force_checkout` (`:422`) `stash_checkout` (`:450`) `stash_pull` (`:455`) `stash_merge` (`:458`) `set_upstream` (`:465`) `create_tag` (`:467`) `delete_tag` (`:469`) `push_tag` (`:473`) `reset` (`:477`) `cherry_pick` (`:483`) `revert` (`:485`) `rebase` (`:488`) `stash_rebase` (`:493`) `push` (`:502`) `merge` (`:510`) `stash_list` (`:520`) `stash_save` (`:525`) `stash_apply` (`:533`) `stash_drop` (`:535`).
 
-Change `pull` (`:498`) to `fn pull(&self, path: &Path) -> Result<(), GitError>;`.
+Leave `pull` alone here — Step 3 already changed it.
 
-- [ ] **Step 2: Add the contract to the trait's doc comment**
+- [ ] **Step 6: Add the contract to the trait's doc comment**
 
 Above the `GitLayer` declaration, record the invariant so the next reader learns it from the code:
 
@@ -1154,19 +1136,19 @@ Above the `GitLayer` declaration, record the invariant so the next reader learns
 /// docs/superpowers/specs/2026-08-12-vcs-scope-reduction-design.md.
 ```
 
-- [ ] **Step 3: Delete the types**
+- [ ] **Step 7: Delete the types**
 
 In `src-tauri/src/git/mod.rs` delete the `Stash` and `Hunk` struct definitions and any `pub use` of them.
 
-- [ ] **Step 4: Delete the implementations**
+- [ ] **Step 8: Delete the implementations**
 
-In `src-tauri/src/git/cli.rs` delete the `impl GitLayer for GitCli` bodies of every method from Step 1, plus any private helper that only they used (the hunk parser and sub-patch builder are the large ones). Update `pull` to drop its `rebase` argument and always run a merge pull.
+In `src-tauri/src/git/cli.rs` delete the `impl GitLayer for GitCli` bodies of every method from Step 5, plus any private helper that only they used (the hunk parser and sub-patch builder are the large ones).
 
-- [ ] **Step 5: Delete the tests that covered them**
+- [ ] **Step 9: Delete the tests that covered them**
 
 Run: `cargo test 2>&1 | head -40` from `src-tauri/` to see what no longer compiles, and delete those `#[test]` functions. Deleting a test for a deleted feature is correct. Do **not** delete tests for surviving behaviour — the porcelain-v2 parser, ref validation, and path validation tests all stay.
 
-- [ ] **Step 6: Verify the surface**
+- [ ] **Step 10: Verify the surface**
 
 Run (from `src-tauri/`): `cargo test && cargo clippy --all-targets -- -D warnings`
 Expected: green, no warnings. Dead-code warnings point at helpers that lost their last caller — delete those too.
@@ -1174,34 +1156,44 @@ Expected: green, no warnings. Dead-code warnings point at helpers that lost thei
 Run (from repo root): `grep -rniE "stash|cherry-pick|rebase|force" src-tauri/src/git/`
 Expected: matches only in comments and in `pending_op`/`op_abort`/`op_continue`, which must still recognise a rebase or cherry-pick begun in another tool.
 
-- [ ] **Step 7: Run all four gates**
+- [ ] **Step 11: Run all four gates**
 
 Run: `npm run build && npx svelte-check --tsconfig ./tsconfig.json && npm test`
 Then from `src-tauri/`: `cargo test`
 Expected: all green.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 12: Manual check**
+
+In `npm run tauri dev`, on a branch that tracks a remote and is behind: press Pull. It fast-forwards. The palette has no `Pull (rebase)` entry and the toolbar's Pull button has no `▾` caret.
+
+- [ ] **Step 13: Commit**
 
 ```bash
 git add -A
-git commit -m "feat!: delete the removed GitLayer methods
+git commit -m "feat!: delete the removed commands, trait methods, and impls
 
-Thirty trait methods, their GitCli implementations, the hunk parser and
-sub-patch builder they needed, the Stash and Hunk types, and the tests
-that covered them. The trait doc comment now states the write invariant,
-since the trait is what enforces it."
+Thirty Tauri commands, thirty GitLayer methods, their GitCli
+implementations, the hunk parser and sub-patch builder they needed, the
+Stash and Hunk types, and the tests that covered them.
+
+Pull drops its rebase flag across all four layers in this one commit -
+riff never rewrites local history, and splitting the change would leave a
+commit that either fails to compile or fails to invoke.
+
+The trait doc comment now states the write invariant, since the trait is
+what enforces it."
 ```
 
 ---
 
-### Task 15: Extract the write surface into git/write.rs
+### Task 14: Extract the write surface into git/write.rs
 
 **Files:**
 - Create: `src-tauri/src/git/write.rs`
 - Modify: `src-tauri/src/git/cli.rs`, `src-tauri/src/git/mod.rs`
 
 **Interfaces:**
-- Consumes: Task 14.
+- Consumes: Task 13.
 - Produces: no API change — a second `impl GitCli` block in a new module. `GitCli::run`, `write_lock`, and `drop_session` must be visible to it (`pub(super)` or `pub(crate)` as needed).
 
 - [ ] **Step 1: Create the module**
@@ -1264,7 +1256,7 @@ read-only. No API change."
 
 ## Phase 4 — Documentation and release
 
-### Task 16: Rewrite the documentation
+### Task 15: Rewrite the documentation
 
 **Files:**
 - Modify: `README.md`
@@ -1339,13 +1331,13 @@ superseded rather than deleting it."
 
 ---
 
-### Task 17: Release v2.0.0
+### Task 16: Release v2.0.0
 
 **Files:**
 - Modify: `CHANGELOG.md`, `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`
 
 **Interfaces:**
-- Consumes: Tasks 1–16, merged to `main`.
+- Consumes: Tasks 1–15, merged to `main`.
 - Produces: tag `v2.0.0`.
 
 - [ ] **Step 1: Merge the branch first**
@@ -1410,7 +1402,7 @@ The tag push triggers `.github/workflows/release.yml`, which builds on windows-l
 
 ## Final verification
 
-After Task 17, confirm the spec's success criteria:
+After Task 16, confirm the spec's success criteria:
 
 - [ ] None of the 30 removed names appear in `src/lib/git.ts` or in `generate_handler!` (the by-name greps from Tasks 12 and 13)
 - [ ] `grep -nE "self\.run\(" src-tauri/src/git/cli.rs` → read subcommands only; every mutating call lives in `git/write.rs`
