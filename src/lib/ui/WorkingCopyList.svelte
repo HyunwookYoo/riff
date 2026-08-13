@@ -52,19 +52,30 @@
 
 <!-- One file row. `depth = null` → flat (full path); a number → tree (leaf name
      + indent). -->
-{#snippet row(path: string, label: string | null, depth: number | null = null)}
+{#snippet row(
+  path: string,
+  label: string | null,
+  depth: number | null = null,
+  conflicted: boolean = false,
+)}
   {@const e = byPath.get(path)}
   {#if e}
     {@const cf = entryToChangedFile(e, "unstaged") as ChangedFile}
-    <div class="cl-file" class:active={isSel(path)} data-path={path}>
+    <div class="cl-file" class:active={isSel(path)}>
       <button
         type="button"
         class="cl-pick"
         style={depth === null ? "" : `padding-left: ${18 + depth * 12}px`}
         onclick={() => pick(path)}
-        title={cf.old_path ? `${cf.old_path} → ${path}` : path}
+        title={conflicted
+          ? `Resolve ${path}`
+          : cf.old_path
+            ? `${cf.old_path} → ${path}`
+            : path}
       >
-        <span class="fbadge" data-status={cf.status}>{badge(cf.status)}</span>
+        <span class="fbadge" class:conflict={conflicted} data-status={cf.status}>
+          {conflicted ? "!" : badge(cf.status)}
+        </span>
         <span class="fpath" class:leaf={depth !== null}>{label ?? path}</span>
       </button>
     </div>
@@ -110,10 +121,10 @@
 
   <div class="cl-scroll">
     {#if conflicts.length > 0}
-      <div class="cl-group conflicts">
+      <div class="cl-group">
         <div class="cl-head">Conflicts ({conflicts.length})</div>
         {#each conflicts as e (e.path)}
-          {@render row(e.path, null)}
+          {@render row(e.path, null, null, true)}
         {/each}
       </div>
     {/if}
@@ -204,7 +215,6 @@
     padding: 5px 10px 5px 26px;
     font-size: 0.85em;
     user-select: none;
-    touch-action: none;
   }
   .fbadge {
     flex: 0 0 auto;
@@ -224,6 +234,7 @@
   .fbadge[data-status="renamed"] { background: #2563eb; }
   .fbadge[data-status="copied"] { background: #0891b2; }
   .fbadge[data-status="typechanged"] { background: #7c3aed; }
+  .fbadge.conflict { background: var(--error-fg, #f85149); }
   .fpath {
     overflow: hidden;
     text-overflow: ellipsis;

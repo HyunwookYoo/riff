@@ -45,7 +45,6 @@ export const SHORTCUTS: ShortcutGroup[] = [
     title: "Mouse",
     items: [
       { keys: "Back / Forward", desc: "Drill back / forward" },
-      { keys: "Ctrl+Click / Shift+Click", desc: "Multi-select files (Changes)" },
     ],
   },
 ];
