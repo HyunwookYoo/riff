@@ -322,6 +322,8 @@ Then replace the two `{#each appState.changelists as …}` loops (`:457`, `:535`
   </div>
 ```
 
+> **Amended during execution (2026-08-13).** The snippet below routes conflict rows through the shared `row()`, which makes them render the porcelain worktree badge — so a `UD`/`DD` delete/delete conflict displays as a red "D", an ordinary deletion. That was a careless simplification when this plan was written. `row()` takes a fourth positional parameter `conflicted: boolean = false`; the Conflicts loop passes `true`, which renders the badge as `!` and the row title as `Resolve {path}`. Badge and title only. Shipped in commit `735eedf`.
+
 `conflicts` already exists at `:46` as `$derived(conflictedEntries())` — leave it. Add one derived beside it for everything else, so a conflicted file appears in exactly one group:
 
 ```ts
