@@ -117,14 +117,6 @@ pub struct RepoStatus {
     pub behind: i64,
 }
 
-/// One entry from `git stash list`. `index` is its position (`stash@{index}`);
-/// `message` is the stash subject.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Stash {
-    pub index: u32,
-    pub message: String,
-}
-
 /// One entry from HEAD's reflog. `selector` is the `HEAD@{N}` form; `subject`
 /// is git's reflog message (e.g. `commit: fix login`, `reset: moving to
 /// HEAD~3`); `time` is when the reflog entry was written — i.e. when HEAD
@@ -138,21 +130,6 @@ pub struct ReflogEntry {
     pub selector: String,
     pub subject: String,
     pub time: i64,
-}
-
-/// One hunk of a file's unified diff, for the Changes screen's per-hunk
-/// stage/unstage + changelist-assignment controls. `header` is the
-/// `@@ -a,b +c,d @@` line (with any section heading); `added`/`removed` count
-/// changed lines for the badge. `id` is a content signature (hash of the hunk
-/// body, *excluding* the position-bearing header) so the frontend can track a
-/// hunk's changelist assignment across re-diffs within a session, where its
-/// array index would shift.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Hunk {
-    pub id: String,
-    pub header: String,
-    pub added: u32,
-    pub removed: u32,
 }
 
 /// The three index stages of a conflicted file (`base` = `:1:`, `ours` = `:2:`,
@@ -268,6 +245,15 @@ pub enum FileDiff {
     },
 }
 
+/// The complete set of git operations riff can perform. Everything the app can
+/// do to a repository is declared here — `GitCli::run` is private, so a method
+/// that is not on this trait cannot be reached.
+///
+/// riff writes in exactly five ways: create a branch, rename a branch, delete a
+/// branch, checkout, and fetch/pull. The one exception is conflict resolution,
+/// which cleans up the state riff's own pull created. Committing, publishing,
+/// stashing, and rewriting history are deliberately absent — see
+/// docs/superpowers/specs/2026-08-12-vcs-scope-reduction-design.md.
 pub trait GitLayer {
     fn validate_repo(&self, path: &Path) -> Result<(), GitError>;
     fn list_refs(&self, path: &Path) -> Result<Vec<Branch>, GitError>;
@@ -326,77 +312,6 @@ pub trait GitLayer {
         force: bool,
         uasset_cfg: &uasset::Config,
     ) -> Result<FileDiff, GitError>;
-    /// Stage paths into the index (`git add`). `files = None` stages everything
-    /// (`git add -A`, including untracked and deletions); `Some` stages just
-    /// those paths. Used by the Changes screen's stage / Stage-all actions.
-    fn stage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError>;
-    /// Remove paths from the index while keeping working-tree changes
-    /// (`git restore --staged`). `files = None` unstages everything.
-    fn unstage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError>;
-    /// Discard each path's local changes back to HEAD. A path tracked in HEAD
-    /// (modified / deleted / typechanged) has its index *and* worktree restored
-    /// to HEAD; a path not in HEAD (staged-added or untracked) is dropped from
-    /// the index and its working copy removed. Renames are discarded by passing
-    /// both the new and the original path. Destructive — callers must confirm
-    /// first (no `--no-verify`-style bypass; this only touches the given paths).
-    fn discard_paths(&self, path: &Path, paths: &[String]) -> Result<(), GitError>;
-    /// Create a commit from the staged index. `subject` is the first line;
-    /// `body` (when non-empty) follows after a blank line. `amend` rewrites
-    /// HEAD; `signoff` adds a Signed-off-by trailer; each `coauthors` entry
-    /// ("Name <email>") becomes a Co-authored-by trailer. GPG signing and
-    /// hooks follow the user's git config — never bypassed (no --no-verify).
-    fn commit(
-        &self,
-        path: &Path,
-        subject: &str,
-        body: &str,
-        amend: bool,
-        signoff: bool,
-        coauthors: &[String],
-    ) -> Result<(), GitError>;
-    /// The full message of HEAD (`git log -1 --format=%B`), used to pre-fill the
-    /// commit box when the user toggles "Amend".
-    fn head_commit_message(&self, path: &Path) -> Result<String, GitError>;
-    /// Commit exactly `paths` (a changelist) from the working tree, leaving
-    /// other changes uncommitted. Stages the paths first (so untracked files
-    /// commit too), then `git commit -- <paths>` (only those paths).
-    fn commit_paths(
-        &self,
-        path: &Path,
-        paths: &[String],
-        subject: &str,
-        body: &str,
-        signoff: bool,
-        coauthors: &[String],
-    ) -> Result<(), GitError>;
-    /// Read this repo's persisted changelist assignments (`.git/riff-
-    /// changelists.json`). Empty string when absent.
-    fn load_changelists(&self, path: &Path) -> Result<String, GitError>;
-    /// Persist the changelist assignments JSON to `.git/riff-changelists.json`.
-    fn save_changelists(&self, path: &Path, data: &str) -> Result<(), GitError>;
-    /// Parse one file's unified diff into hunks for per-hunk staging. `staged`
-    /// true → `git diff --cached` (HEAD↔index); false → `git diff`
-    /// (index↔worktree). Empty for untracked/binary files.
-    fn file_hunks(&self, path: &Path, file_path: &str, staged: bool) -> Result<Vec<Hunk>, GitError>;
-    /// Stage (`staged=false`) or unstage (`staged=true`) the hunks at the given
-    /// indices: re-diffs the file, builds a sub-patch of just those hunks, and
-    /// applies it to the index (`git apply --cached`, reversed for unstage).
-    /// Rejects when an index is out of range — the file changed since the hunks
-    /// were listed.
-    fn apply_hunks(
-        &self,
-        path: &Path,
-        file_path: &str,
-        staged: bool,
-        hunks: &[u32],
-    ) -> Result<(), GitError>;
-    /// Discard the unstaged hunks at the given indices from the working tree —
-    /// the per-hunk analog of `discard_paths`. Re-diffs the file, builds a
-    /// sub-patch of just those hunks, and reverse-applies it to the worktree
-    /// (`git apply --reverse`, no `--cached`), reverting those regions to the
-    /// index. Destructive. Rejects when an index is out of range — the file
-    /// changed since the hunks were listed.
-    fn discard_hunks(&self, path: &Path, file_path: &str, hunks: &[u32]) -> Result<(), GitError>;
     /// Create branch `name` (at `start_point`, default HEAD). When `checkout`
     /// is true, also switch to it (`git checkout -b`); otherwise just create it.
     fn create_branch(
@@ -414,10 +329,6 @@ pub trait GitLayer {
     /// catches up to the remote. Errors (without moving HEAD) if the histories
     /// have diverged.
     fn fast_forward(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
-    /// Switch to `ref_name`, discarding local modifications to tracked files
-    /// (`git checkout -f`). Untracked files are left in place. Destructive —
-    /// callers must obtain explicit user confirmation first.
-    fn force_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
     /// Read the three index stages (base `:1:`, ours `:2:`, theirs `:3:`) of a
     /// conflicted file plus its working-tree copy (with conflict markers).
     fn conflict_versions(
@@ -441,71 +352,21 @@ pub trait GitLayer {
         file_path: &str,
         side: &str,
     ) -> Result<(), GitError>;
-    /// Stash local changes (tracked + untracked), switch to `ref_name`, then
-    /// reapply the stash (`git stash pop`). If reapplying conflicts, git keeps
-    /// the stash and writes conflict markers; the error propagates so the UI
-    /// can report it. If the switch itself fails, the stash is restored first.
-    fn stash_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError>;
-    /// Stash local changes (tracked + untracked), pull, then reapply the stash.
-    /// Mirrors `stash_checkout`: a clean pull reapplies; a pull that conflicts
-    /// leaves the op in progress and keeps the stash for manual reapply. `rebase`
-    /// adds `--rebase`.
-    fn stash_pull(&self, path: &Path, rebase: bool) -> Result<(), GitError>;
-    /// Stash local changes (tracked + untracked), merge `branch`, then reapply.
-    /// Same clean/conflict semantics as `stash_pull`.
-    fn stash_merge(&self, path: &Path, branch: &str) -> Result<(), GitError>;
     /// Rename branch `old` to `new` (`git branch -m`).
     fn rename_branch(&self, path: &Path, old: &str, new: &str) -> Result<(), GitError>;
     /// Delete branch `name`. `force` uses `-D` (drops unmerged commits) instead
     /// of the safe `-d`; callers must confirm before forcing.
     fn delete_branch(&self, path: &Path, name: &str, force: bool) -> Result<(), GitError>;
-    /// Set `branch`'s upstream tracking ref (`git branch --set-upstream-to`).
-    fn set_upstream(&self, path: &Path, branch: &str, upstream: &str) -> Result<(), GitError>;
-    /// Create a lightweight tag `name` at `target` (`git tag`).
-    fn create_tag(&self, path: &Path, name: &str, target: &str) -> Result<(), GitError>;
-    /// Delete the local tag `name` (`git tag -d`). Does not touch any remote.
-    fn delete_tag(&self, path: &Path, name: &str) -> Result<(), GitError>;
-    /// Publish tag `name` to `origin` (`git push origin refs/tags/<name>`).
-    /// The explicit `refs/tags/` refspec stops a same-named branch from
-    /// winning the ambiguity.
-    fn push_tag(&self, path: &Path, name: &str) -> Result<(), GitError>;
-    /// Move the current branch to `target` (`git reset --<mode>`); `mode` is one
-    /// of "soft" | "mixed" | "hard". Hard discards working-tree changes — the
-    /// caller must confirm first.
-    fn reset(&self, path: &Path, target: &str, mode: &str) -> Result<(), GitError>;
     /// The most recent HEAD reflog entries (`git reflog show`), newest first.
-    /// Read-only. Feeds the recovery panel, which resets HEAD back to one of
+    /// Read-only. Feeds the recovery panel, which points a new branch at one of
     /// them — including commits that are no longer reachable from any ref.
     fn reflog(&self, path: &Path) -> Result<Vec<ReflogEntry>, GitError>;
-    /// Apply `target`'s changes onto the current branch (`git cherry-pick`).
-    fn cherry_pick(&self, path: &Path, target: &str) -> Result<(), GitError>;
-    /// Create a commit that undoes `target` (`git revert --no-edit`).
-    fn revert(&self, path: &Path, target: &str) -> Result<(), GitError>;
-    /// Rebase the current branch onto `onto` (`git rebase`). Conflicts surface
-    /// as an error and leave the rebase in progress for resolve→continue.
-    fn rebase(&self, path: &Path, onto: &str) -> Result<(), GitError>;
-    /// Rebase with a dirty tree: stash tracked changes, rebase, then reapply on a
-    /// clean finish. On conflict the rebase stays in progress (normal continue
-    /// flow) and the stash is kept for the user to reapply — unlike git's
-    /// `--autostash`, which wedges when its end-of-rebase reapply conflicts.
-    fn stash_rebase(&self, path: &Path, onto: &str) -> Result<(), GitError>;
     /// Fetch every remote, pruning deleted branches (`git fetch --all --prune`).
     fn fetch(&self, path: &Path) -> Result<(), GitError>;
-    /// Integrate the upstream into the current branch (`git pull`); `rebase`
-    /// switches to `git pull --rebase`. Conflicts surface as an error.
-    fn pull(&self, path: &Path, rebase: bool) -> Result<(), GitError>;
-    /// Push the current branch (`git push`). `set_upstream_branch` runs
-    /// `--set-upstream origin <branch>` for a first push; `force` adds
-    /// `--force-with-lease` (never a bare `--force`) — confirm before using.
-    fn push(
-        &self,
-        path: &Path,
-        set_upstream_branch: Option<&str>,
-        force: bool,
-    ) -> Result<(), GitError>;
-    /// Merge `branch` into the current branch (`git merge`). On conflict the
-    /// repo is left mid-merge; resolve + Continue, or Abort.
-    fn merge(&self, path: &Path, branch: &str) -> Result<(), GitError>;
+    /// Integrate the upstream into the current branch (`git pull`). riff only
+    /// ever merge-pulls: `--rebase` would rewrite local history, which is
+    /// outside its write surface. Conflicts surface as an error.
+    fn pull(&self, path: &Path) -> Result<(), GitError>;
     /// The in-progress operation, if any: "merge" | "rebase" | "cherry-pick" |
     /// "revert" | "none". Drives the conflict banner.
     fn pending_op(&self, path: &Path) -> Result<String, GitError>;
@@ -514,23 +375,6 @@ pub trait GitLayer {
     /// Continue the in-progress `op` after conflicts are resolved + staged
     /// (editor suppressed so it can't hang).
     fn op_continue(&self, path: &Path, op: &str) -> Result<(), GitError>;
-    /// List the stash entries (`git stash list`).
-    fn stash_list(&self, path: &Path) -> Result<Vec<Stash>, GitError>;
-    /// Save the working tree to a new stash (`git stash push`). `message` sets a
-    /// custom subject; `include_untracked` also stashes untracked files. `paths`
-    /// limits the stash to those pathspecs (`… -- <paths>`); `None` stashes the
-    /// whole working tree (mirrors `stage`).
-    fn stash_save(
-        &self,
-        path: &Path,
-        message: Option<&str>,
-        include_untracked: bool,
-        paths: Option<&[String]>,
-    ) -> Result<(), GitError>;
-    /// Apply `stash@{index}`; `pop` removes it after applying.
-    fn stash_apply(&self, path: &Path, index: u32, pop: bool) -> Result<(), GitError>;
-    /// Drop `stash@{index}`.
-    fn stash_drop(&self, path: &Path, index: u32) -> Result<(), GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.

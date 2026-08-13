@@ -342,7 +342,7 @@ export async function continueOp(): Promise<void> {
 export function doFetch(): Promise<void> {
   return runSync(fetchCmd(changesRepoPath()), "Fetching…");
 }
-export async function doPull(rebase: boolean): Promise<void> {
+export async function doPull(): Promise<void> {
   // currentUpstream is only ever refreshed by an awaited loadStatus/
   // loadCurrentBranch. loadCurrentBranch() runs unawaited on repo open
   // (workspace.ts) and checkout doesn't gate Pull's disabled state, so without
@@ -359,7 +359,7 @@ export async function doPull(rebase: boolean): Promise<void> {
       : "detached HEAD 상태에서는 pull 할 수 없습니다. 먼저 브랜치를 checkout 하세요.";
     return;
   }
-  return runSync(pullCmd(changesRepoPath(), rebase), "Pulling…");
+  return runSync(pullCmd(changesRepoPath()), "Pulling…");
 }
 /// Clear all Changes-screen state on repo switch — the status and repo
 /// selection belong to the old workspace.

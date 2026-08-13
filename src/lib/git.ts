@@ -162,9 +162,12 @@ export function fetch(path: string): Promise<void> {
   return invoke("fetch", { path });
 }
 
-/** Pull the upstream into the current branch; `rebase` uses `--rebase`. */
-export function pull(path: string, rebase: boolean): Promise<void> {
-  return invoke("pull", { path, rebase });
+/**
+ * Pull the current branch (fetch + merge). riff never rebases — rewriting
+ * local history is outside its write surface.
+ */
+export function pull(path: string): Promise<void> {
+  return invoke("pull", { path });
 }
 
 /** The in-progress op: "merge" | "rebase" | "cherry-pick" | "revert" | "none". */

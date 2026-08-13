@@ -13,8 +13,8 @@ use super::diff;
 use super::uasset;
 use super::{
     Branch, BranchKind, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions,
-    DiffMode, FileDiff, FileStatus, GitError, GitLayer, Hunk, ReflogEntry, RepoStatus, Stash,
-    StatusEntry, SubmoduleCommit, SubmoduleInfo,
+    DiffMode, FileDiff, FileStatus, GitError, GitLayer, ReflogEntry, RepoStatus, StatusEntry,
+    SubmoduleCommit, SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -316,32 +316,6 @@ impl GitCli {
         self.session.lock().unwrap().take();
     }
 
-    /// Like `run`, but writes `input` to the child's stdin (then closes it so
-    /// the command sees EOF). Used to feed a patch to `git apply`.
-    fn run_stdin(&self, path: &Path, args: &[&str], input: &[u8]) -> Result<Vec<u8>, GitError> {
-        let mut child = git_command()
-            .arg("-C")
-            .arg(path)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        {
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| GitError::CommandFailed("stdin not piped".into()))?;
-            stdin.write_all(input)?;
-            // stdin dropped here → EOF.
-        }
-        let output = child.wait_with_output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(GitError::CommandFailed(stderr));
-        }
-        Ok(output.stdout)
-    }
 }
 
 impl Default for GitCli {
@@ -355,18 +329,6 @@ fn validate_ref(s: &str) -> Result<&str, GitError> {
         return Err(GitError::InvalidRef(s.to_string()));
     }
     Ok(s)
-}
-
-/// Whether `p` exists in HEAD's tree (`git cat-file -e HEAD:p`, exit 0). False
-/// on an unborn branch or any error — callers treat that as a new file.
-fn path_in_head(repo: &Path, p: &str) -> bool {
-    git_command()
-        .arg("-C")
-        .arg(repo)
-        .args(["cat-file", "-e", &format!("HEAD:{p}")])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 /// Parse `git log -z COMMIT_LOG_FORMAT` output into commits. Split out from the
@@ -564,98 +526,6 @@ fn status_path(tok: &str, n: usize) -> Option<String> {
     tok.splitn(n + 1, ' ').nth(n).map(|s| s.to_string())
 }
 
-/// Build the `git diff` args for one file's textual patch. `staged` adds
-/// `--cached` (HEAD↔index); otherwise it's the worktree↔index diff.
-fn diff_args(staged: bool, file_path: &str) -> Vec<&str> {
-    let mut args = vec!["diff"];
-    if staged {
-        args.push("--cached");
-    }
-    args.push("--");
-    args.push(file_path);
-    args
-}
-
-/// Split a single-file unified diff into `(header, hunks)`. The header is every
-/// line up to the first `@@` (the `diff --git` / `---` / `+++` preamble); each
-/// hunk is a `@@` line plus its body up to the next `@@` (or EOF). Lines keep
-/// their trailing newline so a sub-patch reassembles byte-for-byte. Split out
-/// for unit testing. Hunk header lines start with `@@` at column 0; diff body
-/// lines are prefixed by a space/`+`/`-`/`\`, so they never false-match.
-fn split_diff(text: &str) -> (String, Vec<String>) {
-    let mut header = String::new();
-    let mut hunks: Vec<String> = Vec::new();
-    for line in text.split_inclusive('\n') {
-        if line.starts_with("@@") {
-            hunks.push(line.to_string());
-        } else if let Some(last) = hunks.last_mut() {
-            last.push_str(line);
-        } else {
-            header.push_str(line);
-        }
-    }
-    (header, hunks)
-}
-
-/// Parse a single-file unified diff into display hunks (header line + added /
-/// removed line counts).
-fn parse_hunks(text: &str) -> Vec<Hunk> {
-    let (_, blocks) = split_diff(text);
-    blocks
-        .iter()
-        .map(|b| {
-            let header = b.lines().next().unwrap_or("").to_string();
-            // Body = everything after the `@@` header line. The header carries
-            // line numbers that shift as the file changes, so the id hashes only
-            // the body (the +/-/context lines), keeping it stable across edits.
-            let body = b.splitn(2, '\n').nth(1).unwrap_or("");
-            let mut added = 0;
-            let mut removed = 0;
-            for l in body.lines() {
-                match l.as_bytes().first() {
-                    Some(b'+') => added += 1,
-                    Some(b'-') => removed += 1,
-                    _ => {}
-                }
-            }
-            Hunk {
-                id: hunk_id(body),
-                header,
-                added,
-                removed,
-            }
-        })
-        .collect()
-}
-
-/// Content signature of a hunk body — a hash of its +/-/context lines. Stable
-/// for the same content within a process, enough to track a hunk's changelist
-/// assignment across re-diffs (only compared within one session).
-fn hunk_id(body: &str) -> String {
-    use std::hash::Hasher;
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    h.write(body.as_bytes());
-    format!("{:016x}", h.finish())
-}
-
-/// Parse `git stash list --format=%gd%x1f%s` output: one stash per line, the
-/// `stash@{N}` selector and the subject separated by \x1f.
-fn parse_stash_list(text: &str) -> Vec<Stash> {
-    text.lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(2, '\x1f');
-            let gd = parts.next()?;
-            let message = parts.next().unwrap_or("").to_string();
-            let index = gd
-                .strip_prefix("stash@{")?
-                .strip_suffix('}')?
-                .parse::<u32>()
-                .ok()?;
-            Some(Stash { index, message })
-        })
-        .collect()
-}
-
 /// Parse `git reflog show --date=unix --format=%H%x1f%gd%x1f%gs` output: one
 /// entry per line — full SHA, the date-form selector `HEAD@{<unix>}`, and the
 /// reflog subject, separated by \x1f.
@@ -703,14 +573,6 @@ fn validate_path(s: &str) -> Result<(), GitError> {
         return Err(GitError::InvalidRef(format!("invalid path: {s}")));
     }
     Ok(())
-}
-
-/// Path to this repo's changelist store, inside the resolved git dir (handles
-/// worktrees / submodules where `.git` may be a file).
-fn changelists_file(cli: &GitCli, path: &Path) -> Result<PathBuf, GitError> {
-    let out = cli.run(path, &["rev-parse", "--git-dir"])?;
-    let gitdir = path.join(String::from_utf8_lossy(&out).trim());
-    Ok(gitdir.join("riff-changelists.json"))
 }
 
 fn is_binary(bytes: &[u8]) -> bool {
@@ -1555,249 +1417,6 @@ impl GitLayer for GitCli {
         })
     }
 
-    fn stage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        match files {
-            None => {
-                self.run(path, &["add", "-A"])?;
-            }
-            Some(files) => {
-                for f in files {
-                    validate_path(f)?;
-                }
-                let mut args: Vec<&str> = vec!["add", "--"];
-                args.extend(files.iter().map(String::as_str));
-                self.run(path, &args)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn unstage(&self, path: &Path, files: Option<&[String]>) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        match files {
-            None => {
-                self.run(path, &["restore", "--staged", "--", "."])?;
-            }
-            Some(files) => {
-                for f in files {
-                    validate_path(f)?;
-                }
-                let mut args: Vec<&str> = vec!["restore", "--staged", "--"];
-                args.extend(files.iter().map(String::as_str));
-                self.run(path, &args)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn discard_paths(&self, path: &Path, paths: &[String]) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        for p in paths {
-            validate_path(p)?;
-        }
-        for p in paths {
-            if path_in_head(path, p) {
-                // Tracked in HEAD → revert index + worktree to HEAD.
-                self.run(
-                    path,
-                    &["restore", "--source=HEAD", "--staged", "--worktree", "--", p],
-                )?;
-            } else {
-                // New (staged-added or untracked) → drop from the index (no-op
-                // if it isn't staged), then remove the untracked working copy.
-                let _ = self.run(path, &["rm", "-f", "--cached", "--ignore-unmatch", "--", p]);
-                self.run(path, &["clean", "-f", "--", p])?;
-            }
-        }
-        // Index/worktree moved out from under the cat-file batch — respawn it.
-        self.drop_session();
-        Ok(())
-    }
-
-    fn commit(
-        &self,
-        path: &Path,
-        subject: &str,
-        body: &str,
-        amend: bool,
-        signoff: bool,
-        coauthors: &[String],
-    ) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        if subject.trim().is_empty() {
-            return Err(GitError::CommandFailed("commit subject is empty".into()));
-        }
-        // Owned trailer strings, borrowed into `args` below.
-        let trailers: Vec<String> = coauthors
-            .iter()
-            .filter(|c| !c.trim().is_empty())
-            .map(|c| format!("Co-authored-by: {}", c.trim()))
-            .collect();
-
-        let mut args: Vec<&str> = vec!["commit"];
-        if amend {
-            args.push("--amend");
-        }
-        if signoff {
-            args.push("-s");
-        }
-        // `-m subject -m body` → git joins them with a blank line, matching the
-        // subject/body convention. Values are message text (not flags), so a
-        // leading dash in the subject is safe.
-        args.push("-m");
-        args.push(subject);
-        if !body.trim().is_empty() {
-            args.push("-m");
-            args.push(body);
-        }
-        for t in &trailers {
-            args.push("--trailer");
-            args.push(t);
-        }
-        self.run(path, &args)?;
-        Ok(())
-    }
-
-    fn head_commit_message(&self, path: &Path) -> Result<String, GitError> {
-        let out = self.run(path, &["log", "-1", "--format=%B"])?;
-        Ok(String::from_utf8_lossy(&out).trim_end().to_string())
-    }
-
-    fn commit_paths(
-        &self,
-        path: &Path,
-        paths: &[String],
-        subject: &str,
-        body: &str,
-        signoff: bool,
-        coauthors: &[String],
-    ) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        if subject.trim().is_empty() {
-            return Err(GitError::CommandFailed("commit subject is empty".into()));
-        }
-        if paths.is_empty() {
-            return Err(GitError::CommandFailed("no files to commit".into()));
-        }
-        for p in paths {
-            validate_path(p)?;
-        }
-        // Stage the listed paths so untracked files become committable; `git
-        // add` also records deletions.
-        let mut add_args: Vec<&str> = vec!["add", "--"];
-        add_args.extend(paths.iter().map(String::as_str));
-        self.run(path, &add_args)?;
-
-        let trailers: Vec<String> = coauthors
-            .iter()
-            .filter(|c| !c.trim().is_empty())
-            .map(|c| format!("Co-authored-by: {}", c.trim()))
-            .collect();
-        // `git commit -- <paths>` does a path-limited commit (working-tree
-        // content of just those paths), leaving everything else untouched.
-        let mut args: Vec<&str> = vec!["commit"];
-        if signoff {
-            args.push("-s");
-        }
-        args.push("-m");
-        args.push(subject);
-        if !body.trim().is_empty() {
-            args.push("-m");
-            args.push(body);
-        }
-        for t in &trailers {
-            args.push("--trailer");
-            args.push(t);
-        }
-        args.push("--");
-        args.extend(paths.iter().map(String::as_str));
-        self.run(path, &args)?;
-        self.drop_session();
-        Ok(())
-    }
-
-    fn load_changelists(&self, path: &Path) -> Result<String, GitError> {
-        Ok(fs::read_to_string(changelists_file(self, path)?).unwrap_or_default())
-    }
-
-    fn save_changelists(&self, path: &Path, data: &str) -> Result<(), GitError> {
-        fs::write(changelists_file(self, path)?, data).map_err(GitError::Io)
-    }
-
-    fn file_hunks(&self, path: &Path, file_path: &str, staged: bool) -> Result<Vec<Hunk>, GitError> {
-        validate_path(file_path)?;
-        let out = self.run(path, &diff_args(staged, file_path))?;
-        Ok(parse_hunks(&String::from_utf8_lossy(&out)))
-    }
-
-    fn apply_hunks(
-        &self,
-        path: &Path,
-        file_path: &str,
-        staged: bool,
-        hunks: &[u32],
-    ) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_path(file_path)?;
-        if hunks.is_empty() {
-            return Ok(());
-        }
-        // Re-diff now so the patch matches the *current* file state and indices
-        // line up with what the user clicked (drift guard below).
-        let out = self.run(path, &diff_args(staged, file_path))?;
-        let text = String::from_utf8_lossy(&out);
-        let (header, blocks) = split_diff(&text);
-        if header.is_empty() || blocks.is_empty() {
-            return Err(GitError::CommandFailed(
-                "no diff to apply (file may have changed)".into(),
-            ));
-        }
-        let mut patch = header;
-        for &i in hunks {
-            let block = blocks.get(i as usize).ok_or_else(|| {
-                GitError::CommandFailed("file changed since hunks were listed; refresh".into())
-            })?;
-            patch.push_str(block);
-        }
-        // Apply to the index: forward stages the hunk, reverse unstages it.
-        let mut args = vec!["apply", "--cached"];
-        if staged {
-            args.push("--reverse");
-        }
-        self.run_stdin(path, &args, patch.as_bytes())?;
-        Ok(())
-    }
-
-    fn discard_hunks(&self, path: &Path, file_path: &str, hunks: &[u32]) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_path(file_path)?;
-        if hunks.is_empty() {
-            return Ok(());
-        }
-        // Re-diff the *unstaged* changes now so the patch matches the current
-        // worktree and indices line up with what the user clicked.
-        let out = self.run(path, &diff_args(false, file_path))?;
-        let text = String::from_utf8_lossy(&out);
-        let (header, blocks) = split_diff(&text);
-        if header.is_empty() || blocks.is_empty() {
-            return Err(GitError::CommandFailed(
-                "no diff to discard (file may have changed)".into(),
-            ));
-        }
-        let mut patch = header;
-        for &i in hunks {
-            let block = blocks.get(i as usize).ok_or_else(|| {
-                GitError::CommandFailed("file changed since hunks were listed; refresh".into())
-            })?;
-            patch.push_str(block);
-        }
-        // Reverse-apply to the worktree only (no --cached): drops the selected
-        // unstaged change, reverting that region to the index.
-        self.run_stdin(path, &["apply", "--reverse"], patch.as_bytes())?;
-        Ok(())
-    }
-
     fn create_branch(
         &self,
         path: &Path,
@@ -1833,40 +1452,12 @@ impl GitLayer for GitCli {
         Ok(())
     }
 
-    fn force_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(ref_name)?;
-        self.run(path, &["checkout", "-f", ref_name])?;
-        self.drop_session();
-        Ok(())
-    }
-
     fn fast_forward(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
         let _w = self.write_lock.lock().unwrap();
         validate_ref(ref_name)?;
         self.run(path, &["merge", "--ff-only", ref_name])?;
         self.drop_session();
         Ok(())
-    }
-
-    fn stash_checkout(&self, path: &Path, ref_name: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(ref_name)?;
-        // Stash everything (tracked + untracked) so the tree is clean to switch.
-        let msg = format!("riff: auto-stash before checkout {ref_name}");
-        self.run(path, &["stash", "push", "--include-untracked", "-m", &msg])?;
-        // Switch. If it fails, restore the stash before surfacing the error so
-        // the user's changes aren't left stranded on the stash stack.
-        if let Err(e) = self.run(path, &["checkout", ref_name]) {
-            let _ = self.run(path, &["stash", "pop"]);
-            self.drop_session();
-            return Err(e);
-        }
-        // Reapply. On conflict `git stash pop` exits non-zero but keeps the
-        // stash and writes conflict markers — propagate so the UI can report it.
-        let reapply = self.run(path, &["stash", "pop"]);
-        self.drop_session();
-        reapply.map(|_| ())
     }
 
     fn conflict_versions(
@@ -1945,55 +1536,8 @@ impl GitLayer for GitCli {
         Ok(())
     }
 
-    fn set_upstream(&self, path: &Path, branch: &str, upstream: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(branch)?;
-        validate_ref(upstream)?;
-        let arg = format!("--set-upstream-to={upstream}");
-        self.run(path, &["branch", &arg, branch])?;
-        Ok(())
-    }
-
-    fn create_tag(&self, path: &Path, name: &str, target: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(name)?;
-        validate_ref(target)?;
-        self.run(path, &["tag", name, target])?;
-        Ok(())
-    }
-
-    fn delete_tag(&self, path: &Path, name: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(name)?;
-        self.run(path, &["tag", "-d", name])?;
-        Ok(())
-    }
-
-    fn push_tag(&self, path: &Path, name: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(name)?;
-        // Explicit refspec: `origin <name>` alone is ambiguous when a branch
-        // shares the tag's name. `origin` matches the remote `push` hardcodes.
-        let refspec = format!("refs/tags/{name}");
-        self.run_network(path, &["push", "origin", &refspec])?;
-        Ok(())
-    }
-
-    fn reset(&self, path: &Path, target: &str, mode: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(target)?;
-        let flag = match mode {
-            "soft" => "--soft",
-            "hard" => "--hard",
-            _ => "--mixed",
-        };
-        self.run(path, &["reset", flag, target])?;
-        self.drop_session();
-        Ok(())
-    }
-
     fn reflog(&self, path: &Path) -> Result<Vec<ReflogEntry>, GitError> {
-        // Read-only: no write_lock and no drop_session (mirrors `stash_list`).
+        // Read-only: no write_lock and no drop_session.
         // `--date=unix` makes %gd render as `HEAD@{<unix>}`, carrying the time
         // the reflog entry was written — i.e. when HEAD actually moved. The
         // commit's own %ct would be misleading here: a `checkout:` onto an old
@@ -2013,94 +1557,6 @@ impl GitLayer for GitCli {
         Ok(parse_reflog(&String::from_utf8_lossy(&out)))
     }
 
-    fn cherry_pick(&self, path: &Path, target: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(target)?;
-        self.run(path, &["cherry-pick", target])?;
-        self.drop_session();
-        Ok(())
-    }
-
-    fn revert(&self, path: &Path, target: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(target)?;
-        self.run(path, &["revert", "--no-edit", target])?;
-        self.drop_session();
-        Ok(())
-    }
-
-    fn rebase(&self, path: &Path, onto: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(onto)?;
-        self.run(path, &["rebase", onto])?;
-        self.drop_session();
-        Ok(())
-    }
-
-    fn stash_rebase(&self, path: &Path, onto: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(onto)?;
-        // Stash tracked changes so the rebase runs on a clean tree, then reapply.
-        // Deliberately NOT git's `--autostash`: that reapplies inside the rebase
-        // at the very end, and a conflicting reapply leaves the rebase wedged
-        // (unmergeable "continue"). Instead we reapply only when the rebase
-        // finishes cleanly here; if it stops on a conflict the rebase stays in
-        // progress for the normal resolve→continue flow and the stash is kept so
-        // the local work can be reapplied afterward (or restored via `--abort`).
-        let msg = format!("riff: auto-stash before rebase {onto}");
-        self.run(path, &["stash", "push", "-m", &msg])?;
-        if let Err(e) = self.run(path, &["rebase", onto]) {
-            // Mid-rebase now (conflict) — can't pop. Leave the stash in place and
-            // surface the error so the conflict UI engages.
-            self.drop_session();
-            return Err(e);
-        }
-        // Clean rebase → reapply. A pop conflict keeps the stash and writes
-        // conflict markers; propagate so the UI can report it (like stash_checkout).
-        let reapply = self.run(path, &["stash", "pop"]);
-        self.drop_session();
-        reapply.map(|_| ())
-    }
-
-    fn stash_pull(&self, path: &Path, rebase: bool) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        // Stash everything so the pull runs on a clean tree. Manual stash→pull→pop
-        // (not `--autostash`) so a conflicting reapply can't wedge the op — same
-        // stance as stash_rebase.
-        self.run(path, &["stash", "push", "--include-untracked", "-m",
-            "riff: auto-stash before pull"])?;
-        let mut args = vec!["pull"];
-        if rebase {
-            args.push("--rebase");
-        }
-        if let Err(e) = self.run_network(path, &args) {
-            // Pull conflicted (or failed) — leave the stash for the user to
-            // reapply after resolving; surface the error so the conflict UI (or
-            // banner) engages.
-            self.drop_session();
-            return Err(e);
-        }
-        // Clean pull → reapply. A pop conflict keeps the stash and writes markers;
-        // propagate so the UI reports it (like stash_checkout).
-        let reapply = self.run(path, &["stash", "pop"]);
-        self.drop_session();
-        reapply.map(|_| ())
-    }
-
-    fn stash_merge(&self, path: &Path, branch: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(branch)?;
-        self.run(path, &["stash", "push", "--include-untracked", "-m",
-            "riff: auto-stash before merge"])?;
-        if let Err(e) = self.run(path, &["merge", branch]) {
-            self.drop_session();
-            return Err(e);
-        }
-        let reapply = self.run(path, &["stash", "pop"]);
-        self.drop_session();
-        reapply.map(|_| ())
-    }
-
     fn fetch(&self, path: &Path) -> Result<(), GitError> {
         let _w = self.write_lock.lock().unwrap();
         self.run_network(path, &["fetch", "--all", "--prune"])?;
@@ -2109,96 +1565,11 @@ impl GitLayer for GitCli {
         Ok(())
     }
 
-    fn pull(&self, path: &Path, rebase: bool) -> Result<(), GitError> {
+    fn pull(&self, path: &Path) -> Result<(), GitError> {
         let _w = self.write_lock.lock().unwrap();
-        let mut args = vec!["pull"];
-        if rebase {
-            args.push("--rebase");
-        }
-        self.run_network(path, &args)?;
-        self.drop_session();
-        Ok(())
-    }
-
-    fn push(
-        &self,
-        path: &Path,
-        set_upstream_branch: Option<&str>,
-        force: bool,
-    ) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        let mut args = vec!["push"];
-        if force {
-            args.push("--force-with-lease");
-        }
-        if let Some(branch) = set_upstream_branch {
-            validate_ref(branch)?;
-            args.push("--set-upstream");
-            args.push("origin");
-            args.push(branch);
-        }
-        self.run_network(path, &args)?;
-        Ok(())
-    }
-
-    fn stash_list(&self, path: &Path) -> Result<Vec<Stash>, GitError> {
-        let out = self.run(path, &["stash", "list", "--format=%gd%x1f%s"])?;
-        Ok(parse_stash_list(&String::from_utf8_lossy(&out)))
-    }
-
-    fn stash_save(
-        &self,
-        path: &Path,
-        message: Option<&str>,
-        include_untracked: bool,
-        paths: Option<&[String]>,
-    ) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        let mut args = vec!["stash", "push"];
-        if include_untracked {
-            args.push("--include-untracked");
-        }
-        if let Some(m) = message {
-            if !m.trim().is_empty() {
-                args.push("-m");
-                args.push(m);
-            }
-        }
-        // A pathspec limits the stash to the named files (mirrors `stage`).
-        // `None` keeps the whole-tree behavior; `--` guards paths that look
-        // like options, and validate_path rejects the obviously-malformed.
-        if let Some(ps) = paths {
-            for p in ps {
-                validate_path(p)?;
-            }
-            args.push("--");
-            args.extend(ps.iter().map(String::as_str));
-        }
-        self.run(path, &args)?;
-        self.drop_session();
-        Ok(())
-    }
-
-    fn stash_apply(&self, path: &Path, index: u32, pop: bool) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        let sel = format!("stash@{{{index}}}");
-        let sub = if pop { "pop" } else { "apply" };
-        self.run(path, &["stash", sub, &sel])?;
-        self.drop_session();
-        Ok(())
-    }
-
-    fn stash_drop(&self, path: &Path, index: u32) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        let sel = format!("stash@{{{index}}}");
-        self.run(path, &["stash", "drop", &sel])?;
-        Ok(())
-    }
-
-    fn merge(&self, path: &Path, branch: &str) -> Result<(), GitError> {
-        let _w = self.write_lock.lock().unwrap();
-        validate_ref(branch)?;
-        self.run(path, &["merge", branch])?;
+        // Always a merge pull: `--rebase` would rewrite local history, which is
+        // outside riff's write surface.
+        self.run_network(path, &["pull"])?;
         self.drop_session();
         Ok(())
     }
@@ -3234,53 +2605,6 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         assert_eq!(st.entries[0].worktree_status, "M");
     }
 
-    const SAMPLE_DIFF: &str = "diff --git a/f.txt b/f.txt\n\
-index 111..222 100644\n\
---- a/f.txt\n\
-+++ b/f.txt\n\
-@@ -1,3 +1,3 @@\n \
-a\n\
--b\n\
-+B\n \
-c\n\
-@@ -10,2 +10,3 @@ fn foo()\n \
-x\n\
-+y\n \
-z\n";
-
-    #[test]
-    fn split_diff_separates_header_and_hunks() {
-        let (header, hunks) = split_diff(SAMPLE_DIFF);
-        assert!(header.starts_with("diff --git a/f.txt b/f.txt\n"));
-        assert!(header.ends_with("+++ b/f.txt\n"));
-        assert!(!header.contains("@@"));
-        assert_eq!(hunks.len(), 2);
-        assert!(hunks[0].starts_with("@@ -1,3 +1,3 @@\n"));
-        assert!(hunks[1].starts_with("@@ -10,2 +10,3 @@ fn foo()\n"));
-        // A sub-patch of header + one hunk reassembles byte-for-byte.
-        assert_eq!(format!("{header}{}", hunks[1]).contains("+y\n"), true);
-    }
-
-    #[test]
-    fn parse_hunks_counts_added_removed() {
-        let hunks = parse_hunks(SAMPLE_DIFF);
-        assert_eq!(hunks.len(), 2);
-        assert_eq!(hunks[0].header, "@@ -1,3 +1,3 @@");
-        assert_eq!((hunks[0].added, hunks[0].removed), (1, 1));
-        assert_eq!(hunks[1].header, "@@ -10,2 +10,3 @@ fn foo()");
-        assert_eq!((hunks[1].added, hunks[1].removed), (1, 0));
-    }
-
-    #[test]
-    fn parse_stash_list_basic() {
-        let input = "stash@{0}\u{1f}WIP on main: a1b2 fix\nstash@{1}\u{1f}On dev: wip\n";
-        let s = parse_stash_list(input);
-        assert_eq!(s.len(), 2);
-        assert_eq!((s[0].index, s[0].message.as_str()), (0, "WIP on main: a1b2 fix"));
-        assert_eq!((s[1].index, s[1].message.as_str()), (1, "On dev: wip"));
-        assert!(parse_stash_list("").is_empty());
-    }
-
     #[test]
     fn parse_reflog_basic() {
         let input = "a1b2c3d\u{1f}HEAD@{1752624000}\u{1f}reset: moving to HEAD~3\n\
@@ -3300,23 +2624,5 @@ z\n";
         assert!(parse_reflog("").is_empty());
         // A selector with no parseable time is dropped, not admitted with 0.
         assert!(parse_reflog("a1b2c3d\u{1f}HEAD@{nope}\u{1f}commit: x\n").is_empty());
-    }
-
-    #[test]
-    fn parse_hunks_empty_diff() {
-        assert!(parse_hunks("").is_empty());
-        // Binary diffs carry no @@ hunks.
-        let bin = "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\n";
-        assert!(parse_hunks(bin).is_empty());
-    }
-
-    #[test]
-    fn hunk_ids_distinct_and_stable() {
-        let hunks = parse_hunks(SAMPLE_DIFF);
-        assert_eq!(hunks.len(), 2);
-        // Same body → same id (re-parse); different bodies → different ids.
-        assert_eq!(hunks[0].id, parse_hunks(SAMPLE_DIFF)[0].id);
-        assert_ne!(hunks[0].id, hunks[1].id);
-        assert!(!hunks[0].id.is_empty());
     }
 }

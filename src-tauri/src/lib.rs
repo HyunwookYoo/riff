@@ -7,8 +7,7 @@ use std::path::Path;
 
 use git::{
     Blame, Branch, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions, DiffMode,
-    FileDiff, FileStatus, GitCli, GitError, GitLayer, Hunk, ReflogEntry, RepoStatus, Stash,
-    SubmoduleInfo,
+    FileDiff, FileStatus, GitCli, GitError, GitLayer, ReflogEntry, RepoStatus, SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
@@ -146,116 +145,6 @@ async fn changes_file_diff(
 }
 
 #[tauri::command]
-async fn stage(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    files: Option<Vec<String>>,
-) -> Result<(), GitError> {
-    state.stage(Path::new(&path), files.as_deref())
-}
-
-#[tauri::command]
-async fn unstage(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    files: Option<Vec<String>>,
-) -> Result<(), GitError> {
-    state.unstage(Path::new(&path), files.as_deref())
-}
-
-#[tauri::command]
-async fn discard_paths(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    paths: Vec<String>,
-) -> Result<(), GitError> {
-    state.discard_paths(Path::new(&path), &paths)
-}
-
-#[tauri::command]
-async fn commit(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    subject: String,
-    body: String,
-    amend: bool,
-    signoff: bool,
-    coauthors: Vec<String>,
-) -> Result<(), GitError> {
-    state.commit(
-        Path::new(&path),
-        &subject,
-        &body,
-        amend,
-        signoff,
-        &coauthors,
-    )
-}
-
-#[tauri::command]
-async fn head_commit_message(state: tauri::State<'_, GitCli>, path: String) -> Result<String, GitError> {
-    state.head_commit_message(Path::new(&path))
-}
-
-#[tauri::command]
-async fn commit_paths(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    paths: Vec<String>,
-    subject: String,
-    body: String,
-    signoff: bool,
-    coauthors: Vec<String>,
-) -> Result<(), GitError> {
-    state.commit_paths(Path::new(&path), &paths, &subject, &body, signoff, &coauthors)
-}
-
-#[tauri::command]
-async fn load_changelists(state: tauri::State<'_, GitCli>, path: String) -> Result<String, GitError> {
-    state.load_changelists(Path::new(&path))
-}
-
-#[tauri::command]
-async fn save_changelists(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    data: String,
-) -> Result<(), GitError> {
-    state.save_changelists(Path::new(&path), &data)
-}
-
-#[tauri::command]
-async fn file_hunks(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    file_path: String,
-    staged: bool,
-) -> Result<Vec<Hunk>, GitError> {
-    state.file_hunks(Path::new(&path), &file_path, staged)
-}
-
-#[tauri::command]
-async fn apply_hunks(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    file_path: String,
-    staged: bool,
-    hunks: Vec<u32>,
-) -> Result<(), GitError> {
-    state.apply_hunks(Path::new(&path), &file_path, staged, &hunks)
-}
-
-#[tauri::command]
-async fn discard_hunks(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    file_path: String,
-    hunks: Vec<u32>,
-) -> Result<(), GitError> {
-    state.discard_hunks(Path::new(&path), &file_path, &hunks)
-}
-
-#[tauri::command]
 async fn create_branch(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -272,48 +161,12 @@ async fn checkout(state: tauri::State<'_, GitCli>, path: String, ref_name: Strin
 }
 
 #[tauri::command]
-async fn force_checkout(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    ref_name: String,
-) -> Result<(), GitError> {
-    state.force_checkout(Path::new(&path), &ref_name)
-}
-
-#[tauri::command]
 async fn fast_forward(
     state: tauri::State<'_, GitCli>,
     path: String,
     ref_name: String,
 ) -> Result<(), GitError> {
     state.fast_forward(Path::new(&path), &ref_name)
-}
-
-#[tauri::command]
-async fn stash_checkout(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    ref_name: String,
-) -> Result<(), GitError> {
-    state.stash_checkout(Path::new(&path), &ref_name)
-}
-
-#[tauri::command]
-async fn stash_pull(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    rebase: bool,
-) -> Result<(), GitError> {
-    state.stash_pull(Path::new(&path), rebase)
-}
-
-#[tauri::command]
-async fn stash_merge(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    branch: String,
-) -> Result<(), GitError> {
-    state.stash_merge(Path::new(&path), &branch)
 }
 
 #[tauri::command]
@@ -366,54 +219,6 @@ async fn delete_branch(
 }
 
 #[tauri::command]
-async fn set_upstream(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    branch: String,
-    upstream: String,
-) -> Result<(), GitError> {
-    state.set_upstream(Path::new(&path), &branch, &upstream)
-}
-
-#[tauri::command]
-async fn create_tag(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    name: String,
-    target: String,
-) -> Result<(), GitError> {
-    state.create_tag(Path::new(&path), &name, &target)
-}
-
-#[tauri::command]
-async fn delete_tag(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    name: String,
-) -> Result<(), GitError> {
-    state.delete_tag(Path::new(&path), &name)
-}
-
-#[tauri::command]
-async fn push_tag(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    name: String,
-) -> Result<(), GitError> {
-    state.push_tag(Path::new(&path), &name)
-}
-
-#[tauri::command]
-async fn reset(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    target: String,
-    mode: String,
-) -> Result<(), GitError> {
-    state.reset(Path::new(&path), &target, &mode)
-}
-
-#[tauri::command]
 async fn reflog(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -422,88 +227,13 @@ async fn reflog(
 }
 
 #[tauri::command]
-async fn cherry_pick(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    target: String,
-) -> Result<(), GitError> {
-    state.cherry_pick(Path::new(&path), &target)
-}
-
-#[tauri::command]
-async fn revert(state: tauri::State<'_, GitCli>, path: String, target: String) -> Result<(), GitError> {
-    state.revert(Path::new(&path), &target)
-}
-
-#[tauri::command]
-async fn rebase(state: tauri::State<'_, GitCli>, path: String, onto: String) -> Result<(), GitError> {
-    state.rebase(Path::new(&path), &onto)
-}
-
-#[tauri::command]
-async fn stash_rebase(state: tauri::State<'_, GitCli>, path: String, onto: String) -> Result<(), GitError> {
-    state.stash_rebase(Path::new(&path), &onto)
-}
-
-#[tauri::command]
 async fn fetch(state: tauri::State<'_, GitCli>, path: String) -> Result<(), GitError> {
     state.fetch(Path::new(&path))
 }
 
 #[tauri::command]
-async fn pull(state: tauri::State<'_, GitCli>, path: String, rebase: bool) -> Result<(), GitError> {
-    state.pull(Path::new(&path), rebase)
-}
-
-#[tauri::command]
-async fn push(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    set_upstream_branch: Option<String>,
-    force: bool,
-) -> Result<(), GitError> {
-    state.push(Path::new(&path), set_upstream_branch.as_deref(), force)
-}
-
-#[tauri::command]
-async fn merge(state: tauri::State<'_, GitCli>, path: String, branch: String) -> Result<(), GitError> {
-    state.merge(Path::new(&path), &branch)
-}
-
-#[tauri::command]
-async fn stash_list(state: tauri::State<'_, GitCli>, path: String) -> Result<Vec<Stash>, GitError> {
-    state.stash_list(Path::new(&path))
-}
-
-#[tauri::command]
-async fn stash_save(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    message: Option<String>,
-    include_untracked: bool,
-    paths: Option<Vec<String>>,
-) -> Result<(), GitError> {
-    state.stash_save(
-        Path::new(&path),
-        message.as_deref(),
-        include_untracked,
-        paths.as_deref(),
-    )
-}
-
-#[tauri::command]
-async fn stash_apply(
-    state: tauri::State<'_, GitCli>,
-    path: String,
-    index: u32,
-    pop: bool,
-) -> Result<(), GitError> {
-    state.stash_apply(Path::new(&path), index, pop)
-}
-
-#[tauri::command]
-async fn stash_drop(state: tauri::State<'_, GitCli>, path: String, index: u32) -> Result<(), GitError> {
-    state.stash_drop(Path::new(&path), index)
+async fn pull(state: tauri::State<'_, GitCli>, path: String) -> Result<(), GitError> {
+    state.pull(Path::new(&path))
 }
 
 #[tauri::command]
@@ -777,50 +507,20 @@ pub fn run() {
             diff_files,
             file_diff,
             changes_file_diff,
-            stage,
-            unstage,
-            discard_paths,
-            commit,
-            head_commit_message,
-            commit_paths,
-            load_changelists,
-            save_changelists,
-            file_hunks,
-            apply_hunks,
-            discard_hunks,
             create_branch,
             checkout,
-            force_checkout,
             fast_forward,
-            stash_checkout,
-            stash_pull,
-            stash_merge,
             conflict_versions,
             resolve_conflict,
             checkout_conflict_side,
             rename_branch,
             delete_branch,
-            set_upstream,
-            create_tag,
-            delete_tag,
-            push_tag,
-            reset,
             reflog,
-            cherry_pick,
-            revert,
-            rebase,
-            stash_rebase,
             fetch,
             pull,
-            push,
-            merge,
             pending_op,
             op_abort,
             op_continue,
-            stash_list,
-            stash_save,
-            stash_apply,
-            stash_drop,
             blame_file,
             file_revisions,
             timelapse_frame,
