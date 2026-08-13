@@ -1,7 +1,6 @@
 import { appState } from "./store.svelte";
 import {
   fetch as fetchCmd,
-  merge as mergeCmd,
   opAbort,
   opContinue,
   pendingOp,
@@ -311,25 +310,6 @@ export async function loadPendingOp(): Promise<void> {
     appState.pendingOp = await pendingOp(changesRepoPath());
   } catch {
     appState.pendingOp = "none";
-  }
-}
-
-/// Merge a branch into the current one. On conflict the repo is left mid-merge
-/// and the banner appears; resolve + stage in Working, then Continue.
-export async function doMergeBranch(branch: string): Promise<void> {
-  const repo = changesRepoPath();
-  appState.beginGitOp("Merging…");
-  appState.error = null;
-  try {
-    await mergeCmd(repo, branch);
-  } catch (e) {
-    appState.error = String(e);
-  } finally {
-    const err = appState.error;
-    await refreshActiveView();
-    await loadPendingOp();
-    if (err) appState.error = err;
-    appState.endGitOp();
   }
 }
 

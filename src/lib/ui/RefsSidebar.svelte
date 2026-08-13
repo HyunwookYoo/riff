@@ -3,15 +3,11 @@
   import {
     createBranch,
     deleteBranch,
-    deleteTag,
     listRefs,
-    pushTag,
     renameBranch,
-    setUpstream,
     status,
   } from "$lib/git";
   import {
-    doMergeBranch,
     enterChangesMode,
     loadCurrentBranch,
   } from "$lib/workingCopy";
@@ -164,36 +160,6 @@
     }
   }
 
-  // Deleting a tag is a local op, so it reuses `run` for the busy guard, error
-  // surfacing, and the ref re-list that follows. (Push does not — see below.)
-  async function doDeleteTag(b: Branch) {
-    const ok = await confirmAction(`Delete tag '${b.name}'?`, {
-      title: "Delete tag",
-    });
-    if (!ok) return;
-    await run(deleteTag(repoPath, b.name));
-  }
-
-  // Push is a network op, so it shows progress and keeps its own error rather
-  // than going through the local-only `run` helper.
-  async function doPushTag(b: Branch) {
-    if (busy) return;
-    busy = true;
-    appState.beginGitOp("Pushing tag…");
-    appState.error = null;
-    let failure: string | null = null;
-    try {
-      await pushTag(repoPath, b.name);
-    } catch (e) {
-      failure = String(e);
-    } finally {
-      await load();
-      if (failure) appState.error = failure;
-      appState.endGitOp();
-      busy = false;
-    }
-  }
-
   // ── Tree (collapse by "/") ──────────────────────────────────────────────
   type Row =
     | { kind: "dir"; name: string; path: string; depth: number }
@@ -264,21 +230,18 @@
   const remoteRows = $derived(buildRows(filtered(remotes), "remote"));
   const tagRows = $derived(buildRows(filtered(tags), "tag"));
 
-  // ── Inline editor (create / rename / set-upstream) ──────────────────────
+  // ── Inline editor (create / rename) ─────────────────────────────────────
   type Editor =
     | { kind: "new"; start: string | null }
-    | { kind: "rename"; branch: string }
-    | { kind: "upstream"; branch: string };
+    | { kind: "rename"; branch: string };
   let editor = $state<Editor | null>(null);
   let editVal = $state("");
   const editorLabel = $derived(
     editor?.kind === "rename"
       ? "Rename to"
-      : editor?.kind === "upstream"
-        ? "Upstream"
-        : editor?.kind === "new" && editor.start
-          ? `New branch from ${editor.start}`
-          : "New branch",
+      : editor?.kind === "new" && editor.start
+        ? `New branch from ${editor.start}`
+        : "New branch",
   );
 
   function openEditor(ed: Editor, initial: string) {
@@ -294,7 +257,6 @@
     if (!ed || !v) return;
     if (ed.kind === "new") void run(createBranch(repoPath, v, ed.start, true));
     else if (ed.kind === "rename") void run(renameBranch(repoPath, ed.branch, v));
-    else void run(setUpstream(repoPath, ed.branch, v));
   }
 
   // ── Context menu ────────────────────────────────────────────────────────
@@ -539,13 +501,6 @@
       <button type="button" role="menuitem" onclick={() => doCheckout(ref)}>
         Checkout
       </button>
-      <button
-        type="button"
-        role="menuitem"
-        onclick={() => void doMergeBranch(ref.name)}
-      >
-        Merge into current
-      </button>
     {/if}
     <button
       type="button"
@@ -562,14 +517,6 @@
       >
         Rename…
       </button>
-      <button
-        type="button"
-        role="menuitem"
-        onclick={() =>
-          openEditor({ kind: "upstream", branch: ref.name }, `origin/${ref.name}`)}
-      >
-        Set upstream…
-      </button>
       {#if ref.name !== current}
         <button
           type="button"
@@ -580,19 +527,6 @@
           Delete
         </button>
       {/if}
-    {/if}
-    {#if ref.kind === "tag"}
-      <button type="button" role="menuitem" onclick={() => doPushTag(ref)}>
-        Push
-      </button>
-      <button
-        type="button"
-        role="menuitem"
-        class="danger"
-        onclick={() => void doDeleteTag(ref)}
-      >
-        Delete
-      </button>
     {/if}
   </div>
 {/if}
