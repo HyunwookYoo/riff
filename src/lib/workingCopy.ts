@@ -353,7 +353,14 @@ export async function continueOp(): Promise<void> {
 export function doFetch(): Promise<void> {
   return runSync(fetchCmd(changesRepoPath()), "Fetching…");
 }
-export function doPull(rebase: boolean): Promise<void> {
+export async function doPull(rebase: boolean): Promise<void> {
+  // currentUpstream is only ever refreshed by an awaited loadStatus/
+  // loadCurrentBranch. loadCurrentBranch() runs unawaited on repo open
+  // (workspace.ts) and checkout doesn't gate Pull's disabled state, so without
+  // this refresh the guard below can still be reading a stale (or the previous
+  // branch's) upstream while Pull is already clickable. Await a fresh read first
+  // so the guard decides on the truth, not a memory of it.
+  await loadCurrentBranch();
   // A branch created in riff has no upstream, because riff cannot push. git's
   // own message ("no tracking information for the current branch") does not say
   // what to do about it — this does.
@@ -361,7 +368,7 @@ export function doPull(rebase: boolean): Promise<void> {
     appState.error = appState.currentBranch
       ? `'${appState.currentBranch}' 는 아직 원격에 없습니다. Fork에서 첫 push를 하면 pull 할 수 있습니다.`
       : "detached HEAD 상태에서는 pull 할 수 없습니다. 먼저 브랜치를 checkout 하세요.";
-    return Promise.resolve();
+    return;
   }
   return runSync(pullCmd(changesRepoPath(), rebase), "Pulling…");
 }
