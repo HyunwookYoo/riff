@@ -3,7 +3,6 @@
   import {
     conflictedEntries,
     discardPath,
-    doStashSave,
     entryToChangedFile,
     selectChange,
   } from "$lib/workingCopy";
@@ -22,7 +21,6 @@
   import { buildPathTree, type TreePathNode } from "./pathTree";
   import {
     applyClick,
-    defaultStashMessage,
     type ClickKind,
   } from "./changesSelect";
   import type { ChangedFile, FileStatus, StatusEntry } from "$lib/types";
@@ -92,7 +90,7 @@
       {
         selected: appState.changesSelectedPaths,
         // The pivot only means anything while a selection is live. After any
-        // clear (Esc, Clear, repo switch, stash) a Shift+click pivots on the
+        // clear (Esc, Clear, repo switch) a Shift+click pivots on the
         // file the diff pane is showing instead of a stale row.
         anchor: appState.changesSelectedPaths.size > 0 ? anchor : null,
       },
@@ -174,7 +172,7 @@
       deleteChangelist(id);
   }
 
-  // Move / stash menu (HTML5 drag is intercepted by Tauri's file-drop; a menu
+  // Move menu (HTML5 drag is intercepted by Tauri's file-drop; a menu
   // is reliable). `paths` is the whole multi-selection when the click landed
   // inside it, else just the clicked file.
   let moveMenu = $state<{ x: number; y: number; paths: string[] } | null>(null);
@@ -195,40 +193,11 @@
     moveMenu = { x: e.clientX, y: e.clientY, paths: [path] };
   }
   function moveTo(targetId: string) {
-    // The selection survives a move — regrouping and then stashing is common.
+    // The selection survives a move — regrouping files together is common.
     if (moveMenu) moveFilesToChangelist(moveMenu.paths, targetId);
     moveMenu = null;
   }
 
-  // Stash the selection (or one file): open an inline message field, then stash
-  // just those paths. An empty message falls back to a generated subject so the
-  // entry is identifiable in the stash list.
-  let stashTargets = $state<string[] | null>(null);
-  let stashMsg = $state("");
-  function openStash() {
-    if (!moveMenu) return;
-    stashTargets = moveMenu.paths;
-    stashMsg = "";
-    moveMenu = null;
-  }
-  function stashSelection() {
-    stashTargets = [...sel];
-    stashMsg = "";
-  }
-  function cancelStash() {
-    stashTargets = null;
-    stashMsg = "";
-  }
-  function submitStash() {
-    const paths = stashTargets;
-    stashTargets = null;
-    if (!paths || paths.length === 0) return;
-    const m = stashMsg.trim() || defaultStashMessage(paths);
-    stashMsg = "";
-    appState.changesSelectedPaths = new Set();
-    anchor = null;
-    void doStashSave(m, paths);
-  }
   function currentListOf(path: string): string {
     return (
       appState.changelists.find((l) => l.files.includes(path))?.id ??
@@ -371,28 +340,9 @@
 {/snippet}
 
 <div class="cl-root" bind:this={rootEl}>
-  {#if stashTargets}
-    {@const n = stashTargets.length}
-    <form class="cl-stash" onsubmit={(e) => (e.preventDefault(), submitStash())}>
-      <span class="cl-stash-label" title={stashTargets.join("\n")}>
-        {n > 1 ? `Stash ${n} files:` : `Stash ${stashTargets[0]}:`}
-      </span>
-      <!-- svelte-ignore a11y_autofocus -->
-      <input
-        autofocus
-        bind:value={stashMsg}
-        placeholder="message (optional)"
-        aria-label="Stash message"
-        onkeydown={(e) => e.key === "Escape" && cancelStash()}
-      />
-    </form>
-  {/if}
   {#if sel.size > 0}
     <div class="cl-selbar">
       <span class="cl-selcount">{sel.size} selected</span>
-      <button type="button" class="cl-selact" onclick={stashSelection}>
-        Stash…
-      </button>
       <button
         type="button"
         class="cl-selact"
@@ -543,10 +493,6 @@
         {here ? "● " : ""}{l.name}
       </button>
     {/each}
-    <div class="cl-menu-sep"></div>
-    <button type="button" role="menuitem" onclick={openStash}>
-      {n > 1 ? `Stash ${n} files…` : "Stash this file…"}
-    </button>
   </div>
 {/if}
 
@@ -607,39 +553,6 @@
   .cl-menu button:disabled {
     opacity: 0.5;
     cursor: default;
-  }
-  .cl-menu-sep {
-    height: 1px;
-    background: var(--border);
-    margin: 4px 0;
-  }
-  .cl-stash {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--border);
-  }
-  .cl-stash-label {
-    flex: 0 0 auto;
-    max-width: 45%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.8em;
-    color: var(--muted);
-    font-family: var(--mono);
-  }
-  .cl-stash input {
-    flex: 1;
-    min-width: 0;
-    box-sizing: border-box;
-    padding: 4px 8px;
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    background: var(--input-bg);
-    color: inherit;
-    font-size: 0.85em;
   }
   .cl-selbar {
     display: flex;

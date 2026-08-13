@@ -15,7 +15,6 @@ import { resetHistory } from "./commitHistory";
 import {
   loadCurrentBranch,
   loadPendingOp,
-  loadStashes,
   loadStatus,
   resetSourceControl,
 } from "./workingCopy";
@@ -313,9 +312,8 @@ export async function loadMainRepo(
     // pull from one source regardless of which repo is focused.
     appState.branchesByRepoIdx = { 0: branches };
     appState.recentRepos = recentRepos;
-    // Populate the toolbar branch chip + stash list up front.
+    // Populate the toolbar branch chip up front.
     void loadCurrentBranch();
-    void loadStashes();
     // Pre-warm the blame picker's file list in the background. BlameView's
     // own `$effect` does the same lazily on first entry, but kicking it off
     // here hides the latency: by the time the user clicks Blame the list is

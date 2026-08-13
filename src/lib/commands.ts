@@ -5,7 +5,6 @@ import {
   doFetch,
   doPull,
   doPush,
-  doStashSave,
 } from "./workingCopy";
 import { enterGraphView, restoreCompareContext } from "./commitHistory";
 import { requestCheckout } from "./checkout";
@@ -22,7 +21,7 @@ export interface Command {
 }
 
 /// Build the command list from the current app state, so dynamic entries
-/// (checkout a branch, pop a stash) reflect what's actually available.
+/// (checkout a branch) reflect what's actually available.
 export function buildCommands(): Command[] {
   const cmds: Command[] = [];
 
@@ -90,12 +89,6 @@ export function buildCommands(): Command[] {
     { id: "sync.pull", title: "Pull (merge)", category: "Sync", run: () => void doPull(false) },
     { id: "sync.pullRebase", title: "Pull (rebase)", category: "Sync", run: () => void doPull(true) },
     { id: "sync.push", title: "Push", category: "Sync", run: () => void doPush(false) },
-  );
-
-  // Stash — quick whole-tree save, plus the panel that lists/manages stashes.
-  cmds.push(
-    { id: "stash.save", title: "Stash: save changes", category: "Stash", run: () => void doStashSave() },
-    { id: "stash.view", title: "View stashes", category: "Stash", run: () => { appState.stashesOpen = true; } },
   );
 
   // Commit history / help

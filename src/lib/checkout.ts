@@ -10,7 +10,6 @@ import {
 import {
   refreshActiveView,
   loadCurrentBranch,
-  loadStashes,
   loadPendingOp,
 } from "./workingCopy";
 import { reloadBranchesFor } from "./workspace";
@@ -41,12 +40,10 @@ export async function isDirty(repoPath: string): Promise<boolean> {
 }
 
 /// Refresh everything a branch switch can affect: the active view (graph /
-/// status + branch chip), the refs sidebar, the stash list, and any pending
-/// operation banner.
+/// status + branch chip), the refs sidebar, and any pending operation banner.
 async function refreshAfterCheckout(): Promise<void> {
   await refreshActiveView();
   void loadCurrentBranch();
-  void loadStashes();
   void loadPendingOp();
   void reloadBranchesFor(appState.changesRepoIdx);
 }

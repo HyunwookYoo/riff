@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { appState } from "./store.svelte";
-import { loadPendingOp, loadStashes, refreshActiveView } from "./workingCopy";
+import { loadPendingOp, refreshActiveView } from "./workingCopy";
 
 // Backend `repo-changed` events (already debounced ~300ms in Rust) drive the
 // active-view refresh. A short UI-side coalesce collapses the handful that can
@@ -19,11 +19,10 @@ function scheduleRefresh(): void {
     // An op may have started after this was scheduled — let it own the refresh.
     if (appState.gitOpDepth > 0) return;
     // refreshActiveView reloads status (Changes) or branch chip + graph
-    // (History) and nudges the refs sidebar; pending-op + stashes cover the
-    // conflict banner and stash list.
+    // (History) and nudges the refs sidebar; pending-op covers the conflict
+    // banner.
     void refreshActiveView();
     void loadPendingOp();
-    void loadStashes();
   }, 120);
 }
 

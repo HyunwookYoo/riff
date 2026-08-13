@@ -2,22 +2,20 @@
   import { appState } from "$lib/store.svelte";
   import { buildCommands, type Command } from "$lib/commands";
   import { loadBranchesFor } from "$lib/workspace";
-  import { loadStashes } from "$lib/workingCopy";
 
   let query = $state("");
   let highlighted = $state(0);
   let inputEl = $state<HTMLInputElement>();
   let listEl = $state<HTMLDivElement>();
 
-  // On open: reset, refresh the dynamic command sources (branches, stashes),
-  // and focus the input.
+  // On open: reset, refresh the dynamic command sources (branches), and
+  // focus the input.
   let wasOpen = false;
   $effect(() => {
     if (appState.paletteOpen && !wasOpen) {
       query = "";
       highlighted = 0;
       void loadBranchesFor(appState.changesRepoIdx);
-      void loadStashes();
       queueMicrotask(() => inputEl?.focus());
     }
     wasOpen = appState.paletteOpen;

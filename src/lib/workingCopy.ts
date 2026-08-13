@@ -11,12 +11,6 @@ import {
   pull as pullCmd,
   push as pushCmd,
   stage as stageCmd,
-  stashApply,
-  stashDrop,
-  stashList,
-  stashMerge,
-  stashPull,
-  stashSave,
   status,
   unstage as unstageCmd,
 } from "./git";
@@ -26,7 +20,6 @@ import {
   reconcileChangelists,
 } from "./changelists";
 import { confirmAction } from "./dialogs";
-import { offerRecovery } from "./recovery";
 import type { ChangedFile, FileStatus, StatusEntry } from "./types";
 
 /// Map a porcelain-v2 status code (X or Y for one side) to a `FileStatus` for
@@ -144,7 +137,6 @@ export async function enterChangesMode(): Promise<void> {
   appState.lastScmView = "changes";
   await loadStatus();
   void loadPendingOp();
-  void loadStashes();
 }
 
 /// Enter the source-control area, restoring whichever sub-view (Working or the
@@ -415,34 +407,11 @@ export async function doMergeBranch(branch: string): Promise<void> {
   try {
     await mergeCmd(repo, branch);
   } catch (e) {
-    const raw = String(e);
-    appState.error = raw;
-    offerRecovery(raw, "merge", `Merge ${branch}`, false, () =>
-      // pull/merge don't offer Discard, so strategy is always "stash"
-      doStashMerge(repo, branch),
-    );
-  } finally {
-    const err = appState.error;
-    await refreshActiveView();
-    await loadPendingOp();
-    if (err) appState.error = err;
-    appState.endGitOp();
-  }
-}
-
-/// Recovery retry for a merge blocked by local changes: stash → merge → pop.
-async function doStashMerge(repo: string, branch: string): Promise<void> {
-  appState.beginGitOp("Stashing & merging…");
-  appState.error = null;
-  try {
-    await stashMerge(repo, branch);
-  } catch (e) {
     appState.error = String(e);
   } finally {
     const err = appState.error;
     await refreshActiveView();
     await loadPendingOp();
-    await loadStashes();
     if (err) appState.error = err;
     appState.endGitOp();
   }
@@ -486,72 +455,11 @@ export async function continueOp(): Promise<void> {
   }
 }
 
-/// Load the stash list for the source-control repo (shown in the sidebar).
-export async function loadStashes(): Promise<void> {
-  if (!appState.repoPath) {
-    appState.stashes = [];
-    return;
-  }
-  try {
-    appState.stashes = await stashList(changesRepoPath());
-  } catch {
-    appState.stashes = [];
-  }
-}
-
-/// Stash the working tree (including untracked) under an optional message.
-/// `paths` limits the stash to those files; omit it to stash everything.
-export async function doStashSave(
-  message?: string,
-  paths?: string[],
-): Promise<void> {
-  appState.error = null;
-  try {
-    await stashSave(changesRepoPath(), message ?? null, true, paths ?? null);
-  } catch (e) {
-    appState.error = String(e);
-  }
-  const err = appState.error;
-  await refreshActiveView();
-  await loadStashes();
-  if (err) appState.error = err;
-}
-
-/// Apply (or pop) a stash back onto the working tree.
-export async function doStashApply(index: number, pop: boolean): Promise<void> {
-  appState.error = null;
-  try {
-    await stashApply(changesRepoPath(), index, pop);
-  } catch (e) {
-    appState.error = String(e);
-  }
-  const err = appState.error;
-  await refreshActiveView();
-  await loadStashes();
-  if (err) appState.error = err;
-}
-
-/// Drop a stash (no working-tree change).
-export async function doStashDrop(index: number): Promise<void> {
-  try {
-    await stashDrop(changesRepoPath(), index);
-  } catch (e) {
-    appState.error = String(e);
-  }
-  await loadStashes();
-}
-
 export function doFetch(): Promise<void> {
   return runSync(fetchCmd(changesRepoPath()), "Fetching…");
 }
 export function doPull(rebase: boolean): Promise<void> {
-  const repo = changesRepoPath();
-  return runSync(pullCmd(repo, rebase), "Pulling…", (raw) =>
-    offerRecovery(raw, "pull", "Pull couldn't complete", false, () =>
-      // pull/merge don't offer Discard, so strategy is always "stash"
-      runSync(stashPull(repo, rebase), "Stashing & pulling…").then(() => loadStashes()),
-    ),
-  );
+  return runSync(pullCmd(changesRepoPath(), rebase), "Pulling…");
 }
 export function doPush(force: boolean): Promise<void> {
   // First push (no upstream): set it on the current branch while pushing.
@@ -566,7 +474,6 @@ export function doPush(force: boolean): Promise<void> {
 /// and commit box belong to the old workspace.
 export function resetSourceControl(): void {
   appState.repoStatus = null;
-  appState.stashes = [];
   appState.changesRepoIdx = 0;
   appState.changesSide = "unstaged";
   appState.commitSubject = "";
