@@ -877,7 +877,12 @@ and checkout-able."
 Removing push means a branch created in riff has no remote counterpart, so `git pull` fails with a message about no tracking information. riff already knows this before it asks git — `appState.currentUpstream` is null — so it should say the useful thing instead. In `src/lib/workingCopy.ts`:
 
 ```ts
-export function doPull(rebase: boolean): Promise<void> {
+export async function doPull(rebase: boolean): Promise<void> {
+  // Decide on fresh state: `currentUpstream` is refreshed by awaited calls, but
+  // Pull is clickable before repo-open's fire-and-forget refresh lands, and
+  // during a checkout (which gates on beginGitOp, not `syncing`) it still holds
+  // the previous branch's value. Reading it stale would block a legitimate pull.
+  await loadCurrentBranch();
   // A branch created in riff has no upstream, because riff cannot push. git's
   // own message ("no tracking information for the current branch") does not say
   // what to do about it — this does.
@@ -1092,7 +1097,10 @@ export function pull(path: string): Promise<void> {
 `src/lib/workingCopy.ts` — `doPull` loses only its parameter; keep the no-upstream guard added in Task 10:
 
 ```ts
-export function doPull(): Promise<void> {
+export async function doPull(): Promise<void> {
+  // Decide on fresh state — see the Task 10 note; reading `currentUpstream`
+  // stale would block a legitimate pull right after repo-open or a checkout.
+  await loadCurrentBranch();
   // A branch created in riff has no upstream, because riff cannot push. git's
   // own message ("no tracking information for the current branch") does not say
   // what to do about it — this does.
@@ -1100,11 +1108,13 @@ export function doPull(): Promise<void> {
     appState.error = appState.currentBranch
       ? `'${appState.currentBranch}' 는 아직 원격에 없습니다. Fork에서 첫 push를 하면 pull 할 수 있습니다.`
       : "detached HEAD 상태에서는 pull 할 수 없습니다. 먼저 브랜치를 checkout 하세요.";
-    return Promise.resolve();
+    return;
   }
   return runSync(pullCmd(changesRepoPath()), "Pulling…");
 }
 ```
+
+> **Amended during execution (2026-08-13).** `doPull` became `async` and awaits `loadCurrentBranch()` because the original guard read cached state — Pull is clickable before repo-open's fire-and-forget refresh lands, and during a checkout it still held the previous branch's upstream, so a legitimate pull on a tracking branch showed the "not on the remote yet" banner and silently did nothing. Shipped in `1baaf58`. Two known Minors follow from the `await`: it sits before `runSync`'s `if (syncing) return`, so a rapid double-click can start two chains (worst case a spurious git-lock error, not corruption), and every pull now reads status twice.
 
 `src/lib/commands.ts` — delete the `sync.pullRebase` entry and change `sync.pull` to `run: () => void doPull()` with the title `Pull`. `src/lib/ui/SyncControls.svelte` — the Pull button calls `doPull()`; the `▾` options menu now has nothing to offer, so delete the split-button caret and the `menu` state entirely.
 
