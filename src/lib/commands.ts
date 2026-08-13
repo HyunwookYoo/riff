@@ -4,7 +4,6 @@ import {
   changesRepoPath,
   doFetch,
   doPull,
-  doPush,
 } from "./workingCopy";
 import { enterGraphView, restoreCompareContext } from "./commitHistory";
 import { requestCheckout } from "./checkout";
@@ -88,7 +87,6 @@ export function buildCommands(): Command[] {
     { id: "sync.fetch", title: "Fetch", category: "Sync", run: () => void doFetch() },
     { id: "sync.pull", title: "Pull (merge)", category: "Sync", run: () => void doPull(false) },
     { id: "sync.pullRebase", title: "Pull (rebase)", category: "Sync", run: () => void doPull(true) },
-    { id: "sync.push", title: "Push", category: "Sync", run: () => void doPush(false) },
   );
 
   // Commit history / help

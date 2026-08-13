@@ -1,24 +1,10 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { doFetch, doPull, doPush } from "$lib/workingCopy";
-  import { confirmAction } from "$lib/dialogs";
+  import { doFetch, doPull } from "$lib/workingCopy";
 
-  let menu = $state<"pull" | "push" | null>(null);
+  let menu = $state<"pull" | null>(null);
   const busy = $derived(appState.syncing);
-  const ahead = $derived(appState.currentAhead);
   const behind = $derived(appState.currentBehind);
-
-  async function confirmForcePush() {
-    menu = null;
-    if (
-      !(await confirmAction(
-        "Force-push with lease? This can overwrite remote history if others have pushed.",
-        { title: "Force push" },
-      ))
-    )
-      return;
-    void doPush(true);
-  }
 </script>
 
 <svelte:window onclick={() => (menu = null)} />
@@ -64,38 +50,6 @@
           </button>
           <button type="button" onclick={() => void doPull(true)}>
             Pull (rebase)
-          </button>
-        </div>
-      {/if}
-    </div>
-
-    <div class="split">
-      <button
-        type="button"
-        class="sbtn main"
-        disabled={busy}
-        title="Push"
-        onclick={() => void doPush(false)}
-      >
-        ↑ Push{#if ahead}&nbsp;{ahead}{/if}
-      </button>
-      <button
-        type="button"
-        class="sbtn caret"
-        disabled={busy}
-        aria-label="Push options"
-        onclick={(e) => {
-          e.stopPropagation();
-          menu = menu === "push" ? null : "push";
-        }}
-      >
-        ▾
-      </button>
-      {#if menu === "push"}
-        <div class="popover" role="menu">
-          <button type="button" onclick={() => void doPush(false)}>Push</button>
-          <button type="button" class="danger" onclick={confirmForcePush}>
-            Force push (with lease)…
           </button>
         </div>
       {/if}
@@ -182,8 +136,5 @@
   }
   .popover button:hover {
     background: var(--hover);
-  }
-  .popover button.danger {
-    color: var(--error-fg, #f85149);
   }
 </style>

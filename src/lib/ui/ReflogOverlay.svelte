@@ -1,7 +1,7 @@
 <!-- src/lib/ui/ReflogOverlay.svelte -->
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { loadReflog, resetToReflog } from "$lib/reflog";
+  import { loadReflog } from "$lib/reflog";
   import { createBranch } from "$lib/git";
   import { changesRepoPath } from "$lib/workingCopy";
   import type { ReflogEntry } from "$lib/types";
@@ -53,10 +53,6 @@
       return;
     }
     close();
-  }
-
-  async function onReset(entry: ReflogEntry) {
-    if (await resetToReflog(entry.sha)) close();
   }
 
   function openBranchEditor(sha: string) {
@@ -118,17 +114,12 @@
         {:else}
           {#each entries as entry (entry.selector)}
             <div class="rl-row">
-              <button
-                type="button"
-                class="rl-main"
-                title="Reset HEAD to this point (uncommitted changes are lost)"
-                onclick={() => void onReset(entry)}
-              >
+              <div class="rl-main">
                 <span class="rl-sel">{entry.selector}</span>
                 <span class="rl-sha">{entry.sha.slice(0, 7)}</span>
                 <span class="rl-subj">{entry.subject}</span>
                 <span class="rl-time">{relTime(entry.time)}</span>
-              </button>
+              </div>
               <button
                 type="button"
                 class="rl-branch"
@@ -222,11 +213,6 @@
     gap: 8px;
     min-width: 0;
     padding: 4px 6px;
-    border: none;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-    text-align: left;
     font-size: 0.88em;
   }
   .rl-sel {

@@ -5,7 +5,6 @@ import {
   opContinue,
   pendingOp,
   pull as pullCmd,
-  push as pushCmd,
   status,
 } from "./git";
 import { loadCommits, invalidateGraph, enterGraphView } from "./commitHistory";
@@ -267,7 +266,7 @@ export async function refreshActiveView(): Promise<void> {
   appState.refsRefresh++;
 }
 
-/// Run a fetch/pull/push against the source-control repo with a busy flag,
+/// Run a fetch/pull against the source-control repo with a busy flag,
 /// surfacing errors and refreshing afterward.
 async function runSync(
   op: Promise<void>,
@@ -290,7 +289,7 @@ async function runSync(
   } finally {
     appState.syncing = false;
     // Keep a sync failure's message: refreshActiveView() runs loadStatus()/
-    // loadCommits(), which reset appState.error — without this a rejected push
+    // loadCommits(), which reset appState.error — without this a rejected pull
     // (e.g. after a rebase) would flash and vanish before you could read it.
     const err = appState.error;
     await refreshActiveView();
@@ -355,17 +354,17 @@ export function doFetch(): Promise<void> {
   return runSync(fetchCmd(changesRepoPath()), "Fetching…");
 }
 export function doPull(rebase: boolean): Promise<void> {
+  // A branch created in riff has no upstream, because riff cannot push. git's
+  // own message ("no tracking information for the current branch") does not say
+  // what to do about it — this does.
+  if (!appState.currentUpstream) {
+    appState.error = appState.currentBranch
+      ? `'${appState.currentBranch}' 는 아직 원격에 없습니다. Fork에서 첫 push를 하면 pull 할 수 있습니다.`
+      : "detached HEAD 상태에서는 pull 할 수 없습니다. 먼저 브랜치를 checkout 하세요.";
+    return Promise.resolve();
+  }
   return runSync(pullCmd(changesRepoPath(), rebase), "Pulling…");
 }
-export function doPush(force: boolean): Promise<void> {
-  // First push (no upstream): set it on the current branch while pushing.
-  const setUpstream =
-    !appState.currentUpstream && appState.currentBranch
-      ? appState.currentBranch
-      : null;
-  return runSync(pushCmd(changesRepoPath(), setUpstream, force), "Pushing…");
-}
-
 /// Clear all Changes-screen state on repo switch — the status, repo selection,
 /// and commit box belong to the old workspace.
 export function resetSourceControl(): void {
