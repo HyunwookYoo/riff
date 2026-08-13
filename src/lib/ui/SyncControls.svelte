@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { doFetch, doPull, doPush } from "$lib/sourceControl";
+  import { doFetch, doPull, doPush } from "$lib/workingCopy";
   import { confirmAction } from "$lib/dialogs";
 
   let menu = $state<"pull" | "push" | null>(null);

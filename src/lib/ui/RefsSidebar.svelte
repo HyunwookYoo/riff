@@ -17,7 +17,7 @@
     doStashSave,
     enterChangesMode,
     loadCurrentBranch,
-  } from "$lib/sourceControl";
+  } from "$lib/workingCopy";
   import { enterGraphView, selectBranchInGraph } from "$lib/commitHistory";
   import { requestCheckout } from "$lib/checkout";
   import { confirmAction } from "$lib/dialogs";

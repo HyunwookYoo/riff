@@ -6,7 +6,7 @@
     doStashApply,
     doStashDrop,
     doStashSave,
-  } from "$lib/sourceControl";
+  } from "$lib/workingCopy";
 
   let dialogEl = $state<HTMLDivElement>();
 

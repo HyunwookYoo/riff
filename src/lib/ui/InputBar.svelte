@@ -8,7 +8,7 @@
     restoreCompareContext,
     setHistoryRef,
   } from "$lib/commitHistory";
-  import { enterChangesMode, enterScm } from "$lib/sourceControl";
+  import { enterChangesMode, enterScm } from "$lib/workingCopy";
   import { loadBranchesFor } from "$lib/workspace";
   import { chooseTheme } from "$lib/theme";
   import { setGraphRowHeight } from "$lib/git";
@@ -90,9 +90,9 @@
       class:active={appState.appMode === "changes" ||
         appState.appMode === "history"}
       onclick={() => void enterScm()}
-      title="Source control — stage, commit, and the commit graph"
+      title="Working copy and commit graph"
     >
-      Changes
+      Working Copy
     </button>
     <button
       type="button"
@@ -145,7 +145,7 @@
         type="button"
         class:active={appState.appMode === "changes"}
         onclick={() => void enterChangesMode()}
-        title="Working tree — stage & commit"
+        title="Working tree — review your uncommitted changes"
       >
         Working
       </button>

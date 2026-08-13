@@ -5,7 +5,7 @@
     conflictCount,
     continueOp,
     enterConflictResolution,
-  } from "$lib/sourceControl";
+  } from "$lib/workingCopy";
 
   const label = $derived(
     (

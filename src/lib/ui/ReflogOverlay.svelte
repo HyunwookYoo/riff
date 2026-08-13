@@ -3,7 +3,7 @@
   import { appState } from "$lib/store.svelte";
   import { loadReflog, resetToReflog } from "$lib/reflog";
   import { createBranch } from "$lib/git";
-  import { changesRepoPath } from "$lib/sourceControl";
+  import { changesRepoPath } from "$lib/workingCopy";
   import type { ReflogEntry } from "$lib/types";
 
   let entries = $state<ReflogEntry[]>([]);

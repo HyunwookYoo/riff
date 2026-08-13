@@ -5,7 +5,7 @@
 /// module is how riff gets back to one.
 import { appState } from "./store.svelte";
 import { reflog, reset } from "./git";
-import { changesRepoPath, loadStatus } from "./sourceControl";
+import { changesRepoPath, loadStatus } from "./workingCopy";
 import { invalidateGraph } from "./commitHistory";
 import { confirmAction } from "./dialogs";
 import type { ReflogEntry } from "./types";

@@ -3,7 +3,7 @@ import { diffFiles, submoduleShaAt } from "./git";
 import { detectLanguage } from "./diff/lang";
 import { preloadLanguages } from "./diff/shiki";
 import { restoreCompareContext } from "./commitHistory";
-import { enterChangesMode } from "./sourceControl";
+import { enterChangesMode } from "./workingCopy";
 import type { ChangedFile, RepoEntry } from "./types";
 
 // Monotonic id so a stale stream from a cancelled compare can't poison the

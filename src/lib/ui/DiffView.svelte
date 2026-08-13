@@ -6,7 +6,7 @@
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
   import { changesFileDiff, fileDiff, fileHunks, setUeVersionForRepo } from "$lib/git";
-  import { changesRepoPath, discardHunk } from "$lib/sourceControl";
+  import { changesRepoPath, discardHunk } from "$lib/workingCopy";
   import { confirmAction } from "$lib/dialogs";
   import { assignHunk, hunkChangelistId } from "$lib/changelists";
   import { resolveDiffRefsFor } from "$lib/workspace";

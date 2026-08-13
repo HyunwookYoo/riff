@@ -6,7 +6,7 @@
     doStashSave,
     entryToChangedFile,
     selectChange,
-  } from "$lib/sourceControl";
+  } from "$lib/workingCopy";
   import { setFileViewMode } from "$lib/git";
   import { confirmAction } from "$lib/dialogs";
   import {

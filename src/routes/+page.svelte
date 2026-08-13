@@ -7,7 +7,7 @@
   import CommitList from "$lib/ui/CommitList.svelte";
   import CommitDetail from "$lib/ui/CommitDetail.svelte";
   import BranchContainment from "$lib/ui/BranchContainment.svelte";
-  import ChangesList from "$lib/ui/ChangesList.svelte";
+  import WorkingCopyList from "$lib/ui/WorkingCopyList.svelte";
   import CommitBox from "$lib/ui/CommitBox.svelte";
   import RepoTabs from "$lib/ui/RepoTabs.svelte";
   import RefsSidebar from "$lib/ui/RefsSidebar.svelte";
@@ -38,7 +38,7 @@
     isPathConflicted,
     loadStatus,
     setChangesRepo,
-  } from "$lib/sourceControl";
+  } from "$lib/workingCopy";
   import { popHistory, redoHistory } from "$lib/history";
   import { exitFocus } from "$lib/focus";
   import { cycleTab, selectTab } from "$lib/tabs";
@@ -523,7 +523,7 @@
       <BlameView />
     {:else if appState.appMode === "changes"}
       <div class="changes-col">
-        <div class="changes-scroll"><ChangesList /></div>
+        <div class="changes-scroll"><WorkingCopyList /></div>
         <CommitBox />
       </div>
       <div

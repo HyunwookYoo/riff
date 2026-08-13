@@ -18,7 +18,7 @@ import {
   loadStashes,
   loadStatus,
   resetSourceControl,
-} from "./sourceControl";
+} from "./workingCopy";
 import { clearBlameCache } from "./blameCache";
 import type { Branch, RepoEntry, RepoFile } from "./types";
 

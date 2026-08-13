@@ -7,7 +7,7 @@ import {
   doPush,
   doStashSave,
   undoLastCommit,
-} from "./sourceControl";
+} from "./workingCopy";
 import { enterGraphView, restoreCompareContext } from "./commitHistory";
 import { requestCheckout } from "./checkout";
 import { chooseTheme } from "./theme";

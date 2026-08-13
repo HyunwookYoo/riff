@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { appState } from "./store.svelte";
-import { loadPendingOp, loadStashes, refreshActiveView } from "./sourceControl";
+import { loadPendingOp, loadStashes, refreshActiveView } from "./workingCopy";
 
 // Backend `repo-changed` events (already debounced ~300ms in Rust) drive the
 // active-view refresh. A short UI-side coalesce collapses the handful that can

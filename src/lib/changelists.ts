@@ -9,7 +9,7 @@ import {
   stage,
   unstage,
 } from "./git";
-import { changesRepoPath, entryConflicted, loadStatus } from "./sourceControl";
+import { changesRepoPath, entryConflicted, loadStatus } from "./workingCopy";
 import { invalidateGraph } from "./commitHistory";
 import type { Changelist } from "./types";
 

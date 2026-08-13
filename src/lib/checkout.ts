@@ -12,7 +12,7 @@ import {
   loadCurrentBranch,
   loadStashes,
   loadPendingOp,
-} from "./sourceControl";
+} from "./workingCopy";
 import { reloadBranchesFor } from "./workspace";
 import { offerRecovery } from "./recovery";
 

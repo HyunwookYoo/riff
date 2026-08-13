@@ -1,7 +1,7 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import { commitChangelist, filesInChangelist } from "$lib/changelists";
-  import { loadAmendMessage } from "$lib/sourceControl";
+  import { loadAmendMessage } from "$lib/workingCopy";
 
   const branch = $derived(appState.repoStatus?.branch ?? null);
   const subjectLen = $derived(appState.commitSubject.trim().length);

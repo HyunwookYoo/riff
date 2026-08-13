@@ -2,7 +2,7 @@
   import { appState } from "$lib/store.svelte";
   import { buildCommands, type Command } from "$lib/commands";
   import { loadBranchesFor } from "$lib/workspace";
-  import { loadStashes } from "$lib/sourceControl";
+  import { loadStashes } from "$lib/workingCopy";
 
   let query = $state("");
   let highlighted = $state(0);

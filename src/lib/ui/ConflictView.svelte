@@ -22,7 +22,7 @@
     resolveConflict,
     checkoutConflictSide,
   } from "$lib/git";
-  import { changesRepoPath, loadStatus, openNextConflict } from "$lib/sourceControl";
+  import { changesRepoPath, loadStatus, openNextConflict } from "$lib/workingCopy";
   import { detectLanguage } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
   import {

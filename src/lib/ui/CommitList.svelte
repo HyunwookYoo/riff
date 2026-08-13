@@ -12,7 +12,7 @@
     loadCurrentBranch,
     loadPendingOp,
     loadStatus,
-  } from "$lib/sourceControl";
+  } from "$lib/workingCopy";
   import {
     checkout,
     cherryPick,

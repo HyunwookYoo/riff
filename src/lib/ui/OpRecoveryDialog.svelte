@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { enterChangesMode } from "$lib/sourceControl";
+  import { enterChangesMode } from "$lib/workingCopy";
   import { confirmAction } from "$lib/dialogs";
 
   let busy = $state(false);

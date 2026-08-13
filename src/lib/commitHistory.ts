@@ -1,7 +1,7 @@
 import { appState } from "./store.svelte";
 import { commitLog, status } from "./git";
 import { compare } from "./compare";
-import { loadCurrentBranch, loadPendingOp, loadStashes } from "./sourceControl";
+import { loadCurrentBranch, loadPendingOp, loadStashes } from "./workingCopy";
 import type { Branch, Commit } from "./types";
 
 /// Commits fetched per page; "load more" appends another page.
