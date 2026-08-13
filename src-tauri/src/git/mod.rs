@@ -247,13 +247,15 @@ pub enum FileDiff {
 }
 
 /// The complete set of git operations riff can perform. Everything the app can
-/// do to a repository is declared here — `GitCli::run` is private, so a method
-/// that is not on this trait cannot be reached.
+/// do to a repository is declared here — the command-spawning helpers
+/// (`GitCli::run` and friends) are module-private to `git`, so nothing outside
+/// the module can issue a git command except through this trait.
 ///
 /// riff writes in exactly five ways: create a branch, rename a branch, delete a
 /// branch, checkout, and fetch/pull. The one exception is conflict resolution,
-/// which cleans up the state riff's own pull created. Committing, publishing,
-/// stashing, and rewriting history are deliberately absent — see
+/// which cleans up the state riff's own pull created. Every one of those writes
+/// lives in `git/write.rs`. Committing, publishing, stashing, and rewriting
+/// history are deliberately absent — see
 /// docs/superpowers/specs/2026-08-12-vcs-scope-reduction-design.md.
 pub trait GitLayer {
     fn validate_repo(&self, path: &Path) -> Result<(), GitError>;
