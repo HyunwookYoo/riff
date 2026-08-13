@@ -1,6 +1,5 @@
 import { appState } from "./store.svelte";
 import {
-  discardPaths as discardCmd,
   fetch as fetchCmd,
   merge as mergeCmd,
   opAbort,
@@ -8,12 +7,9 @@ import {
   pendingOp,
   pull as pullCmd,
   push as pushCmd,
-  stage as stageCmd,
   status,
-  unstage as unstageCmd,
 } from "./git";
 import { loadCommits, invalidateGraph, enterGraphView } from "./commitHistory";
-import { confirmAction } from "./dialogs";
 import type { ChangedFile, FileStatus, StatusEntry } from "./types";
 
 /// Map a porcelain-v2 status code (X or Y for one side) to a `FileStatus` for
@@ -38,8 +34,8 @@ function toFileStatus(code: string): FileStatus {
   }
 }
 
-/// The repo the Changes screen stages/commits against — `changesRepoIdx`
-/// (main or a submodule/manual repo), independent of the compare Focus.
+/// The repo the Changes screen reads status for — `changesRepoIdx` (main or a
+/// submodule/manual repo), independent of the compare Focus.
 export function changesRepoPath(): string {
   return appState.repos[appState.changesRepoIdx]?.path ?? appState.repoPath;
 }
@@ -218,64 +214,6 @@ export function openChange(
   side: "staged" | "unstaged",
 ): void {
   selectChange(entryToChangedFile(entry, side), side);
-}
-
-/// Run a stage/unstage op against the active repo, then refresh status so the
-/// two lists + diff reflect the new index. Errors surface in the error banner
-/// but still trigger a reload (the index may be partially updated).
-async function applyAndReload(op: Promise<void>): Promise<void> {
-  try {
-    await op;
-  } catch (e) {
-    appState.error = String(e);
-  }
-  await loadStatus();
-}
-
-export function stagePath(path: string): Promise<void> {
-  return applyAndReload(stageCmd(changesRepoPath(), [path]));
-}
-export function unstagePath(path: string): Promise<void> {
-  return applyAndReload(unstageCmd(changesRepoPath(), [path]));
-}
-/// Discard a file's local changes (revert tracked → HEAD, delete new). Pass
-/// `origPath` for a rename so its original is restored too. Destructive — the
-/// caller confirms first. Reloads status, which drops the discarded path from
-/// the list.
-export function discardPath(path: string, origPath: string | null): Promise<void> {
-  const paths = origPath ? [path, origPath] : [path];
-  return applyAndReload(discardCmd(changesRepoPath(), paths));
-}
-/// Discard the file currently selected in Changes — the Delete-key shortcut.
-/// Mirrors a row's ↩ button: a new file (staged-add / untracked) is deleted,
-/// anything else reverts to HEAD. Destructive, so it confirms first. No-op
-/// outside the Changes (Working) view or with nothing selected.
-export async function discardSelectedFile(): Promise<void> {
-  if (appState.appMode !== "changes") return;
-  const sel = appState.selectedFile;
-  if (!sel) return;
-  const entry = (appState.repoStatus?.entries ?? []).find(
-    (e) => e.path === sel.path,
-  );
-  const isNew =
-    !!entry &&
-    (entry.index_status === "A" ||
-      (entry.index_status === "?" && entry.worktree_status === "?"));
-  const ok = await confirmAction(
-    isNew
-      ? `Delete this new file? It is permanently removed from disk and can't be undone.\n\n${sel.path}`
-      : `Discard changes to this file? It reverts to HEAD and can't be undone.\n\n${sel.path}`,
-    { title: isNew ? "Delete file" : "Discard changes" },
-  );
-  if (!ok) return;
-  await discardPath(sel.path, entry?.orig_path ?? null);
-}
-
-export function stageAll(): Promise<void> {
-  return applyAndReload(stageCmd(changesRepoPath(), null));
-}
-export function unstageAll(): Promise<void> {
-  return applyAndReload(unstageCmd(changesRepoPath(), null));
 }
 
 /// Refresh just the current-branch indicator (name + ahead/behind) for the

@@ -38,7 +38,6 @@ export const SHORTCUTS: ShortcutGroup[] = [
       { keys: "↑ / ↓", desc: "Previous / next file" },
       { keys: "n / p", desc: "Next / previous change" },
       { keys: "Ctrl +/-/0", desc: "Diff font size" },
-      { keys: "Delete", desc: "Discard selected file (Working view)" },
     ],
   },
   {
