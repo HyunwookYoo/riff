@@ -11,11 +11,9 @@ import type {
   FileDiff,
   FileStatus,
   FileViewMode,
-  Hunk,
   PersistedState,
   ReflogEntry,
   RepoStatus,
-  Stash,
   SubmoduleInfo,
   ThemeChoice,
   WorkspaceLayout,
@@ -105,27 +103,6 @@ export function checkout(path: string, refName: string): Promise<void> {
   return invoke("checkout", { path, refName });
 }
 
-/** Switch to `refName`, discarding local changes to tracked files
- * (`git checkout -f`). Destructive — confirm with the user first. */
-export function forceCheckout(path: string, refName: string): Promise<void> {
-  return invoke("force_checkout", { path, refName });
-}
-
-/** Stash local changes, switch to `refName`, then reapply the stash. */
-export function stashCheckout(path: string, refName: string): Promise<void> {
-  return invoke("stash_checkout", { path, refName });
-}
-
-/** Stash local changes, pull, then reapply — recovery for a pull blocked by local changes. */
-export function stashPull(path: string, rebase: boolean): Promise<void> {
-  return invoke("stash_pull", { path, rebase });
-}
-
-/** Stash local changes, merge `branch`, then reapply — recovery for a merge blocked by local changes. */
-export function stashMerge(path: string, branch: string): Promise<void> {
-  return invoke("stash_merge", { path, branch });
-}
-
 /** Fast-forward the current branch to `refName` (`git merge --ff-only`). */
 export function fastForward(path: string, refName: string): Promise<void> {
   return invoke("fast_forward", { path, refName });
@@ -175,70 +152,9 @@ export function deleteBranch(
   return invoke("delete_branch", { path, name, force });
 }
 
-/** Set a branch's upstream tracking ref. */
-export function setUpstream(
-  path: string,
-  branch: string,
-  upstream: string,
-): Promise<void> {
-  return invoke("set_upstream", { path, branch, upstream });
-}
-
-/** Create a lightweight tag at a commit. */
-export function createTag(
-  path: string,
-  name: string,
-  target: string,
-): Promise<void> {
-  return invoke("create_tag", { path, name, target });
-}
-
-/** Delete a local tag (`git tag -d`). Does not affect the remote. */
-export function deleteTag(path: string, name: string): Promise<void> {
-  return invoke("delete_tag", { path, name });
-}
-
-/** Publish a tag to `origin` (`git push origin refs/tags/<name>`). */
-export function pushTag(path: string, name: string): Promise<void> {
-  return invoke("push_tag", { path, name });
-}
-
-/** Move the current branch to `target`. `mode`: "soft" | "mixed" | "hard". */
-export function reset(
-  path: string,
-  target: string,
-  mode: "soft" | "mixed" | "hard",
-): Promise<void> {
-  return invoke("reset", { path, target, mode });
-}
-
 /** The 200 most recent HEAD reflog entries, newest first (`git reflog show`). */
 export function reflog(path: string): Promise<ReflogEntry[]> {
   return invoke("reflog", { path });
-}
-
-/** Apply a commit onto the current branch (`git cherry-pick`). */
-export function cherryPick(path: string, target: string): Promise<void> {
-  return invoke("cherry_pick", { path, target });
-}
-
-/** Create a commit that undoes `target` (`git revert`). */
-export function revert(path: string, target: string): Promise<void> {
-  return invoke("revert", { path, target });
-}
-
-/** Rebase the current branch onto `onto` (`git rebase`). */
-export function rebase(path: string, onto: string): Promise<void> {
-  return invoke("rebase", { path, onto });
-}
-
-/**
- * Rebase a dirty tree: stash tracked changes, rebase, reapply on a clean finish.
- * On conflict the rebase is left in progress (resolve→continue as usual) and the
- * stash is kept for the user to reapply afterward.
- */
-export function stashRebase(path: string, onto: string): Promise<void> {
-  return invoke("stash_rebase", { path, onto });
 }
 
 /** Fetch all remotes (`git fetch --all --prune`). */
@@ -249,55 +165,6 @@ export function fetch(path: string): Promise<void> {
 /** Pull the upstream into the current branch; `rebase` uses `--rebase`. */
 export function pull(path: string, rebase: boolean): Promise<void> {
   return invoke("pull", { path, rebase });
-}
-
-/**
- * Push the current branch. `setUpstreamBranch` sets the upstream on first
- * push; `force` adds `--force-with-lease` (confirm first).
- */
-export function push(
-  path: string,
-  setUpstreamBranch: string | null,
-  force: boolean,
-): Promise<void> {
-  return invoke("push", { path, setUpstreamBranch, force });
-}
-
-/** Merge `branch` into the current branch (`git merge`). */
-export function merge(path: string, branch: string): Promise<void> {
-  return invoke("merge", { path, branch });
-}
-
-/** List stash entries (`git stash list`). */
-export function stashList(path: string): Promise<Stash[]> {
-  return invoke("stash_list", { path });
-}
-
-/**
- * Save the working tree to a new stash. `paths = null` stashes everything;
- * an array stashes just those pathspecs (`git stash push -- <paths>`).
- */
-export function stashSave(
-  path: string,
-  message: string | null,
-  includeUntracked: boolean,
-  paths: string[] | null,
-): Promise<void> {
-  return invoke("stash_save", { path, message, includeUntracked, paths });
-}
-
-/** Apply `stash@{index}`; `pop` removes it after applying. */
-export function stashApply(
-  path: string,
-  index: number,
-  pop: boolean,
-): Promise<void> {
-  return invoke("stash_apply", { path, index, pop });
-}
-
-/** Drop `stash@{index}`. */
-export function stashDrop(path: string, index: number): Promise<void> {
-  return invoke("stash_drop", { path, index });
 }
 
 /** The in-progress op: "merge" | "rebase" | "cherry-pick" | "revert" | "none". */
@@ -450,120 +317,6 @@ export function changesFileDiff(
     force,
     ueVersion,
   });
-}
-
-/**
- * Stage paths into the index (`git add`). `files = null` stages everything
- * (`git add -A`); an array stages just those paths.
- */
-export function stage(path: string, files: string[] | null): Promise<void> {
-  return invoke("stage", { path, files });
-}
-
-/**
- * Unstage paths (`git restore --staged`), keeping working-tree changes.
- * `files = null` unstages everything.
- */
-export function unstage(path: string, files: string[] | null): Promise<void> {
-  return invoke("unstage", { path, files });
-}
-
-/**
- * Discard local changes to `paths`, reverting each back to HEAD: a file tracked
- * in HEAD is restored (index + worktree); a new/untracked file is removed from
- * disk. Destructive — confirm first. For a rename, pass the new and orig paths.
- */
-export function discardPaths(path: string, paths: string[]): Promise<void> {
-  return invoke("discard_paths", { path, paths });
-}
-
-/**
- * Commit the staged index. `subject`/`body` form the message; `amend` rewrites
- * HEAD; `signoff` adds Signed-off-by; `coauthors` ("Name <email>") become
- * Co-authored-by trailers. Rejects on empty subject or hook failure.
- */
-export function commit(
-  path: string,
-  subject: string,
-  body: string,
-  amend: boolean,
-  signoff: boolean,
-  coauthors: string[],
-): Promise<void> {
-  return invoke("commit", {
-    path,
-    subject,
-    body,
-    amend,
-    signoff,
-    coauthors,
-  });
-}
-
-/** Full message of HEAD, for pre-filling the box when amending. */
-export function headCommitMessage(path: string): Promise<string> {
-  return invoke("head_commit_message", { path });
-}
-
-/** Commit exactly `paths` (a changelist), leaving other changes uncommitted. */
-export function commitPaths(
-  path: string,
-  paths: string[],
-  subject: string,
-  body: string,
-  signoff: boolean,
-  coauthors: string[],
-): Promise<void> {
-  return invoke("commit_paths", { path, paths, subject, body, signoff, coauthors });
-}
-
-/** Read this repo's persisted changelist JSON ("" when absent). */
-export function loadChangelists(path: string): Promise<string> {
-  return invoke("load_changelists", { path });
-}
-
-/** Persist the changelist JSON for this repo. */
-export function saveChangelists(path: string, data: string): Promise<void> {
-  return invoke("save_changelists", { path, data });
-}
-
-/**
- * Parse one file's unified diff into hunks. `staged` true → HEAD↔index
- * (`git diff --cached`); false → index↔worktree. Empty for untracked/binary.
- */
-export function fileHunks(
-  path: string,
-  filePath: string,
-  staged: boolean,
-): Promise<Hunk[]> {
-  return invoke("file_hunks", { path, filePath, staged });
-}
-
-/**
- * Stage (`staged=false`) or unstage (`staged=true`) the hunks at the given
- * indices. Rejects if an index is out of range (the file changed since listing).
- */
-export function applyHunks(
-  path: string,
-  filePath: string,
-  staged: boolean,
-  hunks: number[],
-): Promise<void> {
-  return invoke("apply_hunks", { path, filePath, staged, hunks });
-}
-
-/**
- * Discard the unstaged hunks at the given indices from the working tree
- * (`git apply --reverse`) — reverting just those regions to the index.
- * Destructive. Rejects if an index is out of range (the file changed since
- * listing).
- */
-export function discardHunks(
-  path: string,
-  filePath: string,
-  hunks: number[],
-): Promise<void> {
-  return invoke("discard_hunks", { path, filePath, hunks });
 }
 
 /**

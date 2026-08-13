@@ -199,33 +199,6 @@ export interface ConflictVersions {
   binary: boolean;
 }
 
-/// A named bucket of changed files (Perforce/JetBrains-style changelist).
-/// Persisted per-repo; "default" is always present and non-deletable.
-export interface Changelist {
-  id: string;
-  name: string;
-  files: string[];
-}
-
-/// One hunk of a file's unified diff, for per-hunk stage/unstage + changelist
-/// assignment. Mirrors Rust `Hunk`. `header` is the `@@ -a,b +c,d @@` line;
-/// `added`/`removed` are line counts for the badge. The hunk's *index* in the
-/// returned array identifies it for `applyHunks`; `id` is a content signature
-/// (stable across re-diffs in a session) used to track its changelist.
-export interface Hunk {
-  id: string;
-  header: string;
-  added: number;
-  removed: number;
-}
-
-/// One `git stash list` entry. Mirrors Rust `Stash`. `index` is its position
-/// (`stash@{index}`); `message` is the subject.
-export interface Stash {
-  index: number;
-  message: string;
-}
-
 /// One HEAD reflog entry. Mirrors Rust `ReflogEntry`. `selector` is the
 /// `HEAD@{N}` form; `subject` is git's reflog message (e.g. `commit: …`,
 /// `reset: moving to …`); `time` is when the reflog entry was written — i.e.
