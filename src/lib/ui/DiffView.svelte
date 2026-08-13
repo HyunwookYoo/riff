@@ -5,10 +5,7 @@
   import { MergeView, unifiedMergeView, Change } from "@codemirror/merge";
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
-  import { changesFileDiff, fileDiff, fileHunks, setUeVersionForRepo } from "$lib/git";
-  import { changesRepoPath, discardHunk } from "$lib/workingCopy";
-  import { confirmAction } from "$lib/dialogs";
-  import { assignHunk, hunkChangelistId } from "$lib/changelists";
+  import { changesFileDiff, fileDiff, setUeVersionForRepo } from "$lib/git";
   import { resolveDiffRefsFor } from "$lib/workspace";
   import type { ChangedFile, FileDiff } from "$lib/types";
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
@@ -129,187 +126,14 @@
     const ov = langOverride;
     const cm = appState.compareMode;
     const uv = ueVersion;
-    const side = appState.changesSide;
     void file;
     void mode;
     void theme;
     void ov;
     void cm;
     void uv;
-    void side;
     void appState.bcDiffRange;
     load(false);
-  });
-
-  // ── Hunk → changelist assignment (right-click a hunk in the diff) ─────────
-  let hunkMenu = $state<{ x: number; y: number; hunkId: string } | null>(null);
-
-  // Cache this file's git hunks (with ids) so the context menu can map a
-  // clicked line to a hunk, and the changelist list can show its split counts.
-  $effect(() => {
-    const file = appState.selectedFile;
-    const side = appState.changesSide;
-    void appState.repoStatus;
-    if (appState.appMode === "changes" && side === "unstaged" && file) {
-      void loadHunks(file.path);
-    }
-  });
-  async function loadHunks(path: string) {
-    try {
-      const h = await fileHunks(changesRepoPath(), path, false);
-      appState.hunksByFile = { ...appState.hunksByFile, [path]: h };
-    } catch {
-      /* binary / untracked files have no hunks — just no assignment menu */
-    }
-  }
-
-  const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
-  // Precomputed line ranges per git hunk (both sides) for fast hover hit-tests.
-  const hunkRanges = $derived.by(() => {
-    const file = appState.selectedFile?.path;
-    const hunks = (file && appState.hunksByFile[file]) || [];
-    // New-side line of each diff change, so the button can anchor to a hunk's
-    // first *changed* line rather than its leading context (the @@ header
-    // includes ~3 context lines above the change).
-    const nc = diff?.kind === "text" ? diff.new_content : "";
-    const lineAtOffset = (off: number) => {
-      let n = 1;
-      const end = Math.min(off, nc.length);
-      for (let i = 0; i < end; i++) if (nc.charCodeAt(i) === 10) n++;
-      return n;
-    };
-    const changeLines =
-      diff?.kind === "text" ? diff.changes.map((ch) => lineAtOffset(ch.from_b)) : [];
-    const out: {
-      id: string;
-      oldStart: number;
-      oldEnd: number;
-      newStart: number;
-      newEnd: number;
-      firstNewChanged: number;
-    }[] = [];
-    for (const h of hunks) {
-      const m = HUNK_HEADER.exec(h.header);
-      if (!m) continue;
-      const oldStart = +m[1];
-      const newStart = +m[3];
-      const newEnd = newStart + (m[4] ? +m[4] : 1);
-      out.push({
-        id: h.id,
-        oldStart,
-        oldEnd: oldStart + (m[2] ? +m[2] : 1),
-        newStart,
-        newEnd,
-        firstNewChanged:
-          changeLines.find((l) => l >= newStart && l < newEnd) ?? newStart,
-      });
-    }
-    return out;
-  });
-  function hunkIdAtLine(useOld: boolean, line: number): string | null {
-    for (const r of hunkRanges) {
-      const s = useOld ? r.oldStart : r.newStart;
-      const e = useOld ? r.oldEnd : r.newEnd;
-      if (line >= s && line < e) return r.id;
-    }
-    return null;
-  }
-  // Map an editor + pointer event to the hunk under the cursor.
-  function hunkAtEvent(e: MouseEvent, view: EditorView): string | null {
-    if (
-      appState.appMode !== "changes" ||
-      appState.changesSide !== "unstaged" ||
-      !appState.selectedFile
-    )
-      return null;
-    const pos = view.posAtCoords({ x: e.clientX, y: e.clientY });
-    if (pos == null) return null;
-    return hunkIdAtLine(view === mergeView?.a, view.state.doc.lineAt(pos).number);
-  }
-
-  // Floating "assign" button shown while hovering a hunk; clicking it opens the
-  // changelist menu. A short hide delay bridges the gap from hunk → button.
-  let hunkBtn = $state<{ top: number; left: number; hunkId: string } | null>(null);
-  let hideTimer: ReturnType<typeof setTimeout> | undefined;
-  function scheduleHideBtn() {
-    clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => (hunkBtn = null), 200);
-  }
-  function onHunkMove(e: MouseEvent, view: EditorView): boolean {
-    const hunkId = hunkAtEvent(e, view);
-    if (!hunkId) {
-      scheduleHideBtn();
-      return false;
-    }
-    clearTimeout(hideTimer);
-    const rect = view.scrollDOM.getBoundingClientRect();
-    // Pin to the hunk's first changed line (right edge), clamped into view —
-    // stable while hovering the hunk, and level with the actual change.
-    const r = hunkRanges.find((x) => x.id === hunkId);
-    let top = e.clientY - 11;
-    if (r) {
-      const line = view === mergeView?.a ? r.oldStart : r.firstNewChanged;
-      const ln = Math.min(Math.max(1, line), view.state.doc.lines);
-      const c = view.coordsAtPos(view.state.doc.line(ln).from);
-      if (c) top = c.top;
-    }
-    top = Math.min(Math.max(top, rect.top + 2), rect.bottom - 26);
-    hunkBtn = { top, left: rect.right - 8, hunkId };
-    return false;
-  }
-  function openHunkMenu(e: MouseEvent) {
-    e.stopPropagation();
-    if (hunkBtn) hunkMenu = { x: e.clientX, y: e.clientY, hunkId: hunkBtn.hunkId };
-  }
-  // Right-click stays as a shortcut to the changelist menu — only meaningful
-  // when there's another list to move the hunk to. Discard lives on the hover
-  // button, so it stays reachable even with just the default changelist.
-  function onHunkContextMenu(e: MouseEvent, view: EditorView): boolean {
-    if (appState.changelists.length < 2) return false;
-    const hunkId = hunkAtEvent(e, view);
-    if (!hunkId) return false;
-    e.preventDefault();
-    hunkMenu = { x: e.clientX, y: e.clientY, hunkId };
-    return true;
-  }
-
-  function assignHunkTo(clId: string) {
-    const file = appState.selectedFile?.path;
-    if (file && hunkMenu) assignHunk(file, hunkMenu.hunkId, clId);
-    hunkMenu = null;
-  }
-
-  // Discard just the hovered hunk (revert that region to the index). Destructive
-  // — confirm first, mirroring the file-level discard. The hunk id resolves to
-  // its current diff index inside discardHunk(), guarding against drift.
-  async function discardHunkClick() {
-    const file = appState.selectedFile?.path;
-    if (!file || !hunkBtn) return;
-    const hunkId = hunkBtn.hunkId;
-    hunkBtn = null;
-    const ok = await confirmAction(
-      "Discard changes in this hunk? It reverts to the staged/committed state and can't be undone.",
-      { title: "Discard hunk" },
-    );
-    if (!ok) return;
-    await discardHunk(file, hunkId);
-  }
-
-  // Keep the changelist menu inside the window — the Assign button sits at the
-  // right edge, so opening rightward would overflow off-screen (clipped in
-  // fullscreen). Measure once it's in the DOM and clamp into the viewport.
-  let menuEl = $state<HTMLDivElement | null>(null);
-  $effect(() => {
-    const m = hunkMenu;
-    const el = menuEl;
-    if (!m || !el) return;
-    const r = el.getBoundingClientRect();
-    const pad = 8;
-    el.style.left =
-      Math.max(pad, Math.min(m.x, window.innerWidth - r.width - pad)) + "px";
-    el.style.top =
-      Math.max(pad, Math.min(m.y, window.innerHeight - r.height - pad)) + "px";
-    el.style.visibility = "visible";
   });
 
   async function load(force: boolean) {
@@ -468,14 +292,6 @@
       search({ top: true }),
       keymap.of(searchKeymap),
       fullLineChangePlugin,
-      EditorView.domEventHandlers({
-        contextmenu: onHunkContextMenu,
-        mousemove: onHunkMove,
-        mouseleave: () => {
-          scheduleHideBtn();
-          return false;
-        },
-      }),
     ];
 
     // Inject the backend's diff so the editor renders it verbatim instead of
@@ -573,8 +389,6 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 </script>
-
-<svelte:window onclick={() => (hunkMenu = null)} />
 
 <div class="diffview" bind:clientWidth={containerW}>
   <div class="toolbar">
@@ -696,52 +510,6 @@
     class:hidden={diff?.kind !== "text" || showSvgPreview}
   ></div>
 </div>
-
-{#if hunkBtn}
-  <div
-    class="hunk-actions"
-    style="top: {hunkBtn.top}px; left: {hunkBtn.left}px"
-    role="group"
-    onmouseenter={() => clearTimeout(hideTimer)}
-    onmouseleave={scheduleHideBtn}
-  >
-    <button
-      type="button"
-      class="hunk-act discard"
-      title="Discard this hunk (revert to the staged/committed state)"
-      onclick={discardHunkClick}
-    >
-      ↩ Discard
-    </button>
-    {#if appState.changelists.length >= 2}
-      <button
-        type="button"
-        class="hunk-act"
-        title="Move this hunk to a changelist"
-        onclick={openHunkMenu}
-      >
-        Assign ▾
-      </button>
-    {/if}
-  </div>
-{/if}
-
-{#if hunkMenu}
-  {@const file = appState.selectedFile?.path ?? ""}
-  <div class="hunk-menu" bind:this={menuEl} role="menu">
-    <div class="hm-head">Assign hunk to changelist</div>
-    {#each appState.changelists as l (l.id)}
-      <button type="button" role="menuitem" onclick={() => assignHunkTo(l.id)}>
-        <span
-          class="hm-dot"
-          class:on={hunkChangelistId(file, hunkMenu.hunkId) === l.id}
-          aria-hidden="true"
-        ></span>
-        {l.name}
-      </button>
-    {/each}
-  </div>
-{/if}
 
 <style>
   .diffview {
@@ -907,86 +675,5 @@
   :global(.cm-fullLineChange .cm-changedText),
   :global(.cm-deletedChunk .cm-deletedText) {
     background: transparent !important;
-  }
-  .hunk-actions {
-    position: fixed;
-    z-index: 999;
-    /* `left` is the anchor's right edge; grow leftward from it. */
-    transform: translateX(-100%);
-    display: inline-flex;
-    gap: 4px;
-    white-space: nowrap;
-  }
-  .hunk-act {
-    padding: 2px 10px;
-    border: 1px solid var(--accent);
-    border-radius: 11px;
-    background: var(--accent);
-    color: #fff;
-    cursor: pointer;
-    font-size: 0.76em;
-    font-weight: 600;
-    line-height: 1.5;
-    white-space: nowrap;
-    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
-  }
-  .hunk-act:hover {
-    filter: brightness(1.12);
-  }
-  /* Discard is destructive — tint it apart from the accent-blue Assign pill. */
-  .hunk-act.discard {
-    background: var(--error-bg);
-    border-color: var(--error-fg);
-    color: var(--error-fg);
-  }
-  .hunk-menu {
-    position: fixed;
-    /* Hidden until the positioning effect measures + clamps it into view. */
-    visibility: hidden;
-    z-index: 1000;
-    min-width: 180px;
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-  }
-  .hm-head {
-    padding: 4px 8px;
-    font-size: 0.72em;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 2px;
-  }
-  .hunk-menu button {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    border: none;
-    background: transparent;
-    color: inherit;
-    text-align: left;
-    padding: 5px 10px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-size: 0.85em;
-  }
-  .hunk-menu button:hover {
-    background: var(--hover);
-  }
-  .hm-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    border: 1px solid var(--muted);
-    flex-shrink: 0;
-  }
-  .hm-dot.on {
-    background: var(--accent);
-    border-color: var(--accent);
   }
 </style>

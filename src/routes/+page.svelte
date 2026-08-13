@@ -321,17 +321,6 @@
     // search panel: if it consumed Esc to close itself, defaultPrevented
     // is set and we leave both state machines alone.
     if (e.key === "Escape" && !e.defaultPrevented) {
-      // A multi-selection in the Changes list is the innermost thing Esc backs
-      // out of. `changesSelectedPaths` is empty in ordinary single-selection,
-      // so this never shadows the drill-in / Focus behavior below.
-      if (
-        appState.appMode === "changes" &&
-        appState.changesSelectedPaths.size > 0
-      ) {
-        appState.changesSelectedPaths = new Set();
-        e.preventDefault();
-        return;
-      }
       if (appState.history.length > 0) {
         popHistory();
         e.preventDefault();

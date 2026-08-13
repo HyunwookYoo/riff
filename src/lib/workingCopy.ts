@@ -1,9 +1,7 @@
 import { appState } from "./store.svelte";
 import {
-  discardHunks,
   discardPaths as discardCmd,
   fetch as fetchCmd,
-  fileHunks,
   merge as mergeCmd,
   opAbort,
   opContinue,
@@ -15,10 +13,6 @@ import {
   unstage as unstageCmd,
 } from "./git";
 import { loadCommits, invalidateGraph, enterGraphView } from "./commitHistory";
-import {
-  loadChangelistsForRepo,
-  reconcileChangelists,
-} from "./changelists";
 import { confirmAction } from "./dialogs";
 import type { ChangedFile, FileStatus, StatusEntry } from "./types";
 
@@ -63,14 +57,10 @@ export function setChangesRepo(idx: number): void {
   appState.selectedCommitSha = null;
   appState.repoStatus = null;
   appState.selectedFile = null;
-  appState.changesSelectedPaths = new Set();
   appState.commitSubject = "";
   appState.commitBody = "";
   appState.commitAmend = false;
   appState.commitCoauthors = [];
-  // Drop the old repo's changelists so the new repo's load fresh on loadStatus.
-  appState.changelists = [];
-  appState.activeChangelistId = "default";
   void loadStatus();
 }
 
@@ -165,23 +155,10 @@ export async function loadStatus(): Promise<void> {
     // A newer loadStatus started while we awaited — drop this stale result.
     if (session !== statusSession) return;
     appState.repoStatus = st;
-    // Keep the multi-selection honest at the one point where reality changes.
-    // `sel` prunes on read, but the raw field feeds the global Esc handler —
-    // left stale, Esc silently eats a keypress clearing a selection nothing on
-    // screen shows. Conflicted paths go too: git stash fails on unmerged paths.
-    const selectable = new Set(
-      st.entries.filter((e) => !entryConflicted(e)).map((e) => e.path),
-    );
-    appState.changesSelectedPaths = new Set(
-      [...appState.changesSelectedPaths].filter((p) => selectable.has(p)),
-    );
     appState.currentBranch = st.branch;
     appState.currentUpstream = st.upstream;
     appState.currentAhead = st.ahead;
     appState.currentBehind = st.behind;
-    // Load changelists on the first status, then re-bucket on later ones.
-    if (appState.changelists.length === 0) void loadChangelistsForRepo();
-    else reconcileChangelists();
     const unstaged = st.entries.filter(isUnstaged);
     const staged = st.entries.filter(isStaged);
     // Keep the current selection if it still has changes on its side (so
@@ -263,28 +240,11 @@ export function unstagePath(path: string): Promise<void> {
 }
 /// Discard a file's local changes (revert tracked → HEAD, delete new). Pass
 /// `origPath` for a rename so its original is restored too. Destructive — the
-/// caller confirms first. Reloads status, which re-buckets the changelists so
-/// the discarded path drops out.
+/// caller confirms first. Reloads status, which drops the discarded path from
+/// the list.
 export function discardPath(path: string, origPath: string | null): Promise<void> {
   const paths = origPath ? [path, origPath] : [path];
   return applyAndReload(discardCmd(changesRepoPath(), paths));
-}
-/// Discard a single unstaged hunk (revert just that region to the index).
-/// Destructive — the caller confirms first. Re-lists the file's hunks so the
-/// id resolves to its *current* diff index (guarding against drift since the
-/// menu was opened), reverse-applies it, then reloads status — which refreshes
-/// the change counts, the open diff, and the per-hunk list.
-export async function discardHunk(path: string, hunkId: string): Promise<void> {
-  const repo = changesRepoPath();
-  try {
-    const cur = await fileHunks(repo, path, false);
-    const idx = cur.findIndex((h) => h.id === hunkId);
-    if (idx < 0) throw new Error("hunk no longer present — refresh and retry");
-    await discardHunks(repo, path, [idx]);
-  } catch (e) {
-    appState.error = String(e);
-  }
-  await loadStatus();
 }
 /// Discard the file currently selected in Changes — the Delete-key shortcut.
 /// Mirrors a row's ↩ button: a new file (staged-add / untracked) is deleted,
