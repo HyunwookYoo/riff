@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-08-12)** — 이 문서는 riff를 풀 Git 클라이언트로 확장하는 방향이었고, 그 방향은 폐기되었습니다. 현재 설계는 `docs/superpowers/specs/2026-08-12-vcs-scope-reduction-design.md` 를 보세요. 이 문서는 그 시도가 있었다는 기록으로 남겨둡니다.
+
 # Riff — Version Control 기능 설계 문서
 
 > Riff를 "안전한 읽기전용 diff 뷰어"에서 **본격 Git 클라이언트**로 확장하는 설계.

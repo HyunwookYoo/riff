@@ -1,6 +1,6 @@
 # Riff
 
-Windows 데스크톱용 경량 Git 클라이언트. 두 ref(브랜치/태그/커밋) 비교, 소스 컨트롤(스테이징·changelist·커밋), 커밋 그래프 + 브랜치 작업, fetch/pull/push, 머지·충돌 해결, stash, 라인별 blame + 파일 타임랩스까지 한 앱에서 처리합니다.
+Windows 데스크톱용 경량 Git 브라우저. 커밋 히스토리와 두 ref 비교를 PR처럼 읽고, 라인별 blame과 파일 타임랩스로 코드의 내력을 추적합니다. 브랜치를 만들고 옮겨 다니고 pull 하는 것까지가 riff가 저장소에 손대는 전부입니다 — 커밋과 push는 Fork에서.
 
 [Tauri 2](https://tauri.app) + Svelte 5 + [CodeMirror 6](https://codemirror.net) (`@codemirror/merge`) + [Shiki](https://shiki.style) 기반.
 
@@ -16,6 +16,14 @@ Windows 데스크톱용 경량 Git 클라이언트. 두 ref(브랜치/태그/커
 
 ---
 
+## riff와 Fork
+
+riff는 **읽는 도구**입니다. 저장소를 바꾸는 경우는 다섯 가지뿐입니다 — 브랜치 생성, 이름 변경, 삭제, checkout, fetch/pull. 여기에 예외가 하나 있는데, riff의 pull이 충돌을 만들면 riff가 3-way 해결기로 치웁니다.
+
+커밋, push, stash, rebase, reset은 riff에 없습니다. Fork(또는 다른 클라이언트)에서 하세요. 기능이 모자란 게 아니라 의도된 분업입니다 — riff는 코드를 읽는 일을 잘하는 데 집중합니다.
+
+---
+
 ## 워크스페이스 모드
 
 상단 좌측의 토글에서 모드를 전환합니다. **`Ctrl+Shift+W`** 로 순환 전환할 수 있고, 입력 필드에 포커스가 있어도 동작합니다.
@@ -23,11 +31,11 @@ Windows 데스크톱용 경량 Git 클라이언트. 두 ref(브랜치/태그/커
 | 모드 | 용도 |
 |---|---|
 | **Branch** | 두 ref를 골라 PR 스타일 비교 (브랜치 ↔ 브랜치 / 태그 / 커밋 해시) |
-| **Changes** | 작업 트리 변경을 changelist로 묶어 스테이징·커밋 (소스 컨트롤) |
-| **Graph** | 커밋 그래프 + 브랜치/태그 배지 + 커밋별 액션 + fetch/pull/push |
+| **Working Copy** | 작업 트리 변경을 읽기 전용으로 확인 (HEAD ↔ 작업 트리) |
+| **Graph** | 커밋 그래프 + 브랜치/태그 배지 + 커밋별 액션 + fetch/pull |
 | **Blame** | 파일 한 개를 골라 라인별 작성자/커밋 추적 + 파일 타임랩스 |
 
-Changes와 Graph는 좌측 사이드바의 **Working Copy / Graph** 네비(Fork식)로도 오갈 수 있습니다. 커맨드 팔레트(**`Ctrl+Shift+P`**)로도 어디서든 빠르게 전환·실행할 수 있습니다.
+Working Copy와 Graph는 좌측 사이드바의 **Working Copy / Graph** 네비(Fork식)로도 오갈 수 있습니다. 커맨드 팔레트(**`Ctrl+Shift+P`**)로도 어디서든 빠르게 전환·실행할 수 있습니다.
 
 ---
 
@@ -39,7 +47,7 @@ Changes와 Graph는 좌측 사이드바의 **Working Copy / Graph** 네비(Fork�
 - **📂 Browse folder…** — 폴더 선택 다이얼로그
 - 폴더를 창에 **드래그 앤 드롭** 해도 됩니다 (chip 없이 즉시 로드)
 
-저장소를 열면 Working Tree 모드에서는 바로 변경 파일이 로드되고, Branch 모드에서는 ref 자동완성 목록(로컬/리모트/태그)을 채웁니다.
+저장소를 열면 Working Copy 모드에서는 바로 변경 파일이 로드되고, Branch 모드에서는 ref 자동완성 목록(로컬/리모트/태그)을 채웁니다.
 
 ### 멀티 루트 워크스페이스 (submodule + 수동 추가 repo)
 저장소가 submodule을 포함하면 `.gitmodules` 가 자동으로 읽혀 워크스페이스에 추가됩니다. chip의 "+N" 뱃지로 추가 repo 개수가 표시되고, 팝오버의 **Workspace repos** 섹션에서 전체 목록을 확인할 수 있습니다.
@@ -48,7 +56,7 @@ Changes와 Graph는 좌측 사이드바의 **Working Copy / Graph** 네비(Fork�
 - 수동 추가 항목은 `×` 버튼으로 제거할 수 있습니다.
 
 #### 멀티 루트에서의 비교 의미
-| Repo 종류 | Branch 모드 | Working Tree 모드 |
+| Repo 종류 | Branch 모드 | Working Copy 모드 |
 |---|---|---|
 | **main** | 사용자가 입력한 start/target 그대로 | `git diff HEAD` |
 | **submodule** | main의 start/target gitlink SHA를 따라 `<oldSha>..<newSha>` 비교 (GitHub PR과 동일 의미) | submodule 자체의 `git diff HEAD` |
@@ -66,7 +74,7 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 - 상단에 repo별 탭바가 나타나고, 한 번에 한 repo의 파일만 평면 리스트로 표시됩니다.
 - 탭마다 **refs는 독립** (§13 `override` 활용) — submodule 탭이 active일 때 상단 BranchPicker는 그 repo의 override를 편집합니다.
 - 탭 전환 시 **마지막 보던 파일과 스크롤 위치 복원** — 빠른 컨텍스트 스위치.
-- compareMode(Branch / Working Tree)는 글로벌입니다 — 한 번 정한 모드가 모든 탭에 일관 적용.
+- compareMode(Branch / Working Copy)는 글로벌입니다 — 한 번 정한 모드가 모든 탭에 일관 적용.
 - 탭 키바인드: **`Ctrl+Tab` / `Ctrl+Shift+Tab`** (다음/이전), **`Ctrl+1~9`** (직접 점프).
 - manual repo는 탭 우측 `×` 로 워크스페이스에서 제거. main과 submodule은 닫기 없음.
 - **모드 전환 시**: Unified→Tabs는 현재 선택 파일의 repo 탭이 활성화됩니다. Tabs→Unified는 Focus가 풀려 전체 multi-root 뷰로 돌아갑니다. selectedFile, drill-in 히스토리, blame 상태 모두 보존.
@@ -106,17 +114,16 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 
 ---
 
-## 3. Changes 모드 — 소스 컨트롤
+## 3. Working Copy 모드 — 작업 트리 확인
 
-`git status --porcelain=v2` 기반의 작업 트리 변경 화면입니다. 변경 파일을 **changelist**(Perforce/JetBrains식 명명 버킷)로 묶어 버킷 단위로 커밋합니다.
+`git status --porcelain=v2` 기반의 작업 트리 변경 화면입니다.
 
-- **Changelist**: `+ New changelist` 로 버킷을 만들고, 파일을 **드래그**하거나 **우클릭 → Move to** 로 분류. 기본 버킷은 **Default**. 배정은 repo별로 영속됩니다(`.git/riff-changelists.json`).
-- **멀티 셀렉트**: **`Ctrl`+클릭**으로 파일을 선택에 넣고 뺍니다(토글). **`Shift`+클릭**은 기준점부터 클릭한 행까지 **화면에 보이는 행만** 범위 선택합니다(접힌 그룹·충돌 파일은 제외). 선택 중에는 상단에 `N selected` 바가 뜨고, **선택된 행**을 우클릭하거나 드래그하면 선택 전체에 적용됩니다. **`Esc`** 또는 **Clear** 로 해제.
-- **Stash**: 우클릭 → **Stash this file…** / **Stash N files…** 로 고른 파일만 따로 빼둡니다. 메시지를 비우면 파일 경로(여러 개면 `3 files: a.ts, b.ts, c.ts`, 4개 이상이면 `, +N more`)가 제목이 됩니다. **선택하지 않은 변경은 작업 트리에 그대로** 남습니다.
-- **버킷 커밋**: 버킷을 활성화하고 메시지(subject/body, sign-off, co-author)를 입력해 **그 버킷의 파일만** 커밋. git 인덱스 스테이징은 커밋 순간에만 일시적으로 사용되어 사용자가 따로 stage/unstage 할 필요가 없습니다.
+- 파일별 상태 뱃지(`added` / `modified` / `deleted` / `renamed` / `copied` / `typechanged`)와 함께 변경 파일 목록을 표시. Untracked 파일도 표시됩니다.
 - 파일 클릭 → diff(HEAD ↔ 작업 트리). Unreal `.uasset`/`.umap` 은 번들된 UAssetGUI로 파싱한 **속성 뷰**로 표시.
-- **창 포커스 복귀 시 자동 새로고침** + **`F5`/`Ctrl+R`**. Untracked 파일도 표시됩니다.
-- 머지/리베이스 중 충돌 파일은 클릭 시 **인앱 3-way 충돌 해결기**(ours/base/theirs + 편집 결과)로 열립니다.
+- **창 포커스 복귀 시 자동 새로고침** + **`F5`/`Ctrl+R`**.
+- 충돌 파일은 **`Conflicts (N)`** 헤더로 그룹돼 `!` 배지가 붙고, 클릭하면 **인앱 3-way 충돌 해결기**(ours/base/theirs + 편집 결과)가 열립니다.
+
+이 화면은 읽기 전용입니다 — 스테이징·커밋·되돌리기는 Fork에서 합니다. 예외는 충돌 해결뿐으로, riff의 pull이 만든 충돌은 riff에서 해결합니다.
 
 ---
 
@@ -125,11 +132,9 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 GitKraken/Fork식 커밋 그래프 워크스페이스입니다.
 
 - **그래프**: 레인 + 커밋 노드 + 브랜치/태그 배지. 같은 위치의 로컬+리모트 브랜치는 하나의 배지로 합쳐지고, 미커밋 변경은 HEAD 위 **WIP 노드**로 표시됩니다. 행 높이 조절 + all-branches 리셋 버튼 제공.
-- **커밋별 액션**: checkout / merge / rebase / reset / cherry-pick / revert / tag 등. 배지를 **드래그&드롭**해 머지/리베이스도 가능.
-- **브랜치 사이드바**: checkout, 생성/이름변경/삭제. 로컬에 변경이 있으면 checkout 시 stash-and-reapply / 그대로 / 폐기 선택. 리모트 더블클릭은 checkout + fast-forward.
-- **동기화 툴바**: fetch / pull / push (ahead/behind 카운트 표시).
-- **Merge**: abort / continue, 충돌은 3-way 해결기로.
-- **Stash**: save / apply / pop / drop.
+- **커밋별 액션**: 커밋을 클릭하면 그 커밋의 변경 전체를 봅니다. 우클릭 메뉴는 New branch here… / Checkout (detached) 두 가지. 브랜치 배지 더블클릭으로 checkout.
+- **브랜치 사이드바**: checkout, 생성/이름변경/삭제. 리모트 더블클릭은 checkout + fast-forward.
+- **동기화 툴바**: fetch / pull (ahead/behind 카운트 표시).
 
 ---
 
@@ -206,18 +211,18 @@ Blame 팝오버 또는 커밋 패널에서 **View commit →** / **`→`** 를 �
 | 키 | 동작 |
 |---|---|
 | `Ctrl+Shift+W` | 워크스페이스 순환 전환 |
-| `Ctrl+Shift+P` | 커맨드 팔레트 (모드 전환 / 테마 / 동기화 / stash / 브랜치 checkout 등) |
+| `Ctrl+Shift+P` | 커맨드 팔레트 (모드 전환 / 테마 / fetch·pull / 브랜치 checkout 등) |
 | `Ctrl` + `+` / `-` / `0` | 에디터 폰트 크기 증가 / 감소 / 기본값 복귀 |
 | `Esc` | drill-in 히스토리 pop → Focus 모드 해제 → 검색 패널 닫기 순으로 처리 |
 
-### Compare 모드 (Branch / Working Tree)
+### Compare 모드 (Branch / Working Copy)
 | 키 | 동작 |
 |---|---|
 | `↑` / `↓` | 다음 / 이전 파일 |
 | `n` / `p` | 다음 / 이전 변경 청크 |
 | `Ctrl+F` | 현재 파일에서 검색 |
 | `Ctrl+G` | 라인 번호로 점프 |
-| `F5` / `Ctrl+R` | Working Tree 새로고침 (Branch 모드에선 무동작) |
+| `F5` / `Ctrl+R` | Working Copy 새로고침 (Branch 모드에선 무동작) |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | (Tabs 레이아웃) 다음 / 이전 탭 |
 | `Ctrl+1` ~ `Ctrl+9` | (Tabs 레이아웃) 해당 인덱스 탭으로 직접 점프 |
 
