@@ -9,7 +9,9 @@
 use std::fs;
 use std::path::Path;
 
-use super::cli::{git_command, unresolved_conflict_files, validate_path, validate_ref, GitCli};
+use super::cli::{
+    git_command, unmerged_paths, unresolved_conflict_files, validate_path, validate_ref, GitCli,
+};
 use super::GitError;
 
 impl GitCli {
@@ -145,11 +147,10 @@ impl GitCli {
             "revert" => &["revert", "--continue"],
             _ => return Err(GitError::CommandFailed("no operation in progress".into())),
         };
-        // A resolution left unstaged in the working tree (or any other tracked
-        // edit) makes git bail with "you have unstaged changes" / "unmerged
-        // files". Stage tracked changes so the working-tree resolution is picked
-        // up — but first refuse if a conflict still has markers, so a
-        // half-resolved file is never committed as the resolution.
+        // A resolution left unstaged in the working tree makes git bail with
+        // "you have unstaged changes" / "unmerged files" — but first refuse if
+        // a conflict still has markers, so a half-resolved file is never
+        // committed as the resolution.
         let unresolved = unresolved_conflict_files(path);
         if !unresolved.is_empty() {
             return Err(GitError::CommandFailed(format!(
@@ -157,7 +158,21 @@ impl GitCli {
                 unresolved.join(", ")
             )));
         }
-        self.run(path, &["add", "-u"])?;
+        // Stage exactly the files that were part of the conflict — not `add -u`
+        // (every modified tracked file in the repo). op_continue is riff's only
+        // path that creates a commit, and the module invariant above is that
+        // riff never commits work the user didn't ask it to: an unrelated
+        // uncommitted edit sitting alongside a conflict must not get folded
+        // into the merge commit just because Continue happened to run.
+        // `resolve_conflict` and `checkout_conflict_side` already `git add` the
+        // file they touch, so this is a no-op for conflicts resolved through
+        // riff; it's what stages one resolved by hand in an external editor.
+        let unmerged = unmerged_paths(path);
+        if !unmerged.is_empty() {
+            let mut add_args: Vec<&str> = vec!["add", "--"];
+            add_args.extend(unmerged.iter().map(String::as_str));
+            self.run(path, &add_args)?;
+        }
         let output = git_command()
             .arg("-C")
             .arg(path)

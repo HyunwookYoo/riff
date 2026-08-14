@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyGitError, parseBlockedPaths } from "./gitError";
+import { classifyGitError } from "./gitError";
 
 // Real git stderr shapes. Lines are real newlines; path lines are tab-indented
 // (the `\t` escape is an actual tab, which is what git emits).
@@ -27,15 +27,11 @@ const DIVERGENT = `fatal: Need to specify how to reconcile divergent branches.`;
 
 describe("classifyGitError", () => {
   it("classifies checkout blocked by tracked local changes", () => {
-    const f = classifyGitError(CHECKOUT_LOCAL);
-    expect(f.kind).toBe("local-changes-blocked");
-    expect(f.paths).toEqual(["src/foo.rs", "src/bar.rs"]);
+    expect(classifyGitError(CHECKOUT_LOCAL).kind).toBe("local-changes-blocked");
   });
 
   it("classifies an untracked-file collision distinctly", () => {
-    const f = classifyGitError(CHECKOUT_UNTRACKED);
-    expect(f.kind).toBe("untracked-collision");
-    expect(f.paths).toEqual(["notes.txt"]);
+    expect(classifyGitError(CHECKOUT_UNTRACKED).kind).toBe("untracked-collision");
   });
 
   it("classifies a dirty merge as local-changes-blocked", () => {
@@ -54,8 +50,8 @@ describe("classifyGitError", () => {
     expect(classifyGitError(DIVERGENT).kind).toBe("unknown");
   });
 
-  it("returns unknown with empty paths for empty input", () => {
-    expect(classifyGitError("")).toEqual({ kind: "unknown", paths: [], raw: "" });
+  it("returns unknown for empty input", () => {
+    expect(classifyGitError("")).toEqual({ kind: "unknown", raw: "" });
   });
 
   it("classifies through the 'git command failed: ' IPC prefix", () => {
@@ -63,16 +59,5 @@ describe("classifyGitError", () => {
     // classification must match the embedded substring, not the whole string.
     const f = classifyGitError("git command failed: " + CHECKOUT_LOCAL);
     expect(f.kind).toBe("local-changes-blocked");
-    expect(f.paths).toEqual(["src/foo.rs", "src/bar.rs"]);
-  });
-});
-
-describe("parseBlockedPaths", () => {
-  it("collects tab-indented path lines only", () => {
-    expect(parseBlockedPaths(CHECKOUT_LOCAL)).toEqual(["src/foo.rs", "src/bar.rs"]);
-  });
-
-  it("returns [] when there are no indented lines", () => {
-    expect(parseBlockedPaths(PULL_REBASE_DIRTY)).toEqual([]);
   });
 });

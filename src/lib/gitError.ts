@@ -11,7 +11,6 @@ export type GitFailureKind =
 
 export interface GitFailure {
   kind: GitFailureKind;
-  paths: string[];
   raw: string;
 }
 
@@ -30,25 +29,10 @@ const UNTRACKED_MARKER =
 export function classifyGitError(stderr: string): GitFailure {
   const raw = stderr ?? "";
   if (raw.includes(UNTRACKED_MARKER)) {
-    return { kind: "untracked-collision", paths: parseBlockedPaths(raw), raw };
+    return { kind: "untracked-collision", raw };
   }
   if (LOCAL_CHANGES_MARKERS.some((m) => raw.includes(m))) {
-    return { kind: "local-changes-blocked", paths: parseBlockedPaths(raw), raw };
+    return { kind: "local-changes-blocked", raw };
   }
-  return { kind: "unknown", paths: [], raw };
-}
-
-// git lists the offending paths on tab-indented lines beneath the message
-// header (e.g. "\tsrc/foo.rs"). Collect them; the surrounding "error:" /
-// "Please …" / "Aborting" lines are not tab-indented, so they never match.
-// Best-effort — an empty result is fine (the dialog still functions).
-export function parseBlockedPaths(stderr: string): string[] {
-  const out: string[] = [];
-  for (const line of stderr.split("\n")) {
-    if (line.startsWith("\t")) {
-      const p = line.trim();
-      if (p) out.push(p);
-    }
-  }
-  return out;
+  return { kind: "unknown", raw };
 }

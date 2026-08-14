@@ -32,7 +32,9 @@
     enterChangesMode,
     isPathConflicted,
     loadStatus,
+    openChange,
     setChangesRepo,
+    workingCopyOrder,
   } from "$lib/workingCopy";
   import { popHistory, redoHistory } from "$lib/history";
   import { exitFocus } from "$lib/focus";
@@ -174,6 +176,20 @@
   }
 
   function moveSelection(delta: 1 | -1) {
+    // Working Copy's on-screen list (conflicts first, deduped) is not
+    // appState.files — that's compare mode's list, below. See workingCopyOrder.
+    if (appState.appMode === "changes") {
+      const wcVisible = workingCopyOrder();
+      if (wcVisible.length === 0) return;
+      const wcSel = appState.selectedFile;
+      const wcCur = wcSel
+        ? wcVisible.findIndex((e) => e.path === wcSel.path)
+        : -1;
+      const wcNext =
+        wcCur < 0 ? 0 : (wcCur + delta + wcVisible.length) % wcVisible.length;
+      openChange(wcVisible[wcNext]);
+      return;
+    }
     // Multi-root (§13.3 #14): j/k skips collapsed repo groups. Path alone
     // is ambiguous now — same path can live in main + a submodule — so we
     // match selected by (repoIdx, path) and filter the candidate list to
@@ -595,8 +611,7 @@
   .body.resizing .picker-resizer::after {
     background: var(--accent, #4a9eff);
   }
-  /* Changes mode: the left grid column stacks the scrollable change lists on
-     top of a fixed commit box at the bottom. */
+  /* Changes mode: the left grid column holds the scrollable change list. */
   .changes-col {
     display: flex;
     flex-direction: column;

@@ -1,7 +1,7 @@
 import { appState } from "./store.svelte";
 import { commitLog, status } from "./git";
 import { compare } from "./compare";
-import { loadCurrentBranch, loadPendingOp } from "./workingCopy";
+import { loadCurrentBranch, loadPendingOp, mergeDuplicatePaths } from "./workingCopy";
 import type { Branch, Commit } from "./types";
 
 /// Commits fetched per page; "load more" appends another page.
@@ -206,7 +206,11 @@ export async function loadWipCount(): Promise<void> {
   if (!appState.repoPath) return;
   try {
     const st = await status(historyRepoPath());
-    appState.wipCount = st.entries.length;
+    // Dedupe first — see mergeDuplicatePaths: git rm --cached emits two
+    // porcelain records for one path, and Working Copy's own list already
+    // collapses them to one row. Without this the WIP node's count disagrees
+    // with what Working Copy shows for the same status.
+    appState.wipCount = mergeDuplicatePaths(st.entries).length;
   } catch {
     appState.wipCount = 0;
   }

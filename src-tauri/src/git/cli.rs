@@ -800,10 +800,22 @@ fn submodule_diff(name: &str, sub_worktree: &Path, old: &str, new: &str) -> Opti
     })
 }
 
-/// Unmerged paths whose working-tree file still contains conflict markers — the
-/// user hasn't actually resolved them. Used to guard the auto-stage on
-/// `op_continue` so a half-resolved file is never committed as a "resolution".
-pub(super) fn unresolved_conflict_files(repo: &Path) -> Vec<String> {
+/// NUL-separated relative paths from a `git diff --name-only ... -z`
+/// invocation, decoded and with the trailing empty token dropped. Split out so
+/// the decode step can be unit-tested without a real repo.
+fn parse_nul_paths(bytes: &[u8]) -> Vec<String> {
+    bytes
+        .split(|&b| b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|raw| String::from_utf8_lossy(raw).into_owned())
+        .collect()
+}
+
+/// Every unmerged (conflicted) path in the index, regardless of whether its
+/// working-tree file still has conflict markers. `op_continue` uses this to
+/// narrow its auto-stage to exactly the files git considers part of the
+/// conflict instead of every modified tracked file — see its doc comment.
+pub(super) fn unmerged_paths(repo: &Path) -> Vec<String> {
     let out = match git_command()
         .arg("-C")
         .arg(repo)
@@ -814,19 +826,26 @@ pub(super) fn unresolved_conflict_files(repo: &Path) -> Vec<String> {
         Ok(o) if o.status.success() => o.stdout,
         _ => return Vec::new(),
     };
-    let mut bad = Vec::new();
-    for raw in out.split(|&b| b == 0).filter(|s| !s.is_empty()) {
-        let rel = String::from_utf8_lossy(raw).to_string();
-        if let Ok(content) = fs::read_to_string(repo.join(&rel)) {
-            let has_marker = content
-                .lines()
-                .any(|l| l.starts_with("<<<<<<<") || l.starts_with(">>>>>>>"));
-            if has_marker {
-                bad.push(rel);
-            }
-        }
-    }
-    bad
+    parse_nul_paths(&out)
+}
+
+/// The subset of `unmerged_paths` whose working-tree file still contains
+/// conflict markers — the user hasn't actually resolved them. Used to guard
+/// the auto-stage on `op_continue` so a half-resolved file is never committed
+/// as a "resolution".
+pub(super) fn unresolved_conflict_files(repo: &Path) -> Vec<String> {
+    unmerged_paths(repo)
+        .into_iter()
+        .filter(|rel| {
+            fs::read_to_string(repo.join(rel))
+                .map(|content| {
+                    content
+                        .lines()
+                        .any(|l| l.starts_with("<<<<<<<") || l.starts_with(">>>>>>>"))
+                })
+                .unwrap_or(false)
+        })
+        .collect()
 }
 
 /// Ensure the cached session targets `path`. Drops the previous session
@@ -2219,6 +2238,17 @@ mod tests {
             vec!["a", "b", "c"]
         );
         assert!(nonempty_lines("\n  \n").is_empty());
+    }
+
+    #[test]
+    fn parse_nul_paths_basic() {
+        let input = b"src/a.rs\0sub dir/b.txt\0";
+        assert_eq!(parse_nul_paths(input), vec!["src/a.rs", "sub dir/b.txt"]);
+    }
+
+    #[test]
+    fn parse_nul_paths_empty() {
+        assert!(parse_nul_paths(b"").is_empty());
     }
 
     #[test]

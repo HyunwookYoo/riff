@@ -127,6 +127,21 @@ export function conflictedEntries(): StatusEntry[] {
   return (appState.repoStatus?.entries ?? []).filter(entryConflicted);
 }
 
+/// The Working Copy list's on-screen file order: conflicts first, then the
+/// rest, deduped — exactly the two groups WorkingCopyList.svelte renders (its
+/// "Conflicts" group, then "changed"). Used by +page.svelte's ↑/↓ handler so
+/// it walks what Working Copy actually shows instead of compare mode's file
+/// list. Doesn't reproduce the tree view's alphabetical resort or a collapsed
+/// directory's hidden rows — that state lives inside WorkingCopyList itself.
+export function workingCopyOrder(): StatusEntry[] {
+  return [
+    ...conflictedEntries(),
+    ...mergeDuplicatePaths(
+      (appState.repoStatus?.entries ?? []).filter((e) => !entryConflicted(e)),
+    ),
+  ];
+}
+
 /// Jump to conflict resolution: enter the Working (Changes) view and open the
 /// first conflicted file in the 3-way resolver. Used by the banner's Resolve
 /// button.
@@ -231,7 +246,7 @@ export function openChange(entry: StatusEntry): void {
 }
 
 /// Refresh just the current-branch indicator (name + ahead/behind) for the
-/// source-control repo, without touching the staging selection. Called after
+/// source-control repo, without touching the selected file. Called after
 /// branch ops (checkout, etc.) so the toolbar chip stays accurate.
 export async function loadCurrentBranch(): Promise<void> {
   if (!appState.repoPath) return;
@@ -265,14 +280,16 @@ export async function refreshActiveView(): Promise<void> {
 }
 
 /// Run a fetch/pull against the source-control repo with a busy flag,
-/// surfacing errors and refreshing afterward.
-async function runSync(op: Promise<void>, label: string): Promise<void> {
+/// surfacing errors and refreshing afterward. `op` is a thunk, not a Promise:
+/// callers construct the command from inside it, so the guard below can reject
+/// a re-entrant call *before* that command is built — see doFetch/doPull.
+async function runSync(op: () => Promise<void>, label: string): Promise<void> {
   if (appState.syncing) return;
   appState.syncing = true;
   appState.beginGitOp(label);
   appState.error = null;
   try {
-    await op;
+    await op();
   } catch (e) {
     appState.error = String(e);
   } finally {
@@ -340,7 +357,7 @@ export async function continueOp(): Promise<void> {
 }
 
 export function doFetch(): Promise<void> {
-  return runSync(fetchCmd(changesRepoPath()), "Fetching…");
+  return runSync(() => fetchCmd(changesRepoPath()), "Fetching…");
 }
 export async function doPull(): Promise<void> {
   // currentUpstream is only ever refreshed by an awaited loadStatus/
@@ -359,7 +376,12 @@ export async function doPull(): Promise<void> {
       : "detached HEAD 상태에서는 pull 할 수 없습니다. 먼저 브랜치를 checkout 하세요.";
     return;
   }
-  return runSync(pullCmd(changesRepoPath()), "Pulling…");
+  // pullCmd(...) must not be constructed until runSync's re-entrancy guard has
+  // passed — see runSync. A double-click both await loadCurrentBranch() above
+  // concurrently; if this called pullCmd() eagerly (as an argument expression)
+  // like the old code did, both clicks would dispatch a real `git pull` before
+  // either reached the guard, and the second call's result would go unawaited.
+  return runSync(() => pullCmd(changesRepoPath()), "Pulling…");
 }
 /// Clear all Changes-screen state on repo switch — the status and repo
 /// selection belong to the old workspace.

@@ -206,15 +206,16 @@ class AppState {
   currentBehind = $state(0);
   // True while a fetch/pull runs (disables the sync buttons + spinner).
   syncing = $state(false);
-  // >0 while an in-app git op (rebase, merge, pull, continue/abort) is driving
-  // the repo. The filesystem watcher skips its refresh while this is set, so a
-  // multi-commit rebase doesn't redraw the UI on every replayed commit — the op
-  // refreshes once itself when it finishes or stops at a conflict.
+  // >0 while an in-app git op (pull, checkout, continue/abort, …) is driving
+  // the repo. The filesystem watcher skips its refresh while this is set, so
+  // continuing a multi-commit rebase left mid-op by another tool doesn't
+  // redraw the UI on every replayed commit — the op refreshes once itself when
+  // it finishes or stops at a conflict.
   gitOpDepth = $state(0);
-  // Label of the in-flight notable op ("Rebasing…", "Merging…", "Pulling…", …)
-  // for the "in progress — please wait" banner; null when nothing notable runs.
-  // Fast single-shot ops (cherry-pick/reset/branch) don't set it, so the banner
-  // doesn't flash for things that finish instantly.
+  // Label of the in-flight notable op ("Pulling…", "Checking out…", "Resuming…",
+  // …) for the "in progress — please wait" banner; null when nothing notable
+  // runs. Fast single-shot ops (cherry-pick/reset/branch) don't set it, so the
+  // banner doesn't flash for things that finish instantly.
   gitOpLabel = $state<string | null>(null);
   // In-progress operation that may need resolving: "merge" | "rebase" |
   // "cherry-pick" | "revert" | "none". Drives the conflict banner.

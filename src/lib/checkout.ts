@@ -23,7 +23,7 @@ async function refreshAfterCheckout(): Promise<void> {
 /// it — used for remote-branch double-clicks so a behind local catches up to
 /// the server. A fetch (offline) or fast-forward (diverged) failure is surfaced
 /// but doesn't undo the completed switch.
-export async function runCheckout(
+async function runCheckout(
   repoPath: string,
   target: string,
   ffTo?: string,
