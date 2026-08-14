@@ -14,6 +14,49 @@ use super::cli::{
 };
 use super::GitError;
 
+/// Conservative cap on paths per `git add` invocation in `op_continue`.
+/// Windows caps a `CreateProcess` command line at 32,767 characters; even at
+/// a few hundred characters per path — long nested paths aren't unusual in
+/// riff's own dogfood repo, a nested-submodule Unreal project — 100 paths
+/// stays far under that limit, with headroom left for the
+/// `git -C <repo> add --` prefix. `add -u` never had this problem (it takes
+/// no path arguments); the narrowed `add --` does, since a merge or rebase
+/// conflicting across a few hundred `.uasset` files is not exotic. Do not
+/// "simplify" this back to one call.
+const ADD_CHUNK_SIZE: usize = 100;
+
+/// Split `paths` into `git add -- <chunk>` argv groups of at most
+/// `ADD_CHUNK_SIZE` paths — see its doc comment for why batching exists. Pure
+/// so the batching is unit-testable without a real repo. An empty `paths`
+/// yields no groups at all (`[].chunks(n)` is already an empty iterator), so
+/// callers never run a bare `git add --` with no arguments.
+fn add_arg_chunks(paths: &[String]) -> Vec<Vec<&str>> {
+    paths
+        .chunks(ADD_CHUNK_SIZE)
+        .map(|chunk| {
+            let mut args: Vec<&str> = vec!["add", "--"];
+            args.extend(chunk.iter().map(String::as_str));
+            args
+        })
+        .collect()
+}
+
+/// Choose the error text from a failed command's captured output: stderr, or
+/// stdout when stderr came back empty. `git rebase --continue`'s "You must
+/// edit all merge conflicts..." refusal (when a tracked file still has
+/// unstaged changes) is one confirmed case — exit 1, empty stderr, the
+/// message on stdout instead (verified on git 2.43.0.windows.1). Without this
+/// fallback that surfaces to the user as an empty `git command failed:`
+/// banner. Merge (`commit --no-edit`) and cherry-pick/revert `--continue`
+/// weren't observed to do this, but the fallback is harmless for them too.
+fn command_error_text(stderr: &[u8], stdout: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    String::from_utf8_lossy(stdout).trim().to_string()
+}
+
 impl GitCli {
     pub(super) fn create_branch_impl(
         &self,
@@ -165,12 +208,14 @@ impl GitCli {
         // uncommitted edit sitting alongside a conflict must not get folded
         // into the merge commit just because Continue happened to run.
         // `resolve_conflict` and `checkout_conflict_side` already `git add` the
-        // file they touch, so this is a no-op for conflicts resolved through
-        // riff; it's what stages one resolved by hand in an external editor.
+        // file they touch, which resolves it in git's index (no more conflict
+        // stages) — so it has already dropped out of unmerged_paths by the
+        // time Continue runs. What's left to add here is only what's still
+        // genuinely unmerged: a conflict resolved by hand in an external
+        // editor. Chunked (see ADD_CHUNK_SIZE) so a conflict spanning hundreds
+        // of paths can't overflow a single command line.
         let unmerged = unmerged_paths(path);
-        if !unmerged.is_empty() {
-            let mut add_args: Vec<&str> = vec!["add", "--"];
-            add_args.extend(unmerged.iter().map(String::as_str));
+        for add_args in add_arg_chunks(&unmerged) {
             self.run(path, &add_args)?;
         }
         let output = git_command()
@@ -181,10 +226,81 @@ impl GitCli {
             .env("GIT_SEQUENCE_EDITOR", "true")
             .output()?;
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(GitError::CommandFailed(stderr));
+            // Not always stderr: see command_error_text's doc comment.
+            return Err(GitError::CommandFailed(command_error_text(
+                &output.stderr,
+                &output.stdout,
+            )));
         }
         self.drop_session();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_arg_chunks_empty_produces_no_groups() {
+        let paths: Vec<String> = vec![];
+        assert!(add_arg_chunks(&paths).is_empty());
+    }
+
+    #[test]
+    fn add_arg_chunks_one_group_under_the_cap() {
+        let paths = vec!["a.txt".to_string(), "b.txt".to_string()];
+        let chunks = add_arg_chunks(&paths);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], vec!["add", "--", "a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn add_arg_chunks_splits_at_the_cap() {
+        let paths: Vec<String> = (0..ADD_CHUNK_SIZE + 1).map(|i| format!("f{i}.txt")).collect();
+        let chunks = add_arg_chunks(&paths);
+        assert_eq!(chunks.len(), 2);
+        // Each group is ["add", "--", ...paths].
+        assert_eq!(chunks[0].len(), 2 + ADD_CHUNK_SIZE);
+        assert_eq!(chunks[1].len(), 2 + 1);
+        assert_eq!(chunks[0][0], "add");
+        assert_eq!(chunks[0][1], "--");
+        assert_eq!(chunks[1][2], "f100.txt");
+    }
+
+    #[test]
+    fn add_arg_chunks_exactly_the_cap_is_one_group() {
+        let paths: Vec<String> = (0..ADD_CHUNK_SIZE).map(|i| format!("f{i}.txt")).collect();
+        assert_eq!(add_arg_chunks(&paths).len(), 1);
+    }
+
+    #[test]
+    fn command_error_text_prefers_stderr() {
+        assert_eq!(command_error_text(b"stderr msg", b"stdout msg"), "stderr msg");
+    }
+
+    #[test]
+    fn command_error_text_falls_back_to_stdout_when_stderr_is_empty() {
+        // git rebase --continue's "unstaged changes" refusal: exit 1, empty
+        // stderr, message on stdout.
+        assert_eq!(
+            command_error_text(b"", b"You must edit all merge conflicts..."),
+            "You must edit all merge conflicts..."
+        );
+    }
+
+    #[test]
+    fn command_error_text_falls_back_when_stderr_is_only_whitespace() {
+        assert_eq!(command_error_text(b"   \n", b"real message"), "real message");
+    }
+
+    #[test]
+    fn command_error_text_trims_both_streams() {
+        assert_eq!(command_error_text(b"  stderr text \n", b""), "stderr text");
+    }
+
+    #[test]
+    fn command_error_text_empty_both_is_empty() {
+        assert_eq!(command_error_text(b"", b""), "");
     }
 }
