@@ -3,6 +3,45 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v2.0.0
+
+riff가 하는 일을 좁혔습니다 — 커밋 히스토리와 diff를 읽고, blame으로 내력을 쫓고,
+브랜치를 만들고 옮겨 다니는 것. **커밋과 push는 Fork에 맡깁니다.**
+
+riff가 저장소를 바꾸는 경우는 이제 다섯 가지뿐입니다: 브랜치 생성, 이름 변경, 삭제,
+checkout, fetch/pull. 예외가 하나 있는데, riff의 pull이 충돌을 만들면 riff가 3-way
+해결기로 치웁니다.
+
+### 💔 제거된 기능
+
+- **커밋 · 스테이징 · changelist** — Working Copy(기존 Changes)는 읽기 전용이 되었습니다.
+  변경 파일과 `HEAD` ↔ 작업 트리 diff를 보여주지만 스테이징·커밋·되돌리기는 하지 않습니다.
+- **stash** — 사이드바 섹션, 패널, 파일 단위 stash가 모두 사라졌습니다. checkout이 로컬
+  변경 때문에 막히면 자동으로 stash 하는 대신 git의 메시지를 그대로 보여줍니다.
+- **push / force-push**, **태그 생성 · 삭제 · push**, **set-upstream**.
+- **히스토리 재작성** — reset, rebase, cherry-pick, revert, 그리고 배지 드래그 머지.
+  pull도 merge 전용이 되어 `--rebase` 선택지가 없습니다.
+
+### ✨ 개선
+
+- **Working Copy가 한 목록으로** — staged/unstaged 분리가 사라지고 `HEAD` 기준 변경
+  하나로 보여줍니다. 다른 도구에서 스테이징만 해둔 파일도 이제 제대로 된 diff가 나옵니다
+  (예전에는 빈 화면이었습니다).
+- **충돌 해결은 그대로** — pull이 충돌을 내면 3-way 해결기가 열립니다. 다른 도구에서
+  시작한 rebase·cherry-pick 충돌도 riff에서 해결하고 Continue/Abort 할 수 있습니다.
+  Continue는 이제 **충돌 파일만** 스테이징하므로, 무관한 작업이 머지 커밋에 딸려
+  들어가지 않습니다.
+- **pull이 상황을 설명합니다** — 원격에 없는 브랜치에서 Pull을 누르면 git의 "no tracking
+  information" 대신, 아직 원격에 없으니 Fork에서 첫 push를 하라고 알려줍니다.
+- **reflog로 복구** — 브랜치를 실수로 지워도 reflog에서 SHA를 찾아 그 자리에 다시 만들 수
+  있습니다.
+- 코드 약 4,900줄이 줄었습니다. 불안정했던 경로가 대부분 사라진 자리입니다.
+
+### 📦 설치 / 업그레이드
+
+- 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+- 저장소에 남아 있는 `.git/riff-changelists.json` 은 더 이상 읽지 않지만 지우지도 않습니다.
+
 ## v1.3.0
 
 작업 트리에서 **여러 파일을 골라 한 번에 stash** 할 수 있습니다.
