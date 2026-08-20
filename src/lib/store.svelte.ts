@@ -144,10 +144,10 @@ class AppState {
   // Which repo's history is being browsed: index into `repos`. 0 = main;
   // submodule/manual repos let you browse their own log + branches.
   historyRepoIdx = $state(0);
-  // Graph mode: width (px) of the right-hand commit-detail panel (files + diff).
-  // The graph itself takes the remaining (majority) width. Drag-resizable,
+  // Graph mode: height (px) of the bottom commit-detail panel (Files / Commit
+  // tabs). The graph takes the remaining height above it. Drag-resizable,
   // session-only.
-  graphDetailWidth = $state(460);
+  graphPanelHeight = $state(262);
   // Branch-mode containment ("is my branch in target"): in Branch (compare)
   // mode the start→target pickers drive a marked commit list of `start`'s
   // history. `containment` holds the ✓/●/equiv marking sets + ahead/behind for

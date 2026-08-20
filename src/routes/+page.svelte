@@ -76,20 +76,30 @@
     window.addEventListener("pointerup", onUp);
   }
 
-  // Drag-resize the horizontal split between the commit list (top) and the
-  // commit's file list (bottom) in history mode. Session-only — the fraction
-  // isn't persisted. Clamped so neither pane collapses entirely.
-  // Graph mode: drag the boundary between the wide graph and the right-hand
-  // commit-detail panel (files + diff). Adjusts its width; session-only.
-  let graphRowEl = $state<HTMLDivElement | null>(null);
-  function onGraphDetailResize(e: PointerEvent) {
-    if (e.button !== 0 || !graphRowEl) return;
+  // Graph mode: which tab the bottom detail panel shows. Sticky for the
+  // session — picking another commit keeps whichever tab is open.
+  let graphTab = $state<"files" | "commit">("files");
+  // One-line reminder of which commit the panel is describing, shown beside the
+  // tabs so the Files tab isn't identity-less.
+  const graphCommit = $derived(
+    appState.selectedCommitSha
+      ? (appState.commits.find((c) => c.sha === appState.selectedCommitSha) ??
+        null)
+      : null,
+  );
+
+  // Graph mode: drag the boundary between the graph (top) and the commit-detail
+  // panel (bottom). Adjusts the panel's height; session-only. Dragging upward
+  // grows the panel, so the height is measured from the container's bottom.
+  let graphColEl = $state<HTMLDivElement | null>(null);
+  function onGraphPanelResize(e: PointerEvent) {
+    if (e.button !== 0 || !graphColEl) return;
     e.preventDefault();
-    const rect = graphRowEl.getBoundingClientRect();
+    const rect = graphColEl.getBoundingClientRect();
     const onMove = (ev: PointerEvent) => {
-      appState.graphDetailWidth = Math.min(
-        rect.width - 240,
-        Math.max(280, ev.clientX - rect.left),
+      appState.graphPanelHeight = Math.max(
+        120,
+        Math.min(rect.height - 160, rect.bottom - ev.clientY),
       );
     };
     const onUp = () => {
@@ -176,6 +186,9 @@
   }
 
   function moveSelection(delta: 1 | -1) {
+    // Graph mode: j/k moves the file selection, which lives in the Files tab —
+    // bring it forward so the selection never changes out of sight.
+    if (appState.appMode === "history") graphTab = "files";
     // Working Copy's on-screen list (conflicts first, deduped) is not
     // appState.files — that's compare mode's list, below. See workingCopyOrder.
     if (appState.appMode === "changes") {
@@ -520,23 +533,72 @@
       ></div>
       {@render diffPane()}
     {:else if appState.appMode === "history"}
-      <div class="graph-row" bind:this={graphRowEl}>
-        <div
-          class="graph-detail"
-          style="--gd-w: {appState.graphDetailWidth}px;"
-        >
-          <CommitDetail />
-          <div class="gd-files"><FileList /></div>
-          {@render diffPane()}
-        </div>
+      <div
+        class="graph-col"
+        bind:this={graphColEl}
+        style="--gp-h: {appState.graphPanelHeight}px;"
+      >
+        <div class="graph-main"><CommitList /></div>
         <div
           class="graph-resizer"
           role="separator"
-          aria-orientation="vertical"
+          aria-orientation="horizontal"
           aria-label="Resize commit detail"
-          onpointerdown={onGraphDetailResize}
+          onpointerdown={onGraphPanelResize}
         ></div>
-        <div class="graph-main"><CommitList /></div>
+        <div class="graph-panel">
+          <div class="gp-tabs" role="tablist" aria-label="Commit detail">
+            <button
+              type="button"
+              role="tab"
+              id="gp-tab-files"
+              aria-controls="gp-pane-files"
+              aria-selected={graphTab === "files"}
+              class="gp-tab"
+              class:active={graphTab === "files"}
+              onclick={() => (graphTab = "files")}
+            >
+              Files
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="gp-tab-commit"
+              aria-controls="gp-pane-commit"
+              aria-selected={graphTab === "commit"}
+              class="gp-tab"
+              class:active={graphTab === "commit"}
+              onclick={() => (graphTab = "commit")}
+            >
+              Commit
+            </button>
+            <span class="gp-spacer"></span>
+            {#if graphCommit}
+              <span class="gp-hint" title={graphCommit.summary}>
+                {graphCommit.short_sha} · {graphCommit.summary}
+              </span>
+            {/if}
+          </div>
+          <div
+            class="gp-files"
+            id="gp-pane-files"
+            role="tabpanel"
+            aria-labelledby="gp-tab-files"
+            hidden={graphTab !== "files"}
+          >
+            <div class="gp-filelist"><FileList /></div>
+            {@render diffPane()}
+          </div>
+          <div
+            class="gp-commit"
+            id="gp-pane-commit"
+            role="tabpanel"
+            aria-labelledby="gp-tab-commit"
+            hidden={graphTab !== "commit"}
+          >
+            <CommitDetail />
+          </div>
+        </div>
       </div>
     {:else}
       <div class="branch-col">
@@ -624,55 +686,113 @@
     min-height: 0;
     overflow: hidden;
   }
-  /* Graph mode: the commit graph is the wide primary area; the selected
-     commit's files + diff live in a resizable detail panel on the right. */
-  .graph-row {
+  /* Graph mode: the commit graph gets the full width; the selected commit's
+     detail sits below it in a resizable, tabbed panel. */
+  .graph-col {
     grid-column: 1 / -1;
-    display: flex;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) 7px var(--gp-h, 262px);
     min-width: 0;
     min-height: 0;
   }
   .graph-main {
-    flex: 1;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
   }
   .graph-resizer {
-    flex: 0 0 7px;
-    margin: 0 -3px;
     z-index: 5;
-    cursor: col-resize;
+    cursor: row-resize;
     background: transparent;
     position: relative;
   }
   .graph-resizer::after {
     content: "";
     position: absolute;
-    left: 3px;
-    top: 0;
-    width: 1px;
-    height: 100%;
+    top: 3px;
+    left: 0;
+    height: 1px;
+    width: 100%;
     background: var(--border);
     transition: background 0.1s ease;
   }
   .graph-resizer:hover::after {
     background: var(--accent);
   }
-  .graph-detail {
-    flex: 0 0 var(--gd-w, 460px);
+  .graph-panel {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     min-width: 0;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
     overflow: hidden;
-    border-right: 1px solid var(--border);
   }
-  .gd-files {
-    flex: 0 0 38%;
+  /* Tab strip. Mirrors the repo tab bar's idiom so the two read as siblings. */
+  .gp-tabs {
+    display: flex;
+    align-items: stretch;
+    min-height: 28px;
+    padding: 0 4px;
+    background: var(--bar-bg);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .gp-tab {
+    border: none;
+    border-right: 1px solid var(--border);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 4px 14px;
+    white-space: nowrap;
+  }
+  .gp-tab:hover {
+    background: var(--hover);
+  }
+  .gp-tab.active {
+    background: var(--input-bg);
+    box-shadow: inset 0 -2px 0 var(--accent);
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .gp-spacer {
+    flex: 1;
+  }
+  .gp-hint {
+    align-self: center;
+    padding: 0 8px;
+    font-family: var(--mono);
+    font-size: 0.75em;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Files tab. The picker column reuses --picker-width so the file list lines
+     up with the one in Branch / Working Copy mode; the diff takes the rest. */
+  .gp-files {
+    display: grid;
+    grid-template-columns: var(--picker-width, 300px) 1fr;
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+  }
+  .gp-filelist {
+    min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border-bottom: 1px solid var(--border);
+  }
+  .gp-commit {
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* The inactive pane stays mounted (CodeMirror keeps its scroll position and
+     highlighting across tab flips), so hide it explicitly — the UA rule for
+     [hidden] loses to the panes' own display declarations. */
+  .gp-files[hidden],
+  .gp-commit[hidden] {
+    display: none;
   }
   /* Branch (compare) mode left column: containment list (top) + file list. */
   .branch-col {
