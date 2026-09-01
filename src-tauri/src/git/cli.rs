@@ -892,16 +892,41 @@ fn ensure_session(
     Ok(())
 }
 
+/// git prints work-tree paths with forward slashes even on Windows, while
+/// every other repo path in the app (folder dialog, drag & drop, persisted
+/// recents) carries the platform separator. Both sides are compared as plain
+/// strings, so the two spellings must never mix.
+#[cfg(windows)]
+fn native_separators(p: &str) -> String {
+    p.replace('/', "\\")
+}
+
+#[cfg(not(windows))]
+fn native_separators(p: &str) -> String {
+    p.to_string()
+}
+
 impl GitLayer for GitCli {
-    fn validate_repo(&self, path: &Path) -> Result<(), GitError> {
+    fn validate_repo(&self, path: &Path) -> Result<String, GitError> {
         if !path.exists() {
             return Err(GitError::NotARepo(path.display().to_string()));
         }
         self.run(path, &["rev-parse", "--git-dir"])
             .map_err(|_| GitError::NotARepo(path.display().to_string()))?;
+        // Opening a subdirectory is legal for git but not for us: status/diff
+        // report root-relative paths, so anything joined onto a subdirectory
+        // path lands outside the tree. Normalize to the work tree root. A bare
+        // repo has no work tree — `--show-toplevel` comes back empty and the
+        // given path stands.
+        let root = self
+            .run(path, &["rev-parse", "--show-toplevel"])
+            .ok()
+            .map(|out| native_separators(String::from_utf8_lossy(&out).trim()))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| path.display().to_string());
         let mut guard = self.session.lock().unwrap();
-        ensure_session(&mut guard, path)?;
-        Ok(())
+        ensure_session(&mut guard, Path::new(&root))?;
+        Ok(root)
     }
 
     fn list_refs(&self, path: &Path) -> Result<Vec<Branch>, GitError> {
@@ -2198,6 +2223,15 @@ mod tests {
         })
         .unwrap();
         out
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn native_separators_rewrites_gits_forward_slashes() {
+        // `rev-parse --show-toplevel` spells Windows paths with `/`; recents
+        // and workspace lookups compare repo paths as strings.
+        assert_eq!(native_separators("C:/a/b"), r"C:\a\b");
+        assert_eq!(native_separators(r"C:\a\b"), r"C:\a\b");
     }
 
     #[test]

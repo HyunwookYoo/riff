@@ -80,8 +80,7 @@ export async function buildWorkspace(
   const validated = await Promise.all(
     manualPaths.map(async (p) => {
       try {
-        await validateRepo(p);
-        return p;
+        return await validateRepo(p);
       } catch {
         return null;
       }
@@ -295,17 +294,19 @@ export async function loadMainRepo(
   resetWorkingCopy();
   clearBlameCache();
   try {
-    await validateRepo(path);
-    appState.repoPath = path;
-    const manualPaths = appState.manualReposByMain[path] ?? [];
-    const savedOrder = appState.tabOrderByMain[path] ?? [];
-    appState.repos = await buildWorkspace(path, manualPaths, savedOrder);
+    // The user may have picked a subdirectory; git reports paths relative to
+    // the work tree root, so the root is what the rest of the app must use.
+    const root = await validateRepo(path);
+    appState.repoPath = root;
+    const manualPaths = appState.manualReposByMain[root] ?? [];
+    const savedOrder = appState.tabOrderByMain[root] ?? [];
+    appState.repos = await buildWorkspace(root, manualPaths, savedOrder);
     appState.activeRepoIdx = null;
     appState.collapsedRepos = new Set();
     appState.branchesByRepoIdx = {};
     const [branches, recentRepos] = await Promise.all([
-      listRefs(path),
-      addRecentRepo(path),
+      listRefs(root),
+      addRecentRepo(root),
     ]);
     appState.branches = branches;
     // Mirror main's branches into the per-repo cache so BranchPicker can
@@ -320,7 +321,7 @@ export async function loadMainRepo(
     // usually already populated and entering blame mode feels instant.
     // Cheap to skip if the user never enters blame — listRepoFiles for each
     // repo runs in parallel, and the backend caches the result.
-    void prewarmRepoFiles(path, appState.repos);
+    void prewarmRepoFiles(root, appState.repos);
     // The Working (Changes) view is the default on app open — populate its
     // status here (loadMainRepo doesn't otherwise). Other modes load on entry,
     // and a mid-session repo switch keeps whatever mode the user is in.
@@ -349,16 +350,19 @@ export async function loadMainRepo(
 export async function addManualRepoToWorkspace(path: string): Promise<void> {
   const main = appState.repoPath;
   if (!main) return;
-  if (path === main) return;
-  if (appState.repos.some((r) => r.path === path)) return;
+  // Resolve to the work tree root before the duplicate checks — a
+  // subdirectory of a repo already in the workspace is the same repo.
+  let root: string;
   try {
-    await validateRepo(path);
+    root = await validateRepo(path);
   } catch (e) {
     appState.error = `not a git repo: ${e}`;
     return;
   }
+  if (root === main) return;
+  if (appState.repos.some((r) => r.path === root)) return;
   try {
-    const list = await addManualRepo(main, path);
+    const list = await addManualRepo(main, root);
     appState.manualReposByMain = {
       ...appState.manualReposByMain,
       [main]: list,

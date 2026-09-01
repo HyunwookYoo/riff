@@ -258,7 +258,12 @@ pub enum FileDiff {
 /// history are deliberately absent — see
 /// docs/superpowers/specs/2026-08-12-vcs-scope-reduction-design.md.
 pub trait GitLayer {
-    fn validate_repo(&self, path: &Path) -> Result<(), GitError>;
+    /// Confirm `path` is inside a work tree and return that work tree's root.
+    /// git accepts any subdirectory, but every path git reports back is
+    /// relative to the root, so the caller must adopt the returned root as
+    /// *the* repo path — joining a subdirectory with a root-relative path
+    /// yields a duplicated prefix that exists nowhere on disk.
+    fn validate_repo(&self, path: &Path) -> Result<String, GitError>;
     fn list_refs(&self, path: &Path) -> Result<Vec<Branch>, GitError>;
     /// Return up to `limit` commits, skipping the first `skip` (drives "load
     /// more" pagination). When `all` is true the log spans every ref

@@ -19,7 +19,10 @@ import type {
   WorkspaceLayout,
 } from "./types";
 
-export function validateRepo(path: string): Promise<void> {
+/// Resolves to the work tree root, which may differ from `path` when the user
+/// picked a subdirectory. Callers must use the returned path, not theirs —
+/// git reports every file path relative to the root.
+export function validateRepo(path: string): Promise<string> {
   return invoke("validate_repo", { path });
 }
 

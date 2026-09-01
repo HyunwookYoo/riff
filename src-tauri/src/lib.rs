@@ -13,7 +13,7 @@ use store::{PersistedState, StoreError};
 use tauri::Manager;
 
 #[tauri::command]
-async fn validate_repo(state: tauri::State<'_, GitCli>, path: String) -> Result<(), GitError> {
+async fn validate_repo(state: tauri::State<'_, GitCli>, path: String) -> Result<String, GitError> {
     state.validate_repo(Path::new(&path))
 }
 
