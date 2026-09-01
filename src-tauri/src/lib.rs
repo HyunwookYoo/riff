@@ -97,12 +97,14 @@ fn uasset_config(app: &tauri::AppHandle, ue_version: Option<String>) -> git::uas
     // A user-set path wins (power users / custom installs); otherwise use the
     // self-contained UAssetGUI bundled with the app so end users need zero
     // setup.
-    let uassetgui_path = state
-        .uassetgui_path
-        .or_else(|| bundled_uassetgui_path(app));
+    let (uassetgui_path, uassetgui_bundled) = match state.uassetgui_path {
+        Some(p) => (Some(p), false),
+        None => (bundled_uassetgui_path(app), true),
+    };
     git::uasset::Config {
         enabled: state.parse_unreal_assets,
         uassetgui_path,
+        uassetgui_bundled,
         engine_version: ue_version
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| "5.5".to_string()),

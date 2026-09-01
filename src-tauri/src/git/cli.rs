@@ -643,20 +643,45 @@ fn base64_encode(bytes: &[u8]) -> String {
 /// Fetch a blob's working-tree-smudged content for `spec` (`<ref>:<path>`),
 /// resolving Git LFS pointers to real bytes via `git cat-file --filters`.
 /// Unreal `.uasset` files are typically LFS-tracked, so the plain
-/// `cat-file --batch` blob is just the pointer text. Returns `None` when the
-/// object is missing or the command fails.
-fn cat_file_filtered(repo: &Path, spec: &str) -> Option<Vec<u8>> {
+/// `cat-file --batch` blob is just the pointer text. Errors carry git's first
+/// stderr line: the smudge filter runs here, so an LFS object that can't be
+/// fetched surfaces as a real message instead of an indistinguishable "no
+/// bytes". Callers that can degrade silently use `.unwrap_or_default()`.
+fn cat_file_filtered(repo: &Path, spec: &str) -> Result<Vec<u8>, String> {
     let output = git_command()
         .arg("-C")
         .arg(repo)
         .args(["cat-file", "--filters", spec])
         .stdin(Stdio::null())
         .output()
-        .ok()?;
+        .map_err(|e| format!("failed to run git: {e}"))?;
     if !output.status.success() {
-        return None;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let first = stderr
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or_default()
+            .to_string();
+        return Err(if first.is_empty() {
+            format!("git cat-file --filters {spec} failed")
+        } else {
+            first
+        });
     }
-    Some(output.stdout)
+    Ok(output.stdout)
+}
+
+/// Read one side of an Unreal asset through the smudge filter. `present` says
+/// whether the side exists at all — an absent side (added / deleted file) is
+/// legitimately empty. When the side exists but can't be read (typically an
+/// LFS object that isn't available locally), the error is returned: passing
+/// empty bytes on would render a blank property view with no hint of why.
+fn read_uasset_side(repo: &Path, spec: &str, present: bool) -> Result<Vec<u8>, String> {
+    if !present {
+        return Ok(Vec::new());
+    }
+    cat_file_filtered(repo, spec).map_err(|e| format!("Couldn't read {spec}: {e}"))
 }
 
 /// Read a blob's bytes for `spec` via a one-shot `git cat-file`, bypassing the
@@ -1168,13 +1193,27 @@ impl GitLayer for GitCli {
 
         if derive_uasset {
             // Re-fetch through the smudge filter so LFS-tracked assets resolve
-            // to real bytes (the batch blobs above are LFS pointers).
-            let old_asset = cat_file_filtered(path, &old_spec).unwrap_or_default();
-            let new_asset = cat_file_filtered(path, &new_spec).unwrap_or_default();
+            // to real bytes (the batch blobs above are LFS pointers). A read
+            // failure on a side that exists is reported, not swallowed.
+            let sides = read_uasset_side(path, &old_spec, old_size.is_some()).and_then(|old| {
+                read_uasset_side(path, &new_spec, new_size.is_some()).map(|new| (old, new))
+            });
+            let (old_asset, new_asset) = match sides {
+                Ok(pair) => pair,
+                Err(note) => {
+                    return Ok(FileDiff::Binary {
+                        old_size: old_size.unwrap_or(0),
+                        new_size: new_size.unwrap_or(0),
+                        note: Some(note),
+                    })
+                }
+            };
+            // A missing `.uexp` is normal (not every asset has one), so its
+            // read stays best-effort.
             let old_uexp = uasset::sibling_uexp(old_target)
-                .and_then(|sp| cat_file_filtered(path, &format!("{old_ref}:{sp}")));
+                .and_then(|sp| cat_file_filtered(path, &format!("{old_ref}:{sp}")).ok());
             let new_uexp = uasset::sibling_uexp(file_path)
-                .and_then(|sp| cat_file_filtered(path, &format!("{new_ref}:{sp}")));
+                .and_then(|sp| cat_file_filtered(path, &format!("{new_ref}:{sp}")).ok());
             return Ok(uasset::derive_filediff(
                 uasset_cfg,
                 file_path,
@@ -1306,15 +1345,24 @@ impl GitLayer for GitCli {
         // the filtered content so the too-large guard sees the real asset, not
         // an LFS pointer.
         if uasset_cfg.enabled && uasset::is_uasset_path(file_path) {
-            let old_asset = if needs_old {
-                cat_file_filtered(path, &old_spec).unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            let new_asset = if !needs_new {
-                Vec::new()
-            } else {
-                fs::read(&fs_path).unwrap_or_default()
+            let sides = read_uasset_side(path, &old_spec, needs_old).and_then(|old| {
+                let new = if !needs_new {
+                    Vec::new()
+                } else {
+                    fs::read(&fs_path)
+                        .map_err(|e| format!("Couldn't read {}: {e}", fs_path.display()))?
+                };
+                Ok((old, new))
+            });
+            let (old_asset, new_asset) = match sides {
+                Ok(pair) => pair,
+                Err(note) => {
+                    return Ok(FileDiff::Binary {
+                        old_size: 0,
+                        new_size: 0,
+                        note: Some(note),
+                    })
+                }
             };
             let old_size = old_asset.len() as u64;
             let new_size = new_asset.len() as u64;
@@ -1325,10 +1373,11 @@ impl GitLayer for GitCli {
                     note: Some("Unreal asset too large to preview.".into()),
                 });
             }
+            // Best-effort: not every asset has a sibling `.uexp`.
             let old_uexp = if needs_old {
                 uasset::sibling_uexp(old_target).and_then(|sp| {
                     let spec = format!("HEAD:{sp}");
-                    cat_file_filtered(path, &spec)
+                    cat_file_filtered(path, &spec).ok()
                 })
             } else {
                 None
@@ -2149,6 +2198,21 @@ mod tests {
         })
         .unwrap();
         out
+    }
+
+    #[test]
+    fn cat_file_filtered_reports_failure_instead_of_empty_bytes() {
+        // Not a repo: git exits non-zero. The point is that the caller can
+        // tell this apart from "the side has no content".
+        let err = cat_file_filtered(Path::new("riff-not-a-repo"), "HEAD:x").unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn read_uasset_side_absent_is_empty_not_error() {
+        // An absent side never reaches git and is legitimately empty.
+        let bytes = read_uasset_side(Path::new("riff-not-a-repo"), "HEAD:x", false).unwrap();
+        assert!(bytes.is_empty());
     }
 
     #[test]

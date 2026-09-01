@@ -74,6 +74,10 @@ pub struct Config {
     pub enabled: bool,
     /// Absolute path to `UAssetGUI.exe`. `None`/empty → can't parse.
     pub uassetgui_path: Option<String>,
+    /// Whether `uassetgui_path` came from the app bundle rather than the
+    /// settings override. Only used to label failure notes, so a user report
+    /// says which of the two resolutions was actually in play.
+    pub uassetgui_bundled: bool,
     /// Engine version string passed to `tojson` (e.g. "5.3"). Already
     /// defaulted by the caller.
     pub engine_version: String,
@@ -126,6 +130,14 @@ pub fn derive_filediff(
         }
     };
 
+    let tool_label = format!(
+        "{tool} ({})",
+        if cfg.uassetgui_bundled {
+            "bundled"
+        } else {
+            "from settings"
+        }
+    );
     let stem = safe_stem(file_path);
     let render = |bytes: &[u8], uexp: Option<&[u8]>| -> Result<String, String> {
         // An absent side (added / deleted file) yields empty JSON so the diff
@@ -133,7 +145,7 @@ pub fn derive_filediff(
         if bytes.is_empty() {
             return Ok(String::new());
         }
-        render_side(&tool, &cfg.engine_version, &stem, bytes, uexp)
+        render_side(&tool, &tool_label, &cfg.engine_version, &stem, bytes, uexp)
     };
 
     let old_json = match render(old_bytes, old_uexp) {
@@ -174,6 +186,7 @@ pub fn derive_filediff(
 /// Run `UAssetGUI tojson` on one side's bytes and return the filtered JSON.
 fn render_side(
     tool: &str,
+    tool_label: &str,
     engine_version: &str,
     stem: &str,
     asset_bytes: &[u8],
@@ -203,7 +216,7 @@ fn render_side(
         .arg(&json_path)
         .arg(engine_version)
         .output()
-        .map_err(|e| format!("failed to run UAssetGUI ({tool}): {e}"))?;
+        .map_err(|e| format!("failed to run UAssetGUI {tool_label}: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -213,7 +226,9 @@ fn render_side(
         } else {
             stdout.trim().to_string()
         };
-        return Err(format!("UAssetGUI tojson failed (UE {engine_version}): {detail}"));
+        return Err(format!(
+            "UAssetGUI tojson failed (UE {engine_version}) — {tool_label}: {detail}"
+        ));
     }
 
     let raw = fs::read_to_string(&json_path)
@@ -331,6 +346,49 @@ impl Drop for TempDir {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cfg(path: Option<&str>, bundled: bool) -> Config {
+        Config {
+            enabled: true,
+            uassetgui_path: path.map(str::to_string),
+            uassetgui_bundled: bundled,
+            engine_version: "5.5".to_string(),
+        }
+    }
+
+    #[test]
+    fn derive_without_tool_points_at_settings() {
+        let fd = derive_filediff(&cfg(None, true), "A.uasset", b"\x01", None, b"\x02", None, 1, 1);
+        match fd {
+            FileDiff::Binary { note, .. } => {
+                assert!(note.unwrap_or_default().contains("settings"));
+            }
+            _ => panic!("expected a binary fallback"),
+        }
+    }
+
+    #[test]
+    fn derive_failure_note_names_tool_and_source() {
+        let missing = "riff-test-definitely-missing-UAssetGUI.exe";
+        let fd = derive_filediff(
+            &cfg(Some(missing), true),
+            "A.uasset",
+            b"\x01\x02",
+            None,
+            b"\x03",
+            None,
+            2,
+            1,
+        );
+        match fd {
+            FileDiff::Binary { note, .. } => {
+                let n = note.unwrap_or_default();
+                assert!(n.contains(missing), "note should name the tool path: {n}");
+                assert!(n.contains("bundled"), "note should name the source: {n}");
+            }
+            _ => panic!("expected a binary fallback"),
+        }
+    }
 
     /// Manual validation harness: run riff's real `filter_volatile` over an
     /// actual `UAssetGUI tojson` output file and write the reduced view out, so
