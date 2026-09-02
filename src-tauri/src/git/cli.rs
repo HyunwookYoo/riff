@@ -1014,9 +1014,23 @@ impl GitLayer for GitCli {
     fn status(&self, path: &Path) -> Result<RepoStatus, GitError> {
         // `--no-optional-locks` so a background-refresh status never grabs
         // `index.lock` and races a concurrent write (stage/commit/checkout).
+        // `--untracked-files=all` because git's default collapses a wholly
+        // untracked directory into a single `dir/` entry: the files inside it
+        // would never reach the list, and the entry itself is a directory, so
+        // the diff pane would take the gitlink branch and render a bogus
+        // "Subproject commit" instead of the new file. Untracked *repositories*
+        // still come back collapsed — git never descends into another repo —
+        // and those are genuine gitlinks.
         let stdout = self.run(
             path,
-            &["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z"],
+            &[
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v2",
+                "--branch",
+                "--untracked-files=all",
+                "-z",
+            ],
         )?;
         Ok(parse_status(&String::from_utf8_lossy(&stdout)))
     }
@@ -2652,5 +2666,69 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         assert!(parse_reflog("").is_empty());
         // A selector with no parseable time is dropped, not admitted with 0.
         assert!(parse_reflog("a1b2c3d\u{1f}HEAD@{nope}\u{1f}commit: x\n").is_empty());
+    }
+
+    /// Throwaway repo with one commit, under the OS temp dir. Panics on any
+    /// git failure so a broken fixture can't masquerade as a passing test.
+    fn temp_repo(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("riff-test-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let out = git_command().arg("-C").arg(&dir).args(args).output().unwrap();
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "git {args:?}: {err}");
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "riff test"]);
+        fs::write(dir.join("seed"), "seed\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "seed"]);
+        dir
+    }
+
+    #[test]
+    fn status_lists_every_file_in_a_new_untracked_directory() {
+        // git's default `-unormal` reports a wholly untracked directory as a
+        // single `dir/` entry. That entry's path ends in `/`, so the Changes
+        // tree renders it as a nameless row, and opening it hits the gitlink
+        // branch of changes_file_diff (a directory on disk) — the new files
+        // themselves were unreachable. Every file must be listed instead.
+        let repo = temp_repo("untracked-dir");
+        fs::create_dir_all(repo.join("notes/deep")).unwrap();
+        fs::write(repo.join("notes/deep/a.md"), "# hi\n").unwrap();
+        fs::write(repo.join("notes/b.txt"), "text\n").unwrap();
+
+        let cli = GitCli::new();
+        let st = cli.status(&repo).unwrap();
+        let paths: Vec<&str> = st.entries.iter().map(|e| e.path.as_str()).collect();
+        assert!(paths.contains(&"notes/deep/a.md"), "got {paths:?}");
+        assert!(paths.contains(&"notes/b.txt"), "got {paths:?}");
+        assert!(
+            !paths.iter().any(|p| p.ends_with('/')),
+            "no collapsed directory entry: {paths:?}"
+        );
+
+        // And the untracked file opens as its own contents, not a gitlink.
+        let cfg = uasset::Config {
+            enabled: false,
+            uassetgui_path: None,
+            uassetgui_bundled: false,
+            engine_version: "5.3".into(),
+        };
+        let md = "notes/deep/a.md";
+        let diff = cli
+            .changes_file_diff(&repo, md, None, FileStatus::Added, false, &cfg)
+            .unwrap();
+        match diff {
+            FileDiff::Text { old_content, new_content, .. } => {
+                assert!(old_content.is_empty());
+                assert_eq!(new_content, "# hi\n");
+            }
+            other => panic!("expected a text diff, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&repo);
     }
 }
