@@ -36,7 +36,14 @@
   let behind = $state(0);
   let changeCount = $state(0); // uncommitted files, for the Working nav badge
   let busy = $state(false);
-  let session = 0;
+  // A load runs `git for-each-ref` and, outside Changes, `git status` — which
+  // on a big worktree walks every submodule and takes tens of seconds. The
+  // watcher can bump refsRefresh again well before that returns, so serialize:
+  // one load in flight, later requests fold into a single trailing load.
+  // Without this the sidebar spawns its own accumulating pile of git processes
+  // alongside the Changes refresh (see repoWatch.ts for the same guard).
+  let loading = false;
+  let queued = false;
 
   const locals = $derived(branches.filter((b) => b.kind === "local"));
   const remotes = $derived(branches.filter((b) => b.kind === "remote"));
@@ -55,11 +62,20 @@
   });
 
   async function load() {
-    const s = ++session;
+    if (loading) {
+      queued = true;
+      return;
+    }
     const p = repoPath;
+    loading = true;
     try {
-      const [refs, st] = await Promise.all([listRefs(p), status(p)]);
-      if (s !== session) return;
+      // In Changes the sidebar tracks the repo the screen acts on
+      // (repoIdx === changesRepoIdx), and loadStatus() has just read exactly
+      // this status — running `git status` again here would double the cost
+      // for identical data.
+      const shared =
+        appState.appMode === "changes" ? appState.repoStatus : null;
+      const [refs, st] = await Promise.all([listRefs(p), shared ?? status(p)]);
       branches = refs;
       // Keep the shared cache (used by the graph badge merge + checkout DWIM)
       // in sync with this freshly-listed set.
@@ -72,9 +88,13 @@
       behind = st.behind;
       changeCount = st.entries.length;
     } catch {
-      if (s === session) {
-        branches = [];
-        current = null;
+      branches = [];
+      current = null;
+    } finally {
+      loading = false;
+      if (queued) {
+        queued = false;
+        void load();
       }
     }
   }
