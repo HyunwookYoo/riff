@@ -1,6 +1,6 @@
 # Riff
 
-Windows 데스크톱용 경량 Git 브라우저. 커밋 히스토리와 두 ref 비교를 PR처럼 읽고, 라인별 blame과 파일 타임랩스로 코드의 내력을 추적합니다. 브랜치를 만들고 옮겨 다니고 pull 하는 것까지가 riff가 저장소에 손대는 전부입니다 — 커밋과 push는 Fork에서.
+Windows 데스크톱용 경량 Git 브라우저. 커밋 히스토리와 두 ref 비교를 PR처럼 읽고, 라인별 blame과 파일 타임랩스로 코드의 내력을 추적합니다. 브랜치를 만들고 옮겨 다니고, pull·push 하고, 리베이스하는 것까지가 riff가 저장소에 손대는 전부입니다 — 커밋은 Fork에서.
 
 [Tauri 2](https://tauri.app) + Svelte 5 + [CodeMirror 6](https://codemirror.net) (`@codemirror/merge`) + [Shiki](https://shiki.style) 기반.
 
@@ -18,9 +18,9 @@ Windows 데스크톱용 경량 Git 브라우저. 커밋 히스토리와 두 ref 
 
 ## riff와 Fork
 
-riff는 **읽는 도구**입니다. 저장소를 바꾸는 경우는 다섯 가지뿐입니다 — 브랜치 생성, 이름 변경, 삭제, checkout, fetch/pull. 여기에 예외가 하나 있는데, riff의 pull이 충돌을 만들면 riff가 3-way 해결기로 치웁니다.
+riff는 **읽는 도구**입니다. 저장소를 바꾸는 경우는 일곱 가지뿐입니다 — 브랜치 생성, 이름 변경, 삭제, checkout, fetch/pull, rebase, push. 여기에 예외가 하나 있는데, riff의 pull이나 rebase가 충돌을 만들면 riff가 3-way 해결기로 치웁니다.
 
-커밋, push, stash, rebase, reset은 riff에 없습니다. Fork(또는 다른 클라이언트)에서 하세요. 기능이 모자란 게 아니라 의도된 분업입니다 — riff는 코드를 읽는 일을 잘하는 데 집중합니다.
+커밋과 reset은 riff에 없습니다. Fork(또는 다른 클라이언트)에서 하세요. 기능이 모자란 게 아니라 의도된 분업입니다 — riff는 코드를 읽는 일을 잘하는 데 집중합니다. stash도 riff의 기능은 아닙니다 — rebase가 시작 전에 로컬 변경을 치웠다가 끝나면 되돌리는 것(`git rebase --autostash`)이 전부입니다. rebase가 예외인 이유와 쓰는 법은 [§3c](#3c-rebase--브랜치-옮겨-쌓기)에 있습니다.
 
 ---
 
@@ -132,9 +132,79 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 GitKraken/Fork식 커밋 그래프 워크스페이스입니다.
 
 - **그래프**: 레인 + 커밋 노드 + 브랜치/태그 배지. 같은 위치의 로컬+리모트 브랜치는 하나의 배지로 합쳐지고, 미커밋 변경은 HEAD 위 **WIP 노드**로 표시됩니다. 행 높이 조절 + all-branches 리셋 버튼 제공.
-- **커밋별 액션**: 커밋을 클릭하면 그 커밋의 변경 전체를 봅니다. 우클릭 메뉴는 New branch here… / Checkout (detached) 두 가지. 브랜치 배지 더블클릭으로 checkout.
-- **브랜치 사이드바**: checkout, 생성/이름변경/삭제. 리모트 더블클릭은 checkout + fast-forward.
-- **동기화 툴바**: fetch / pull (ahead/behind 카운트 표시).
+- **커밋별 액션**: 커밋을 클릭하면 그 커밋의 변경 전체를 봅니다. 우클릭 메뉴는 New branch here… / Checkout (detached) / Rebase 두 가지(§3c). 브랜치 배지 더블클릭으로 checkout, 드래그로 rebase.
+- **브랜치 사이드바**: checkout, 생성/이름변경/삭제, rebase. 리모트 더블클릭은 checkout + fast-forward.
+- **동기화 툴바**: fetch / pull / push (ahead/behind 카운트 표시, §3d).
+
+---
+
+## 3c. Rebase — 브랜치 옮겨 쌓기
+
+riff에서 히스토리를 다시 쓰는 유일한 기능입니다. 읽다가 "이 브랜치는 main 위에 있어야 하는데"를 발견하는 자리가 곧 브랜치 사이드바와 그래프이기 때문에, 그 자리에서 바로 하도록 넣었습니다.
+
+**진입점은 두 개, 규칙은 하나 — 가리킨 쪽이 목적지입니다.**
+
+| 어디서 | 드래그 드롭 | 우클릭 |
+|---|---|---|
+| 브랜치 사이드바 | 로컬 브랜치 행을 다른 ref(로컬/리모트/태그) 위로 → **끌어온 브랜치**를 그 ref 위로 | 그 ref 위로 **현재 브랜치**를 |
+| 그래프 | 브랜치 배지를 커밋 행 위로 → **그 배지의 브랜치**를 그 커밋 위로 | 그 커밋 위로 **현재 브랜치**를 |
+
+드래그는 양쪽 끝을 다 지목하므로 아무 브랜치나 옮길 수 있고, 우클릭은 목적지만 지목하므로 현재 브랜치가 움직입니다.
+
+메뉴 항목은 두 줄입니다:
+
+- **`Rebase <branch> onto <target>`** — 확인 다이얼로그(몇 개 커밋이 다시 쓰이는지)만 거치고 바로 실행.
+- **`Rebase <branch> onto <target>… (plan)`** — **플랜 에디터**를 엽니다.
+
+### 플랜 에디터 (interactive rebase)
+
+`git rebase -i` 의 todo를 그대로 편집합니다. **위에 있는 커밋이 먼저** replay 됩니다.
+
+- 행을 **드래그**하거나 **↑ ↓** 버튼으로 순서 변경.
+- 커밋마다 액션 선택: **pick**(그대로) / **squash**(위 커밋에 합치고 메시지 둘 다 유지) / **fixup**(합치고 이 메시지는 버림) / **edit**(여기서 멈춤) / **drop**(빼기).
+- 목록은 git이 실제로 만드는 todo와 같습니다 — 머지 커밋은 빠지고, 이미 목적지에 같은 패치로 들어간 커밋도 빠집니다.
+- **reword는 없습니다.** 메시지 편집기가 riff에 없기 때문입니다(squash는 git 기본 결합 메시지를 씁니다). 메시지를 고칠 일은 Fork에서.
+
+### 멈췄을 때
+
+충돌이 나거나 `edit` 에서 멈추면 기존 **충돌 배너**가 그대로 받습니다 — **Resolve** → 인앱 3-way 해결 → **Continue**, 이 커밋을 버리고 넘어가려면 **Skip**, 되돌리려면 **Abort**.
+
+### 로컬 변경은 자동으로 치웠다가 되돌립니다
+
+작업 트리가 더러워도 rebase가 막히지 않습니다. `git rebase --autostash` 로 돌기 때문에 git이 시작 전에 변경을 stash 하고, rebase가 끝나는 시점 — 마지막 커밋을 얹었을 때, 또는 멈춘 rebase를 **Continue / Skip / Abort** 로 끝냈을 때 — 에 되돌립니다. stash 항목이 남지 않습니다.
+
+단, autostash는 **추적 중인 파일의 변경만** 치웁니다. untracked 파일이 rebase가 써야 할 파일과 겹치면 git이 거부하고, riff가 그 메시지에 "정리한 뒤 다시 시도하세요" 안내를 붙여 보여줍니다.
+
+되돌리다 충돌하는 경우가 하나 있습니다: rebase가 방금 쓴 내용과 치워 둔 변경이 같은 줄을 건드릴 때입니다. 이때 git은 **rebase 자체는 성공으로 끝내고**(그래서 다른 화면은 아무 말도 하지 않습니다) 변경을 stash에 그대로 남깁니다. riff가 이 경우를 알아채서 배너로 알려줍니다 — 작업 트리의 충돌 표시를 정리한 뒤 Fork에서 stash를 pop 하거나 drop 하면 됩니다.
+
+### 안전장치
+
+- rebase 전 tip은 **reflog**에 남습니다. **`Ctrl+Shift+R`** → 해당 항목에서 브랜치를 만들면 그대로 복구됩니다.
+- 이미 올린 브랜치를 rebase 했다면 원격과 히스토리가 갈라집니다 — 다시 올릴 때는 **Force push (with lease)**(§3d).
+
+---
+
+## 3d. Push — 올리기
+
+커밋은 Fork에서 하지만, 올리는 건 riff에서 합니다 — rebase를 riff에서 하고 나면 그 브랜치를 올리는 것까지가 한 동작이기 때문입니다.
+
+| 어디서 | 무엇을 |
+|---|---|
+| 동기화 툴바 | **`↑ Push N`** — 현재 브랜치, N은 upstream보다 앞선 커밋 수 |
+| 브랜치 사이드바 우클릭 (로컬 브랜치) | **Push** / **Force push (with lease)…** — 체크아웃하지 않은 브랜치도 그대로 |
+
+- **아직 원격에 없는 브랜치**는 툴바 버튼이 **`↑ Publish`** 로 바뀝니다. 누르면 remote에 올리면서 upstream까지 설정합니다(`push -u`). remote가 여러 개면 riff가 고르지 않고 어느 것들이 있는지 알려줍니다 — `origin` 이 있으면 `origin`, 없고 remote가 하나면 그것.
+- 로컬 이름과 원격 이름이 다른 브랜치도 원격 이름 그대로 올라갑니다.
+
+### force는 항상 lease
+
+riff의 force push는 `--force-with-lease --force-if-includes` 하나뿐입니다. **그냥 `--force` 는 riff에 없습니다.**
+
+- 원격이 riff가 마지막으로 본 위치에서 움직였으면 git이 **거부**합니다 — 남의 커밋을 덮어쓸 수 없습니다.
+- fetch는 했지만 그 커밋을 이 브랜치에 반영하지 않았어도 거부합니다(`--force-if-includes`).
+- 거부당하면 riff가 이유별로 다른 안내를 붙입니다: *원격에 없는 커밋이 있음 → Pull*, *원격이 움직임 → Fetch 후 확인*, *받아둔 커밋이 브랜치에 없음 → 그 위로 다시 rebase*.
+
+> git 2.30 이상이 필요합니다(`--force-if-includes`).
 
 ---
 

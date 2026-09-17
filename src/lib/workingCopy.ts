@@ -3,6 +3,7 @@ import {
   fetch as fetchCmd,
   opAbort,
   opContinue,
+  opSkip,
   pendingOp,
   pull as pullCmd,
   status,
@@ -318,6 +319,15 @@ export async function loadPendingOp(): Promise<void> {
   }
 }
 
+/// Shown when git restored a rebase's autostash into conflicts. The rebase
+/// itself succeeded, so no other part of the UI would say anything — yet the
+/// working tree now has conflict markers and the changes are still in the
+/// stash, which riff has no screen for.
+export const AUTOSTASH_CONFLICT_NOTE =
+  "리베이스는 끝났지만, 잠시 치워 둔 로컬 변경을 되돌리다 충돌했습니다. " +
+  "변경은 stash에 그대로 남아 있습니다 — 작업 트리의 충돌 표시를 정리한 뒤 " +
+  "Fork에서 stash를 pop 하거나 drop 하세요.";
+
 /// Abort the in-progress operation.
 export async function abortOp(): Promise<void> {
   const op = appState.pendingOp;
@@ -325,7 +335,32 @@ export async function abortOp(): Promise<void> {
   appState.beginGitOp("Aborting…");
   appState.error = null;
   try {
-    await opAbort(changesRepoPath(), op);
+    // True when git's autostash came back into conflicts — the op succeeded,
+    // so this note is the only thing that would tell the user.
+    if (await opAbort(changesRepoPath(), op)) appState.error = AUTOSTASH_CONFLICT_NOTE;
+  } catch (e) {
+    appState.error = String(e);
+  } finally {
+    const err = appState.error;
+    await refreshActiveView();
+    await loadPendingOp();
+    if (err) appState.error = err;
+    appState.endGitOp();
+  }
+}
+
+/// Drop the commit the operation stopped on and carry on (`--skip`). The op
+/// can stop again on the next commit, which the banner reflects after the
+/// refresh below — same shape as continueOp.
+export async function skipOp(): Promise<void> {
+  const op = appState.pendingOp;
+  if (op === "none") return;
+  appState.beginGitOp("Skipping…");
+  appState.error = null;
+  try {
+    // True when git's autostash came back into conflicts — the op succeeded,
+    // so this note is the only thing that would tell the user.
+    if (await opSkip(changesRepoPath(), op)) appState.error = AUTOSTASH_CONFLICT_NOTE;
   } catch (e) {
     appState.error = String(e);
   } finally {
@@ -344,7 +379,9 @@ export async function continueOp(): Promise<void> {
   appState.beginGitOp("Resuming…");
   appState.error = null;
   try {
-    await opContinue(changesRepoPath(), op);
+    // True when git's autostash came back into conflicts — the op succeeded,
+    // so this note is the only thing that would tell the user.
+    if (await opContinue(changesRepoPath(), op)) appState.error = AUTOSTASH_CONFLICT_NOTE;
   } catch (e) {
     appState.error = String(e);
   } finally {
@@ -367,12 +404,12 @@ export async function doPull(): Promise<void> {
   // branch's) upstream while Pull is already clickable. Await a fresh read first
   // so the guard decides on the truth, not a memory of it.
   await loadCurrentBranch();
-  // A branch created in riff has no upstream, because riff cannot push. git's
-  // own message ("no tracking information for the current branch") does not say
-  // what to do about it — this does.
+  // A branch created in riff has no upstream until its first push. git's own
+  // message ("no tracking information for the current branch") does not say
+  // what to do about it — this does, and the toolbar's Push button is where.
   if (!appState.currentUpstream) {
     appState.error = appState.currentBranch
-      ? `'${appState.currentBranch}' 는 아직 원격에 없습니다. Fork에서 첫 push를 하면 pull 할 수 있습니다.`
+      ? `'${appState.currentBranch}' 는 아직 원격에 없습니다. Push 로 먼저 올리면 pull 할 수 있습니다.`
       : "detached HEAD 상태에서는 pull 할 수 없습니다. 먼저 브랜치를 checkout 하세요.";
     return;
   }

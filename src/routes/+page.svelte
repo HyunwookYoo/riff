@@ -16,6 +16,7 @@
   import CommandPalette from "$lib/ui/CommandPalette.svelte";
   import ShortcutsOverlay from "$lib/ui/ShortcutsOverlay.svelte";
   import ReflogOverlay from "$lib/ui/ReflogOverlay.svelte";
+  import RebaseTodoOverlay from "$lib/ui/RebaseTodoOverlay.svelte";
   import Timelapse from "$lib/ui/Timelapse.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
@@ -459,6 +460,7 @@
   <CommandPalette />
   <ShortcutsOverlay />
   <ReflogOverlay />
+  <RebaseTodoOverlay />
   <Timelapse />
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />

@@ -13,8 +13,8 @@ use super::diff;
 use super::uasset;
 use super::{
     Branch, BranchKind, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions,
-    DiffMode, FileDiff, FileStatus, GitError, GitLayer, ReflogEntry, RepoStatus, StatusEntry,
-    SubmoduleCommit, SubmoduleInfo,
+    DiffMode, FileDiff, FileStatus, GitError, GitLayer, RebaseStep, ReflogEntry, RepoStatus,
+    StatusEntry, SubmoduleCommit, SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -1623,6 +1623,56 @@ impl GitLayer for GitCli {
         self.pull_impl(path)
     }
 
+    fn push(&self, path: &Path, branch: &str, force: bool) -> Result<(), GitError> {
+        self.push_impl(path, branch, force)
+    }
+
+    fn rebase_plan(&self, path: &Path, upstream: &str, branch: &str) -> Result<Vec<Commit>, GitError> {
+        // Read-only: no write_lock and no drop_session.
+        // `<upstream>...<branch>` with --right-only --cherry-pick --no-merges
+        // is the selection `git rebase` itself makes when it generates a todo:
+        // the branch's own commits, minus merges, minus any whose patch is
+        // already applied upstream. Listing it any other way would show a plan
+        // git then quietly deviates from. --reverse puts it in todo order
+        // (oldest first).
+        let upstream = validate_ref(upstream)?;
+        let branch = if branch.is_empty() {
+            "HEAD"
+        } else {
+            validate_ref(branch)?
+        };
+        let range = format!("{upstream}...{branch}");
+        let stdout = self.run(
+            path,
+            &[
+                "log",
+                "-z",
+                COMMIT_LOG_FORMAT,
+                "--reverse",
+                "--topo-order",
+                "--no-merges",
+                "--cherry-pick",
+                "--right-only",
+                &range,
+            ],
+        )?;
+        Ok(parse_commit_log(&String::from_utf8_lossy(&stdout)))
+    }
+
+    fn rebase(&self, path: &Path, upstream: &str, branch: Option<&str>) -> Result<bool, GitError> {
+        self.rebase_impl(path, upstream, branch)
+    }
+
+    fn rebase_interactive(
+        &self,
+        path: &Path,
+        upstream: &str,
+        branch: Option<&str>,
+        steps: &[RebaseStep],
+    ) -> Result<bool, GitError> {
+        self.rebase_interactive_impl(path, upstream, branch, steps)
+    }
+
     fn pending_op(&self, path: &Path) -> Result<String, GitError> {
         let out = self.run(path, &["rev-parse", "--git-dir"])?;
         // `--git-dir` is relative to `path` (or absolute). join() handles both.
@@ -1642,12 +1692,16 @@ impl GitLayer for GitCli {
         Ok(op.to_string())
     }
 
-    fn op_abort(&self, path: &Path, op: &str) -> Result<(), GitError> {
+    fn op_abort(&self, path: &Path, op: &str) -> Result<bool, GitError> {
         self.op_abort_impl(path, op)
     }
 
-    fn op_continue(&self, path: &Path, op: &str) -> Result<(), GitError> {
+    fn op_continue(&self, path: &Path, op: &str) -> Result<bool, GitError> {
         self.op_continue_impl(path, op)
+    }
+
+    fn op_skip(&self, path: &Path, op: &str) -> Result<bool, GitError> {
+        self.op_skip_impl(path, op)
     }
 
     fn list_repo_files(&self, path: &Path) -> Result<Vec<String>, GitError> {
@@ -2686,6 +2740,260 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         git(&["add", "-A"]);
         git(&["commit", "-qm", "seed"]);
         dir
+    }
+
+    /// Run one git command in a fixture repo, panicking on failure — for
+    /// building history past `temp_repo`'s single seed commit.
+    fn git_in(dir: &Path, args: &[&str]) {
+        let out = git_command().arg("-C").arg(dir).args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn commit_file(dir: &Path, name: &str, content: &str, msg: &str) {
+        fs::write(dir.join(name), content).unwrap();
+        git_in(dir, &["add", "-A"]);
+        git_in(dir, &["commit", "-qm", msg]);
+    }
+
+    fn rev_parse(dir: &Path, rev: &str) -> String {
+        let out = git_command()
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", rev])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "rev-parse {rev}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// `base` and `topic` off the seed commit, with one commit on topic whose
+    /// patch is cherry-picked onto base — the case git's todo silently drops.
+    fn rebase_fixture(name: &str) -> PathBuf {
+        let repo = temp_repo(name);
+        git_in(&repo, &["checkout", "-q", "-b", "base"]);
+        git_in(&repo, &["checkout", "-q", "-b", "topic"]);
+        commit_file(&repo, "t.txt", "t1\n", "t1");
+        commit_file(&repo, "s.txt", "shared\n", "shared");
+        let shared = rev_parse(&repo, "topic");
+        git_in(&repo, &["checkout", "-q", "base"]);
+        commit_file(&repo, "b.txt", "b1\n", "b1");
+        git_in(&repo, &["cherry-pick", &shared]);
+        repo
+    }
+
+    /// A bare repo next to `repo`, wired up as its `origin`. Local-path
+    /// remotes exercise the same push machinery as a network one.
+    fn add_bare_remote(repo: &Path, name: &str) -> PathBuf {
+        let bare = repo.with_file_name(format!("{name}-remote.git"));
+        let _ = fs::remove_dir_all(&bare);
+        let out = git_command()
+            .args(["init", "-q", "--bare"])
+            .arg(&bare)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "init bare remote");
+        git_in(repo, &["remote", "add", "origin", &bare.to_string_lossy()]);
+        bare
+    }
+
+    fn current_branch(dir: &Path) -> String {
+        let out = git_command()
+            .arg("-C")
+            .arg(dir)
+            .args(["branch", "--show-current"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn push_publishes_a_branch_and_records_its_upstream() {
+        // A branch created in riff has no upstream; the first push is what
+        // gives it one, which is also what makes Pull work afterwards.
+        let repo = temp_repo("push-first");
+        let bare = add_bare_remote(&repo, "push-first");
+        let cli = GitCli::new();
+        let branch = current_branch(&repo);
+
+        cli.push(&repo, &branch, false).unwrap();
+
+        assert_eq!(
+            rev_parse(&repo, &format!("{branch}@{{upstream}}")),
+            rev_parse(&repo, &branch)
+        );
+        assert_eq!(rev_parse(&bare, &branch), rev_parse(&repo, &branch));
+
+        let _ = fs::remove_dir_all(&repo);
+        let _ = fs::remove_dir_all(&bare);
+    }
+
+    #[test]
+    fn a_leased_force_push_replaces_a_rebased_branch() {
+        let repo = temp_repo("push-force");
+        let bare = add_bare_remote(&repo, "push-force");
+        let cli = GitCli::new();
+        let branch = current_branch(&repo);
+        commit_file(&repo, "a.txt", "a\n", "a");
+        cli.push(&repo, &branch, false).unwrap();
+
+        // Rewrite the pushed commit the way a rebase would, then publish it.
+        git_in(&repo, &["commit", "-q", "--amend", "-m", "a (reworded)"]);
+        assert!(cli.push(&repo, &branch, false).is_err(), "non-ff must be refused");
+        cli.push(&repo, &branch, true).unwrap();
+
+        assert_eq!(rev_parse(&bare, &branch), rev_parse(&repo, &branch));
+
+        let _ = fs::remove_dir_all(&repo);
+        let _ = fs::remove_dir_all(&bare);
+    }
+
+    #[test]
+    fn a_leased_force_push_refuses_when_the_remote_moved() {
+        // The whole point of the lease: someone else pushed since riff last
+        // looked, so overwriting would drop their commit.
+        let repo = temp_repo("push-lease");
+        let bare = add_bare_remote(&repo, "push-lease");
+        let cli = GitCli::new();
+        let branch = current_branch(&repo);
+        commit_file(&repo, "a.txt", "a\n", "a");
+        cli.push(&repo, &branch, false).unwrap();
+
+        // A second clone publishes a commit riff has never seen.
+        let other = repo.with_file_name("push-lease-other");
+        let _ = fs::remove_dir_all(&other);
+        let out = git_command()
+            .args(["clone", "-q"])
+            .arg(&bare)
+            .arg(&other)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "clone");
+        git_in(&other, &["config", "user.email", "o@example.com"]);
+        git_in(&other, &["config", "user.name", "other"]);
+        commit_file(&other, "theirs.txt", "theirs\n", "theirs");
+        git_in(&other, &["push", "-q", "origin", &branch]);
+
+        let theirs = rev_parse(&bare, &branch);
+        commit_file(&repo, "mine.txt", "mine\n", "mine");
+        assert!(cli.push(&repo, &branch, true).is_err());
+        // Their commit is still the remote's tip.
+        assert_eq!(rev_parse(&bare, &branch), theirs);
+
+        let _ = fs::remove_dir_all(&repo);
+        let _ = fs::remove_dir_all(&bare);
+        let _ = fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn rebase_plan_lists_only_what_git_would_replay() {
+        // The plan editor shows this list, so it has to be git's own selection:
+        // topic's commits, oldest first, minus the one already applied on base
+        // under a different SHA.
+        let repo = rebase_fixture("rebase-plan");
+        let cli = GitCli::new();
+
+        let plan = cli.rebase_plan(&repo, "base", "topic").unwrap();
+        let subjects: Vec<&str> = plan.iter().map(|c| c.summary.as_str()).collect();
+        assert_eq!(subjects, vec!["t1"], "got {subjects:?}");
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_replays_the_branch_onto_the_target() {
+        let repo = rebase_fixture("rebase-run");
+        let cli = GitCli::new();
+        let base = rev_parse(&repo, "base");
+
+        cli.rebase(&repo, "base", Some("topic")).unwrap();
+
+        // One replayed commit (t1) sitting directly on base, and git left the
+        // rebased branch checked out.
+        assert_eq!(rev_parse(&repo, "topic~1"), base);
+        assert_eq!(rev_parse(&repo, "topic"), rev_parse(&repo, "HEAD"));
+        assert_eq!(cli.pending_op(&repo).unwrap(), "none");
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_sets_local_changes_aside_and_puts_them_back() {
+        // `--autostash`: uncommitted work no longer blocks a rebase, and git
+        // restores it when the rebase ends.
+        let repo = rebase_fixture("rebase-autostash");
+        let cli = GitCli::new();
+        git_in(&repo, &["checkout", "-q", "topic"]);
+        fs::write(repo.join("dirty.txt"), "wip\n").unwrap();
+        git_in(&repo, &["add", "dirty.txt"]);
+        fs::write(repo.join("dirty.txt"), "wip and more\n").unwrap();
+
+        let restore_conflicted = cli.rebase(&repo, "base", Some("topic")).unwrap();
+
+        assert!(!restore_conflicted);
+        // Line endings are whatever the machine's core.autocrlf makes them;
+        // what matters is that the uncommitted edit came back.
+        let restored = fs::read_to_string(repo.join("dirty.txt")).unwrap();
+        assert_eq!(restored.trim_end(), "wip and more");
+        assert_eq!(rev_parse(&repo, "topic~1"), rev_parse(&repo, "base"));
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn a_conflicting_autostash_restore_is_reported() {
+        // The rebase itself succeeds (exit 0) but the restored work lands in
+        // conflicts — the one case where git's success hides something the user
+        // has to deal with. Lines are far apart so only the restore conflicts.
+        let repo = temp_repo("rebase-autostash-conflict");
+        let cli = GitCli::new();
+        let lines: String = (1..=20).map(|i| format!("line{i}\n")).collect();
+        fs::write(repo.join("f.txt"), &lines).unwrap();
+        git_in(&repo, &["add", "-A"]);
+        git_in(&repo, &["commit", "-qm", "seed f"]);
+        git_in(&repo, &["checkout", "-q", "-b", "base"]);
+        git_in(&repo, &["checkout", "-q", "-b", "topic"]);
+        fs::write(repo.join("f.txt"), lines.replace("line18\n", "TOPIC18\n")).unwrap();
+        git_in(&repo, &["commit", "-qam", "topic edit"]);
+        git_in(&repo, &["checkout", "-q", "base"]);
+        fs::write(repo.join("f.txt"), lines.replace("line3\n", "MAIN3\n")).unwrap();
+        git_in(&repo, &["commit", "-qam", "base edit"]);
+        git_in(&repo, &["checkout", "-q", "topic"]);
+        // Uncommitted edit to the same line base rewrote.
+        fs::write(repo.join("f.txt"), lines.replace("line3\n", "DIRTY3\n").replace("line18\n", "TOPIC18\n")).unwrap();
+
+        assert!(cli.rebase(&repo, "base", Some("topic")).unwrap());
+        // The rebase really did finish — this is not a paused operation.
+        assert_eq!(cli.pending_op(&repo).unwrap(), "none");
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn a_conflicting_rebase_stops_and_stays_recoverable() {
+        // Both branches edit the same file, so the replay cannot apply cleanly.
+        let repo = temp_repo("rebase-conflict");
+        let cli = GitCli::new();
+        git_in(&repo, &["checkout", "-q", "-b", "base"]);
+        git_in(&repo, &["checkout", "-q", "-b", "topic"]);
+        commit_file(&repo, "f.txt", "topic\n", "topic edit");
+        let tip = rev_parse(&repo, "topic");
+        git_in(&repo, &["checkout", "-q", "base"]);
+        commit_file(&repo, "f.txt", "base\n", "base edit");
+
+        // The error is git's; what matters is that the rebase is left in
+        // progress for the conflict banner rather than silently half-done.
+        assert!(cli.rebase(&repo, "base", Some("topic")).is_err());
+        assert_eq!(cli.pending_op(&repo).unwrap(), "rebase");
+
+        cli.op_abort(&repo, "rebase").unwrap();
+        assert_eq!(cli.pending_op(&repo).unwrap(), "none");
+        assert_eq!(rev_parse(&repo, "topic"), tip);
+
+        let _ = fs::remove_dir_all(&repo);
     }
 
     #[test]

@@ -13,6 +13,8 @@
   } from "$lib/workingCopy";
   import { enterGraphView, selectBranchInGraph } from "$lib/commitHistory";
   import { requestCheckout } from "$lib/checkout";
+  import { openRebasePlan, requestRebase } from "$lib/rebase";
+  import { requestPush } from "$lib/push";
   import { confirmAction } from "$lib/dialogs";
   import RefIcon from "./RefIcon.svelte";
   import type { Branch } from "$lib/types";
@@ -279,6 +281,39 @@
     else if (ed.kind === "rename") void run(renameBranch(repoPath, ed.branch, v));
   }
 
+  // ── Rebase ───────────────────────────────────────────────────────────────
+  // Two ways in, one meaning: the ref you point at is the target the commits
+  // land on. A drag names both ends, so dropping A on B replays A; a right-
+  // click names only the target, so the menu on B replays the current branch.
+  let dragBranch = $state<string | null>(null);
+  let dropTarget = $state<string | null>(null);
+
+  function canDrop(ref: Branch): boolean {
+    return dragBranch !== null && dragBranch !== ref.name;
+  }
+  function endDrag() {
+    dragBranch = null;
+    dropTarget = null;
+  }
+  function onDrop(ref: Branch) {
+    const branch = dragBranch;
+    endDrag();
+    if (!branch || branch === ref.name) return;
+    void requestRebase(repoPath, ref.name, branch);
+  }
+  function doPush(ref: Branch, force: boolean) {
+    menu = null;
+    void requestPush(repoPath, ref.name, force);
+  }
+
+  function doRebase(ref: Branch, interactive: boolean) {
+    menu = null;
+    if (!current) return;
+    void (interactive
+      ? openRebasePlan(repoPath, ref.name, null)
+      : requestRebase(repoPath, ref.name, null));
+  }
+
   // ── Context menu ────────────────────────────────────────────────────────
   let menu = $state<{ x: number; y: number; ref: Branch } | null>(null);
   function openMenu(e: MouseEvent, ref: Branch) {
@@ -314,13 +349,38 @@
     type="button"
     class="ref"
     class:current={ref.name === current}
+    class:droptarget={dropTarget === ref.name}
     style="padding-left: {8 + depth * 14}px"
+    draggable={ref.kind === "local"}
+    ondragstart={(e) => {
+      dragBranch = ref.name;
+      // Chromium starts a drag without payload, but setting one keeps the
+      // cursor and drop semantics right (and is required by other engines).
+      e.dataTransfer?.setData("text/plain", ref.name);
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    }}
+    ondragend={endDrag}
+    ondragover={(e) => {
+      if (!canDrop(ref)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      dropTarget = ref.name;
+    }}
+    ondragleave={() => {
+      if (dropTarget === ref.name) dropTarget = null;
+    }}
+    ondrop={(e) => {
+      e.preventDefault();
+      onDrop(ref);
+    }}
     onclick={() => onRefClick(ref)}
     ondblclick={() => onRefDblClick(ref)}
     oncontextmenu={(e) => openMenu(e, ref)}
-    title={appState.appMode === "history"
-      ? "Click to reveal in graph · double-click to checkout · right-click for actions"
-      : "Double-click to checkout · right-click for actions"}
+    title={dragBranch && canDrop(ref)
+      ? `Drop to rebase ${dragBranch} onto ${ref.name}`
+      : appState.appMode === "history"
+        ? "Click to reveal in graph · double-click to checkout · drag a branch onto another ref to rebase · right-click for actions"
+        : "Double-click to checkout · drag a branch onto another ref to rebase · right-click for actions"}
   >
     <RefIcon kind={ref.kind} />
     <span class="name">{name}</span>
@@ -529,7 +589,21 @@
     >
       New branch from here…
     </button>
+    {#if current && ref.name !== current}
+      <button type="button" role="menuitem" onclick={() => doRebase(ref, false)}>
+        Rebase {current} onto {ref.name}
+      </button>
+      <button type="button" role="menuitem" onclick={() => doRebase(ref, true)}>
+        Rebase {current} onto {ref.name}… (plan)
+      </button>
+    {/if}
     {#if ref.kind === "local"}
+      <button type="button" role="menuitem" onclick={() => doPush(ref, false)}>
+        Push
+      </button>
+      <button type="button" role="menuitem" onclick={() => doPush(ref, true)}>
+        Force push (with lease)…
+      </button>
       <button
         type="button"
         role="menuitem"
@@ -777,6 +851,11 @@
   }
   .ref:hover {
     background: var(--hover);
+  }
+  /* The ref a dragged branch would be rebased onto. */
+  .ref.droptarget {
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
   .ref.current {
     color: var(--accent);

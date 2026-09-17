@@ -7,7 +7,8 @@ use std::path::Path;
 
 use git::{
     Blame, Branch, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions, DiffMode,
-    FileDiff, FileStatus, GitCli, GitError, GitLayer, ReflogEntry, RepoStatus, SubmoduleInfo,
+    FileDiff, FileStatus, GitCli, GitError, GitLayer, RebaseStep, ReflogEntry, RepoStatus,
+    SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
@@ -239,18 +240,64 @@ async fn pull(state: tauri::State<'_, GitCli>, path: String) -> Result<(), GitEr
 }
 
 #[tauri::command]
+async fn push(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    branch: String,
+    force: bool,
+) -> Result<(), GitError> {
+    state.push(Path::new(&path), &branch, force)
+}
+
+#[tauri::command]
+async fn rebase_plan(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    upstream: String,
+    branch: String,
+) -> Result<Vec<Commit>, GitError> {
+    state.rebase_plan(Path::new(&path), &upstream, &branch)
+}
+
+#[tauri::command]
+async fn rebase(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    upstream: String,
+    branch: Option<String>,
+) -> Result<bool, GitError> {
+    state.rebase(Path::new(&path), &upstream, branch.as_deref())
+}
+
+#[tauri::command]
+async fn rebase_interactive(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    upstream: String,
+    branch: Option<String>,
+    steps: Vec<RebaseStep>,
+) -> Result<bool, GitError> {
+    state.rebase_interactive(Path::new(&path), &upstream, branch.as_deref(), &steps)
+}
+
+#[tauri::command]
 async fn pending_op(state: tauri::State<'_, GitCli>, path: String) -> Result<String, GitError> {
     state.pending_op(Path::new(&path))
 }
 
 #[tauri::command]
-async fn op_abort(state: tauri::State<'_, GitCli>, path: String, op: String) -> Result<(), GitError> {
+async fn op_abort(state: tauri::State<'_, GitCli>, path: String, op: String) -> Result<bool, GitError> {
     state.op_abort(Path::new(&path), &op)
 }
 
 #[tauri::command]
-async fn op_continue(state: tauri::State<'_, GitCli>, path: String, op: String) -> Result<(), GitError> {
+async fn op_continue(state: tauri::State<'_, GitCli>, path: String, op: String) -> Result<bool, GitError> {
     state.op_continue(Path::new(&path), &op)
+}
+
+#[tauri::command]
+async fn op_skip(state: tauri::State<'_, GitCli>, path: String, op: String) -> Result<bool, GitError> {
+    state.op_skip(Path::new(&path), &op)
 }
 
 #[tauri::command]
@@ -520,9 +567,14 @@ pub fn run() {
             reflog,
             fetch,
             pull,
+            push,
+            rebase_plan,
+            rebase,
+            rebase_interactive,
             pending_op,
             op_abort,
             op_continue,
+            op_skip,
             blame_file,
             file_revisions,
             timelapse_frame,

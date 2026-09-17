@@ -12,6 +12,7 @@ import type {
   FileStatus,
   FileViewMode,
   PersistedState,
+  RebaseStep,
   ReflogEntry,
   RepoStatus,
   SubmoduleInfo,
@@ -166,11 +167,66 @@ export function fetch(path: string): Promise<void> {
 }
 
 /**
- * Pull the current branch (fetch + merge). riff never rebases — rewriting
- * local history is outside its write surface.
+ * Pull the current branch (fetch + merge). Never `--rebase`: an implicit
+ * history rewrite hiding inside Pull is not the same thing as the explicit
+ * Rebase command below.
  */
 export function pull(path: string): Promise<void> {
   return invoke("pull", { path });
+}
+
+/**
+ * Publish `branch` to its upstream, or to the repo's remote with `-u` when it
+ * has none. `force` is always leased (`--force-with-lease --force-if-includes`)
+ * — riff has no unleashed force.
+ */
+export function push(
+  path: string,
+  branch: string,
+  force: boolean,
+): Promise<void> {
+  return invoke("push", { path, branch, force });
+}
+
+/**
+ * The commits a rebase onto `upstream` would replay, oldest first — git's own
+ * todo selection, so the plan editor shows what will actually happen. `branch`
+ * empty means the current branch.
+ */
+export function rebasePlan(
+  path: string,
+  upstream: string,
+  branch: string,
+): Promise<Commit[]> {
+  return invoke("rebase_plan", { path, upstream, branch });
+}
+
+/**
+ * Replay `branch` (null = the current branch) onto `upstream`. Rewrites the
+ * branch's commits; the old tip stays in the reflog. Local changes are stashed
+ * by git and restored when the rebase ends. A conflict rejects with git's
+ * message and leaves the rebase in progress for the conflict banner.
+ *
+ * Resolves to true when that restore itself hit conflicts — the rebase
+ * succeeded, but the working tree needs the user. Same for the op_* calls
+ * below, which is where a stopped rebase reaches its end.
+ */
+export function rebase(
+  path: string,
+  upstream: string,
+  branch: string | null,
+): Promise<boolean> {
+  return invoke("rebase", { path, upstream, branch });
+}
+
+/** Like `rebase`, but replays the plan the user assembled (`git rebase -i`). */
+export function rebaseInteractive(
+  path: string,
+  upstream: string,
+  branch: string | null,
+  steps: RebaseStep[],
+): Promise<boolean> {
+  return invoke("rebase_interactive", { path, upstream, branch, steps });
 }
 
 /** The in-progress op: "merge" | "rebase" | "cherry-pick" | "revert" | "none". */
@@ -179,13 +235,18 @@ export function pendingOp(path: string): Promise<string> {
 }
 
 /** Abort the in-progress operation. */
-export function opAbort(path: string, op: string): Promise<void> {
+export function opAbort(path: string, op: string): Promise<boolean> {
   return invoke("op_abort", { path, op });
 }
 
 /** Continue the in-progress operation (after resolving + staging conflicts). */
-export function opContinue(path: string, op: string): Promise<void> {
+export function opContinue(path: string, op: string): Promise<boolean> {
   return invoke("op_continue", { path, op });
+}
+
+/** Drop the commit the operation stopped on and carry on (`--skip`). */
+export function opSkip(path: string, op: string): Promise<boolean> {
+  return invoke("op_skip", { path, op });
 }
 
 /**

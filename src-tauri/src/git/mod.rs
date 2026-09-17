@@ -12,6 +12,7 @@ pub use blame::{Blame, BlameCommit};
 pub use cli::GitCli;
 pub use diff::Change;
 pub use error::GitError;
+pub use write::REBASE_TODO_FLAG;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Branch {
@@ -148,6 +149,29 @@ pub struct ConflictVersions {
     pub binary: bool,
 }
 
+/// One line of a `git rebase -i` todo list, as assembled in the rebase plan
+/// editor. `sha` is the commit the line acts on; the UI sends the steps in the
+/// order they should be replayed (oldest first, git's own todo order).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebaseStep {
+    pub action: RebaseAction,
+    pub sha: String,
+}
+
+/// The todo verbs riff writes. `reword` is deliberately absent: it opens git's
+/// message editor, and riff has no commit-message surface — a squash keeps
+/// git's default combined message instead. `edit` stops the rebase at that
+/// commit, which the conflict banner then drives (Continue / Skip / Abort).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RebaseAction {
+    Pick,
+    Squash,
+    Fixup,
+    Edit,
+    Drop,
+}
+
 /// Submodule entry as declared in `.gitmodules`. `initialized` is true when
 /// the submodule's working tree has been checked out (i.e. `<repo>/<path>/.git`
 /// exists). Used by the multi-root workspace (§13) to populate the repo list.
@@ -251,12 +275,15 @@ pub enum FileDiff {
 /// (`GitCli::run` and friends) are module-private to `git`, so nothing outside
 /// the module can issue a git command except through this trait.
 ///
-/// riff writes in exactly five ways: create a branch, rename a branch, delete a
-/// branch, checkout, and fetch/pull. The one exception is conflict resolution,
-/// which cleans up the state riff's own pull created. Every one of those writes
-/// lives in `git/write.rs`. Committing, publishing, stashing, and rewriting
-/// history are deliberately absent — see
-/// docs/superpowers/specs/2026-08-12-vcs-scope-reduction-design.md.
+/// riff writes in exactly seven ways: create a branch, rename a branch, delete
+/// a branch, checkout, fetch/pull, rebase, and push. The one exception is
+/// conflict resolution, which cleans up the state riff's own pull or rebase
+/// created. Every one of those writes lives in `git/write.rs`. Committing,
+/// stashing as a feature of its own, and reset are deliberately absent — the
+/// only stash riff takes is the one `git rebase --autostash` puts back by
+/// itself. See
+/// docs/superpowers/specs/2026-08-12-vcs-scope-reduction-design.md and its
+/// amendment, docs/superpowers/specs/2026-09-14-rebase-design.md.
 pub trait GitLayer {
     /// Confirm `path` is inside a work tree and return that work tree's root.
     /// git accepts any subdirectory, but every path git reports back is
@@ -375,14 +402,51 @@ pub trait GitLayer {
     /// ever merge-pulls: `--rebase` would rewrite local history, which is
     /// outside its write surface. Conflicts surface as an error.
     fn pull(&self, path: &Path) -> Result<(), GitError>;
+    /// Publish `branch` to its upstream — or, when it has none, to the repo's
+    /// remote, recording it as the upstream (`git push -u`). `force` pushes
+    /// with a lease (`--force-with-lease --force-if-includes`), the only force
+    /// riff has: it refuses unless the remote is still where riff last saw it
+    /// and the local branch was built on that. Rebase is what makes it
+    /// necessary — a replayed branch can only go back up by overwriting.
+    fn push(&self, path: &Path, branch: &str, force: bool) -> Result<(), GitError>;
+    /// The commits `git rebase <upstream> <branch>` would replay, oldest first
+    /// — the same selection git's own todo list makes, so the plan editor shows
+    /// what will actually happen (merges skipped, commits already applied
+    /// upstream dropped). `branch` empty means HEAD. Read-only.
+    fn rebase_plan(&self, path: &Path, upstream: &str, branch: &str)
+        -> Result<Vec<Commit>, GitError>;
+    /// Replay `branch` (HEAD when None) onto `upstream` — `git rebase
+    /// --autostash`. This rewrites the branch's commits; the pre-rebase tip
+    /// stays recoverable through the reflog. Local changes are set aside and
+    /// restored by git itself. Conflicts leave the rebase in progress and
+    /// surface as an error, exactly like a conflicted pull.
+    ///
+    /// Returns true when the restored autostash landed in conflicts — the
+    /// rebase succeeded, but the working tree needs the user (see
+    /// `write::autostash_conflicted`). The same is true of the `op_*` methods
+    /// below, which is where a *stopped* rebase reaches its end.
+    fn rebase(&self, path: &Path, upstream: &str, branch: Option<&str>) -> Result<bool, GitError>;
+    /// Like `rebase`, but replays `steps` — the plan the user assembled in the
+    /// todo editor (reorder / squash / fixup / edit / drop) — instead of a
+    /// straight pick of every commit.
+    fn rebase_interactive(
+        &self,
+        path: &Path,
+        upstream: &str,
+        branch: Option<&str>,
+        steps: &[RebaseStep],
+    ) -> Result<bool, GitError>;
     /// The in-progress operation, if any: "merge" | "rebase" | "cherry-pick" |
     /// "revert" | "none". Drives the conflict banner.
     fn pending_op(&self, path: &Path) -> Result<String, GitError>;
     /// Abort the in-progress `op` (`git <op> --abort`).
-    fn op_abort(&self, path: &Path, op: &str) -> Result<(), GitError>;
+    fn op_abort(&self, path: &Path, op: &str) -> Result<bool, GitError>;
+    /// Drop the commit the in-progress `op` stopped on and carry on
+    /// (`git <op> --skip`). Not valid for a merge, which has no such step.
+    fn op_skip(&self, path: &Path, op: &str) -> Result<bool, GitError>;
     /// Continue the in-progress `op` after conflicts are resolved + staged
     /// (editor suppressed so it can't hang).
-    fn op_continue(&self, path: &Path, op: &str) -> Result<(), GitError>;
+    fn op_continue(&self, path: &Path, op: &str) -> Result<bool, GitError>;
     /// List every tracked file in the repo (`git ls-files -s -z`), filtering
     /// out gitlink entries (mode 160000) so submodule paths don't surface to
     /// the blame file picker — `git blame` doesn't work on them.

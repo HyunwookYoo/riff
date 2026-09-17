@@ -199,6 +199,30 @@ export interface ConflictVersions {
   binary: boolean;
 }
 
+/// What a rebase plan does with one commit. Mirrors Rust `RebaseAction`.
+/// `reword` is absent on purpose: it opens git's message editor, and riff has
+/// no commit-message surface.
+export type RebaseAction = "pick" | "squash" | "fixup" | "edit" | "drop";
+
+/// One line of a `git rebase -i` todo. Mirrors Rust `RebaseStep`. Sent in the
+/// order the commits should be replayed — oldest first, as git writes them.
+export interface RebaseStep {
+  action: RebaseAction;
+  sha: string;
+}
+
+/// The rebase the plan editor is open on: what it would replay (`commits`,
+/// oldest first, straight from `rebase_plan`) and where. `branch` is null when
+/// the rebase runs on the current branch; `label` is the human form of
+/// "<branch> onto <target>" the overlay titles itself with. Session-only.
+export interface RebasePlan {
+  repoPath: string;
+  upstream: string;
+  branch: string | null;
+  label: string;
+  commits: Commit[];
+}
+
 /// One HEAD reflog entry. Mirrors Rust `ReflogEntry`. `selector` is the
 /// `HEAD@{N}` form; `subject` is git's reflog message (e.g. `commit: …`,
 /// `reset: moving to …`); `time` is when the reflog entry was written — i.e.

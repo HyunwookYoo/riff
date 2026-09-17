@@ -9,6 +9,7 @@ import type {
   CompareMode,
   DiffMode,
   FileViewMode,
+  RebasePlan,
   RepoEntry,
   RepoFile,
   RepoStatus,
@@ -169,6 +170,10 @@ class AppState {
   shortcutsOpen = $state(false);
   // Reflog recovery panel visibility. Session-only.
   reflogOpen = $state(false);
+  // The rebase plan editor's contents while it is open; null when closed.
+  // Holding the whole plan here (not just a flag) keeps the overlay a pure
+  // renderer of one already-loaded plan. Session-only.
+  rebasePlan = $state<RebasePlan | null>(null);
   // Graph "new branch here": remembers the "check out after creating" checkbox
   // across creates within the session (sticky). Default off. Session-only.
   graphCheckoutAfterCreate = $state(false);

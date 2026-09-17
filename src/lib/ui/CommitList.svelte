@@ -15,6 +15,7 @@
   } from "$lib/workingCopy";
   import { createBranch } from "$lib/git";
   import { requestCheckout } from "$lib/checkout";
+  import { openRebasePlan, requestRebase } from "$lib/rebase";
   import { reloadBranchesFor } from "$lib/workspace";
   import type { Commit } from "$lib/types";
   import { computeGraph } from "./graph";
@@ -73,6 +74,31 @@
     } finally {
       appState.endGitOp();
     }
+  }
+
+  // ── Rebase ────────────────────────────────────────────────────────
+  // Same rule as the sidebar: the commit you point at is where the replay
+  // lands. Dragging a branch badge onto a row replays that branch; the row's
+  // menu replays the current branch, which is all a right-click can name.
+  let dragBranch = $state<string | null>(null);
+  let dropSha = $state<string | null>(null);
+
+  function endDrag() {
+    dragBranch = null;
+    dropSha = null;
+  }
+  function onDropOnCommit(sha: string) {
+    const branch = dragBranch;
+    endDrag();
+    if (!branch) return;
+    void requestRebase(changesRepoPath(), sha, branch);
+  }
+  function doRebase(sha: string, interactive: boolean) {
+    menu = null;
+    const p = changesRepoPath();
+    void (interactive
+      ? openRebasePlan(p, sha, null)
+      : requestRebase(p, sha, null));
   }
 
   // Right-click context menu on a commit.
@@ -362,8 +388,22 @@
         class="row"
         class:selected={commit.sha === appState.selectedCommitSha}
         class:wip={isWip}
+        class:droptarget={dropSha === commit.sha}
         data-sha={commit.sha}
         style="height: {ROW_H}px; font-size: {(ROW_H / 40).toFixed(3)}em;"
+        ondragover={(e) => {
+          if (!dragBranch || isWip) return;
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+          dropSha = commit.sha;
+        }}
+        ondragleave={() => {
+          if (dropSha === commit.sha) dropSha = null;
+        }}
+        ondrop={(e) => {
+          e.preventDefault();
+          onDropOnCommit(commit.sha);
+        }}
         onclick={() => {
           if (isWip) {
             void enterChangesMode();
@@ -413,9 +453,17 @@
                   style={row ? `--c: ${color(row.color)}` : ""}
                   role="button"
                   tabindex="0"
+                  draggable="true"
+                  ondragstart={(e) => {
+                    e.stopPropagation();
+                    dragBranch = b.checkout;
+                    e.dataTransfer?.setData("text/plain", b.checkout);
+                    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+                  }}
+                  ondragend={endDrag}
                   title={b.remotes.length
-                    ? `${b.text} · local + ${b.remotes.join(", ")} — double-click to check out`
-                    : `Double-click to check out ${b.text}`}
+                    ? `${b.text} · local + ${b.remotes.join(", ")} — double-click to check out, drag onto a commit to rebase`
+                    : `Double-click to check out ${b.text} · drag onto a commit to rebase`}
                   onclick={(e) => e.stopPropagation()}
                   ondblclick={(e) => {
                     e.stopPropagation();
@@ -432,9 +480,19 @@
               {:else if b.kind === "head"}
                 <span
                   class="ref head"
+                  role="button"
+                  tabindex="0"
+                  draggable="true"
+                  ondragstart={(e) => {
+                    e.stopPropagation();
+                    dragBranch = b.checkout;
+                    e.dataTransfer?.setData("text/plain", b.checkout);
+                    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+                  }}
+                  ondragend={endDrag}
                   title={b.remotes.length
-                    ? `${b.text} · local + ${b.remotes.join(", ")}`
-                    : b.text}
+                    ? `${b.text} · local + ${b.remotes.join(", ")} — drag onto a commit to rebase`
+                    : `${b.text} — drag onto a commit to rebase`}
                 >
                   <span class="check" aria-hidden="true">✓</span>{b.text}{#if b.remotes.length}<RefIcon
                       kind="remote"
@@ -490,6 +548,14 @@
     <button type="button" role="menuitem" onclick={() => doCheckout(sha)}>
       Checkout (detached)
     </button>
+    {#if appState.currentBranch}
+      <button type="button" role="menuitem" onclick={() => doRebase(sha, false)}>
+        Rebase {appState.currentBranch} onto {sha.slice(0, 7)}
+      </button>
+      <button type="button" role="menuitem" onclick={() => doRebase(sha, true)}>
+        Rebase {appState.currentBranch} onto {sha.slice(0, 7)}… (plan)
+      </button>
+    {/if}
   </div>
 {/if}
 
@@ -601,6 +667,11 @@
   .row.selected {
     background: var(--accent-soft);
     box-shadow: inset 2px 0 0 var(--accent);
+  }
+  /* The commit a dragged branch badge would be rebased onto. */
+  .row.droptarget {
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
   .graph {
     display: block;

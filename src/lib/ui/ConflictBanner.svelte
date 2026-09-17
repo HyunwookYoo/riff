@@ -5,6 +5,7 @@
     conflictCount,
     continueOp,
     enterConflictResolution,
+    skipOp,
   } from "$lib/workingCopy";
 
   const label = $derived(
@@ -19,6 +20,9 @@
   );
   // Unmerged (conflicted) files, when the status is loaded for this repo.
   const unresolved = $derived(conflictCount());
+  // A merge is a single step with nothing to skip past; the sequencer ops can
+  // drop the commit they stopped on and carry on.
+  const skippable = $derived(appState.pendingOp !== "merge");
 </script>
 
 {#if appState.pendingOp !== "none"}
@@ -52,6 +56,16 @@
     >
       Continue
     </button>
+    {#if skippable}
+      <button
+        type="button"
+        class="skip"
+        title="Leave out the commit this stopped on and carry on"
+        onclick={() => void skipOp()}
+      >
+        Skip
+      </button>
+    {/if}
     <button type="button" class="abort" onclick={() => void abortOp()}>
       Abort
     </button>

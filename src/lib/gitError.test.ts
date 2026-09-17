@@ -22,6 +22,25 @@ Aborting`;
 const PULL_REBASE_DIRTY = `error: cannot pull with rebase: You have unstaged changes.
 error: Please commit or stash them.`;
 
+// Rebase's own refusals, verified against git 2.43.0.windows.1.
+const REBASE_DIRTY = `error: cannot rebase: You have unstaged changes.
+error: Please commit or stash them.`;
+
+const REBASE_STAGED = `error: cannot rebase: Your index contains uncommitted changes.
+error: Please commit or stash them.`;
+
+// The three `git push` rejections, as git prints them.
+const PUSH_NON_FF = ` ! [rejected]        main -> main (fetch first)
+error: failed to push some refs to '../remote.git'
+hint: Updates were rejected because the remote contains work that you do not
+hint: have locally.`;
+
+const PUSH_STALE = ` ! [rejected]        main -> main (stale info)
+error: failed to push some refs to '../remote.git'`;
+
+const PUSH_NOT_INCLUDED = ` ! [rejected]        main -> main (remote ref updated since checkout)
+error: failed to push some refs to '../remote.git'`;
+
 const AUTH_FAIL = `fatal: Authentication failed for 'https://example.com/repo.git/'`;
 const DIVERGENT = `fatal: Need to specify how to reconcile divergent branches.`;
 
@@ -40,6 +59,22 @@ describe("classifyGitError", () => {
 
   it("classifies a dirty rebase-pull as local-changes-blocked", () => {
     expect(classifyGitError(PULL_REBASE_DIRTY).kind).toBe("local-changes-blocked");
+  });
+
+  it("classifies a rebase blocked by unstaged changes", () => {
+    expect(classifyGitError(REBASE_DIRTY).kind).toBe("local-changes-blocked");
+  });
+
+  it("classifies a rebase blocked by a dirty index", () => {
+    expect(classifyGitError(REBASE_STAGED).kind).toBe("local-changes-blocked");
+  });
+
+  it("tells the three push rejections apart", () => {
+    expect(classifyGitError(PUSH_NON_FF).kind).toBe("push-rejected-non-ff");
+    expect(classifyGitError(PUSH_STALE).kind).toBe("push-rejected-stale");
+    expect(classifyGitError(PUSH_NOT_INCLUDED).kind).toBe(
+      "push-rejected-not-included",
+    );
   });
 
   it("leaves auth failures unknown (no false recovery)", () => {

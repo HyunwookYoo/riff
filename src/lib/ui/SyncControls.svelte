@@ -1,9 +1,17 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { doFetch, doPull } from "$lib/workingCopy";
+  import { changesRepoPath, doFetch, doPull } from "$lib/workingCopy";
+  import { requestPush } from "$lib/push";
 
   const busy = $derived(appState.syncing);
   const behind = $derived(appState.currentBehind);
+  // Commits this branch has that its upstream doesn't. A branch with no
+  // upstream reads 0 — the first push is what creates one, so the button stays
+  // available and says so.
+  const ahead = $derived(appState.currentAhead);
+  const unpublished = $derived(
+    !!appState.currentBranch && !appState.currentUpstream,
+  );
 </script>
 
 {#if appState.repoPath}
@@ -26,6 +34,18 @@
       onclick={() => void doPull()}
     >
       ↓ Pull{#if behind}&nbsp;{behind}{/if}
+    </button>
+
+    <button
+      type="button"
+      class="sbtn"
+      disabled={busy || !appState.currentBranch}
+      title={unpublished
+        ? `Publish ${appState.currentBranch} to the remote and track it`
+        : "Push the current branch to its upstream"}
+      onclick={() => void requestPush(changesRepoPath(), null, false)}
+    >
+      ↑ {unpublished ? "Publish" : "Push"}{#if ahead}&nbsp;{ahead}{/if}
     </button>
   </div>
 {/if}
