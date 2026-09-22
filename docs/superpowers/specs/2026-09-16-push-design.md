@@ -37,7 +37,7 @@ screen — the exact state v2.0.0 removed.
 
 | Surface | What |
 |---|---|
-| Sync toolbar (`SyncControls.svelte`) | `↑ Push N` for the current branch, N = commits ahead of upstream. Reads `↑ Publish` when the branch has no upstream yet. |
+| Sync toolbar (`SyncControls.svelte`) | A split button: `↑ Push N` for the current branch (N = commits ahead of upstream, reading `↑ Publish` when it has no upstream yet), plus a `▾` half opening `Push` / `Force push (with lease)…`. The wide half is always the ordinary push, so force takes a deliberate second click; the force item is disabled while the branch has no upstream, since there is nothing to replace. |
 | Branch sidebar right-click, local branches (`RefsSidebar.svelte`) | `Push`, `Force push (with lease)…` — including branches that are not checked out |
 
 Pushing a branch you are not on is the reason every push uses an explicit
