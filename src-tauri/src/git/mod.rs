@@ -119,6 +119,20 @@ pub struct RepoStatus {
     pub behind: i64,
 }
 
+/// Branch identity for the toolbar chip and the refs sidebar: which branch is
+/// checked out, what it tracks, and how far apart the two are. Deliberately
+/// *not* a `RepoStatus`: that answer requires walking every file in the work
+/// tree (and every submodule), which is the wrong price for a question about
+/// refs. `branch` is None on a detached HEAD, `upstream` None when the branch
+/// tracks nothing (both counts are then 0).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BranchStatus {
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: i64,
+    pub behind: i64,
+}
+
 /// One entry from HEAD's reflog. `selector` is the `HEAD@{N}` form; `subject`
 /// is git's reflog message (e.g. `commit: fix login`, `reset: moving to
 /// HEAD~3`); `time` is when the reflog entry was written — i.e. when HEAD
@@ -402,6 +416,10 @@ pub trait GitLayer {
     /// ever merge-pulls: `--rebase` would rewrite local history, which is
     /// outside its write surface. Conflicts surface as an error.
     fn pull(&self, path: &Path) -> Result<(), GitError>;
+    /// Branch name, upstream, and ahead/behind for `path` — the same four
+    /// fields `status` reports, read from refs alone. Read-only. Everything
+    /// that only needs the branch chip should call this instead of `status`.
+    fn branch_status(&self, path: &Path) -> Result<BranchStatus, GitError>;
     /// Publish `branch` to its upstream — or, when it has none, to the repo's
     /// remote, recording it as the upstream (`git push -u`). `force` pushes
     /// with a lease (`--force-with-lease --force-if-includes`), the only force

@@ -1,11 +1,11 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import {
+    branchStatus,
     createBranch,
     deleteBranch,
     listRefs,
     renameBranch,
-    status,
   } from "$lib/git";
   import {
     enterChangesMode,
@@ -38,12 +38,10 @@
   let behind = $state(0);
   let changeCount = $state(0); // uncommitted files, for the Working nav badge
   let busy = $state(false);
-  // A load runs `git for-each-ref` and, outside Changes, `git status` — which
-  // on a big worktree walks every submodule and takes tens of seconds. The
-  // watcher can bump refsRefresh again well before that returns, so serialize:
-  // one load in flight, later requests fold into a single trailing load.
-  // Without this the sidebar spawns its own accumulating pile of git processes
-  // alongside the Changes refresh (see repoWatch.ts for the same guard).
+  // A load runs `git for-each-ref` plus, outside Changes, a ref-only branch
+  // read. Both are cheap now, but the watcher can still bump refsRefresh again
+  // before one returns, so serialize: one load in flight, later requests fold
+  // into a single trailing load (see repoWatch.ts for the same guard).
   let loading = false;
   let queued = false;
 
@@ -74,10 +72,16 @@
       // In Changes the sidebar tracks the repo the screen acts on
       // (repoIdx === changesRepoIdx), and loadStatus() has just read exactly
       // this status — running `git status` again here would double the cost
-      // for identical data.
+      // for identical data. Everywhere else the sidebar needs the branch and
+      // its ahead/behind, which `branchStatus` answers from refs alone: a
+      // second full working-tree walk per refresh, in modes that show no file
+      // list at all, is what this view used to cost.
       const shared =
         appState.appMode === "changes" ? appState.repoStatus : null;
-      const [refs, st] = await Promise.all([listRefs(p), shared ?? status(p)]);
+      const [refs, st] = await Promise.all([
+        listRefs(p),
+        shared ?? branchStatus(p),
+      ]);
       branches = refs;
       // Keep the shared cache (used by the graph badge merge + checkout DWIM)
       // in sync with this freshly-listed set.
@@ -88,7 +92,15 @@
       current = st.branch;
       ahead = st.ahead;
       behind = st.behind;
-      changeCount = st.entries.length;
+      // Only a full status knows how many files changed. Outside Changes we
+      // show the last count read for this same repo rather than walking the
+      // tree again for a badge; a different repo gets no number instead of a
+      // wrong one.
+      changeCount = shared
+        ? shared.entries.length
+        : repoIdx === appState.changesRepoIdx
+          ? (appState.repoStatus?.entries.length ?? 0)
+          : 0;
     } catch {
       branches = [];
       current = null;

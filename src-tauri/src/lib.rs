@@ -6,9 +6,9 @@ pub mod watch;
 use std::path::Path;
 
 use git::{
-    Blame, Branch, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions, DiffMode,
-    FileDiff, FileStatus, GitCli, GitError, GitLayer, RebaseStep, ReflogEntry, RepoStatus,
-    SubmoduleInfo,
+    Blame, Branch, BranchStatus, ChangedFile, Commit, Containment, ContainmentDetail,
+    ConflictVersions, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer, RebaseStep,
+    ReflogEntry, RepoStatus, SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
@@ -237,6 +237,14 @@ async fn fetch(state: tauri::State<'_, GitCli>, path: String) -> Result<(), GitE
 #[tauri::command]
 async fn pull(state: tauri::State<'_, GitCli>, path: String) -> Result<(), GitError> {
     state.pull(Path::new(&path))
+}
+
+#[tauri::command]
+async fn branch_status(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+) -> Result<BranchStatus, GitError> {
+    state.branch_status(Path::new(&path))
 }
 
 #[tauri::command]
@@ -567,6 +575,7 @@ pub fn run() {
             reflog,
             fetch,
             pull,
+            branch_status,
             push,
             rebase_plan,
             rebase,

@@ -12,9 +12,9 @@ use super::blame::{parse_porcelain, Blame};
 use super::diff;
 use super::uasset;
 use super::{
-    Branch, BranchKind, ChangedFile, Commit, Containment, ContainmentDetail, ConflictVersions,
-    DiffMode, FileDiff, FileStatus, GitError, GitLayer, RebaseStep, ReflogEntry, RepoStatus,
-    StatusEntry, SubmoduleCommit, SubmoduleInfo,
+    Branch, BranchKind, BranchStatus, ChangedFile, Commit, Containment, ContainmentDetail,
+    ConflictVersions, DiffMode, FileDiff, FileStatus, GitError, GitLayer, RebaseStep, ReflogEntry,
+    RepoStatus, StatusEntry, SubmoduleCommit, SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -1623,6 +1623,51 @@ impl GitLayer for GitCli {
         self.pull_impl(path)
     }
 
+    fn branch_status(&self, path: &Path) -> Result<BranchStatus, GitError> {
+        // Read-only: no write_lock, no drop_session, and above all no
+        // `git status` — its porcelain walk visits every file in the work tree
+        // and recurses into every submodule to answer what these three ref
+        // lookups answer in milliseconds. The toolbar chip, the sidebar, and
+        // every post-op refresh ask this question constantly.
+        // `symbolic-ref` exits non-zero on a detached HEAD, which is the answer
+        // (None), not a failure; same for a branch that tracks nothing.
+        let branch = self
+            .run(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .ok()
+            .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+            .filter(|s| !s.is_empty());
+        let upstream = branch
+            .as_ref()
+            .and_then(|_| {
+                self.run(
+                    path,
+                    &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+                )
+                .ok()
+            })
+            .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+            .filter(|s| !s.is_empty());
+        // `<upstream>...HEAD` counts left (commits only upstream has → behind)
+        // and right (commits only HEAD has → ahead), matching what porcelain's
+        // `# branch.ab` header reports.
+        let (behind, ahead) = match upstream {
+            Some(_) => {
+                let out = self.run(
+                    path,
+                    &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+                )?;
+                parse_ahead_behind(&String::from_utf8_lossy(&out))
+            }
+            None => (0, 0),
+        };
+        Ok(BranchStatus {
+            branch,
+            upstream,
+            ahead,
+            behind,
+        })
+    }
+
     fn push(&self, path: &Path, branch: &str, force: bool) -> Result<(), GitError> {
         self.push_impl(path, branch, force)
     }
@@ -2808,6 +2853,52 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
             .output()
             .unwrap();
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn branch_status_matches_status_without_walking_the_tree() {
+        // Same four fields `status` reports — that equivalence is the whole
+        // reason the cheap read is allowed to stand in for the expensive one.
+        let repo = temp_repo("branch-status");
+        let bare = add_bare_remote(&repo, "branch-status");
+        let cli = GitCli::new();
+        let branch = current_branch(&repo);
+        cli.push(&repo, &branch, false).unwrap();
+        commit_file(&repo, "ahead.txt", "ahead
+", "ahead");
+        // An uncommitted file: present in `status`, irrelevant here.
+        fs::write(repo.join("dirty.txt"), "wip
+").unwrap();
+
+        let b = cli.branch_status(&repo).unwrap();
+        let st = cli.status(&repo).unwrap();
+
+        assert_eq!(b.branch, st.branch);
+        assert_eq!(b.upstream, st.upstream);
+        assert_eq!((b.ahead, b.behind), (st.ahead, st.behind));
+        assert_eq!(b.ahead, 1);
+        assert_eq!(b.upstream.as_deref(), Some(format!("origin/{branch}").as_str()));
+
+        let _ = fs::remove_dir_all(&repo);
+        let _ = fs::remove_dir_all(&bare);
+    }
+
+    #[test]
+    fn branch_status_reports_no_branch_on_a_detached_head() {
+        let repo = temp_repo("branch-status-detached");
+        let cli = GitCli::new();
+        commit_file(&repo, "a.txt", "a
+", "a");
+        let head = rev_parse(&repo, "HEAD");
+        git_in(&repo, &["checkout", "-q", "--detach", &head]);
+
+        let b = cli.branch_status(&repo).unwrap();
+
+        assert_eq!(b.branch, None);
+        assert_eq!(b.upstream, None);
+        assert_eq!((b.ahead, b.behind), (0, 0));
+
+        let _ = fs::remove_dir_all(&repo);
     }
 
     #[test]

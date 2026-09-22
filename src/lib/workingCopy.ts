@@ -1,5 +1,6 @@
 import { appState } from "./store.svelte";
 import {
+  branchStatus,
   fetch as fetchCmd,
   opAbort,
   opContinue,
@@ -249,14 +250,20 @@ export function openChange(entry: StatusEntry): void {
 /// Refresh just the current-branch indicator (name + ahead/behind) for the
 /// source-control repo, without touching the selected file. Called after
 /// branch ops (checkout, etc.) so the toolbar chip stays accurate.
+///
+/// Reads refs only (`branchStatus`), never `git status`. This runs after every
+/// checkout, pull, push, rebase and graph visit, and on every watcher refresh
+/// in History and Blame — modes that don't show a file list at all. Paying for
+/// a full working-tree walk (plus one per submodule) to refresh a branch name
+/// is what let mode-switching pile up git processes.
 export async function loadCurrentBranch(): Promise<void> {
   if (!appState.repoPath) return;
   try {
-    const st = await status(changesRepoPath());
-    appState.currentBranch = st.branch;
-    appState.currentUpstream = st.upstream;
-    appState.currentAhead = st.ahead;
-    appState.currentBehind = st.behind;
+    const b = await branchStatus(changesRepoPath());
+    appState.currentBranch = b.branch;
+    appState.currentUpstream = b.upstream;
+    appState.currentAhead = b.ahead;
+    appState.currentBehind = b.behind;
   } catch {
     // Keep the last known value.
   }

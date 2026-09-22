@@ -1,5 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { appState } from "./store.svelte";
+import { bumpEpoch } from "./inflight";
 import { loadPendingOp, refreshActiveView } from "./workingCopy";
 
 // Backend `repo-changed` events (already debounced ~300ms in Rust) drive the
@@ -53,5 +54,10 @@ async function runRefresh(): Promise<void> {
 /// git ops, file edits, in-app or not — refresh the active view live, so we no
 /// longer rescan on every window refocus. Returns an unlisten for teardown.
 export function initRepoWatch(): Promise<UnlistenFn> {
-  return listen("repo-changed", () => scheduleRefresh());
+  return listen("repo-changed", () => {
+    // The repo moved under us: reads in flight describe the old state, so no
+    // later caller may be answered by one (see inflight.ts).
+    bumpEpoch();
+    scheduleRefresh();
+  });
 }

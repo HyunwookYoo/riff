@@ -1,7 +1,9 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { bumpEpoch, share } from "./inflight";
 import type {
   Blame,
   Branch,
+  BranchStatus,
   ChangedFile,
   Commit,
   Containment,
@@ -19,6 +21,14 @@ import type {
   ThemeChoice,
   WorkspaceLayout,
 } from "./types";
+
+/// Mark a repo-changing call: reads started from here on must not be answered
+/// by a call that began before it. Bumped on both sides of the write, since the
+/// repo is already in motion while the command runs.
+function write<T>(run: () => Promise<T>): Promise<T> {
+  bumpEpoch();
+  return run().finally(bumpEpoch);
+}
 
 /// Resolves to the work tree root, which may differ from `path` when the user
 /// picked a subdirectory. Callers must use the returned path, not theirs —
@@ -99,17 +109,17 @@ export function createBranch(
   startPoint: string | null,
   checkout: boolean,
 ): Promise<void> {
-  return invoke("create_branch", { path, name, startPoint, checkout });
+  return write(() => invoke("create_branch", { path, name, startPoint, checkout }));
 }
 
 /** Switch the working tree to `refName` (`git checkout`). */
 export function checkout(path: string, refName: string): Promise<void> {
-  return invoke("checkout", { path, refName });
+  return write(() => invoke("checkout", { path, refName }));
 }
 
 /** Fast-forward the current branch to `refName` (`git merge --ff-only`). */
 export function fastForward(path: string, refName: string): Promise<void> {
-  return invoke("fast_forward", { path, refName });
+  return write(() => invoke("fast_forward", { path, refName }));
 }
 
 /** Read a conflicted file's base/ours/theirs index stages + working copy. */
@@ -126,7 +136,7 @@ export function resolveConflict(
   filePath: string,
   content: string,
 ): Promise<void> {
-  return invoke("resolve_conflict", { path, filePath, content });
+  return write(() => invoke("resolve_conflict", { path, filePath, content }));
 }
 
 /** Resolve a conflict by taking one whole side (`git checkout --ours|--theirs`). */
@@ -135,7 +145,7 @@ export function checkoutConflictSide(
   filePath: string,
   side: "ours" | "theirs",
 ): Promise<void> {
-  return invoke("checkout_conflict_side", { path, filePath, side });
+  return write(() => invoke("checkout_conflict_side", { path, filePath, side }));
 }
 
 /** Rename a branch. */
@@ -144,7 +154,7 @@ export function renameBranch(
   oldName: string,
   newName: string,
 ): Promise<void> {
-  return invoke("rename_branch", { path, old: oldName, new: newName });
+  return write(() => invoke("rename_branch", { path, old: oldName, new: newName }));
 }
 
 /** Delete a branch. `force` (-D) drops unmerged commits — confirm first. */
@@ -153,7 +163,7 @@ export function deleteBranch(
   name: string,
   force: boolean,
 ): Promise<void> {
-  return invoke("delete_branch", { path, name, force });
+  return write(() => invoke("delete_branch", { path, name, force }));
 }
 
 /** The 200 most recent HEAD reflog entries, newest first (`git reflog show`). */
@@ -163,7 +173,7 @@ export function reflog(path: string): Promise<ReflogEntry[]> {
 
 /** Fetch all remotes (`git fetch --all --prune`). */
 export function fetch(path: string): Promise<void> {
-  return invoke("fetch", { path });
+  return write(() => invoke("fetch", { path }));
 }
 
 /**
@@ -172,7 +182,7 @@ export function fetch(path: string): Promise<void> {
  * Rebase command below.
  */
 export function pull(path: string): Promise<void> {
-  return invoke("pull", { path });
+  return write(() => invoke("pull", { path }));
 }
 
 /**
@@ -185,7 +195,7 @@ export function push(
   branch: string,
   force: boolean,
 ): Promise<void> {
-  return invoke("push", { path, branch, force });
+  return write(() => invoke("push", { path, branch, force }));
 }
 
 /**
@@ -216,7 +226,7 @@ export function rebase(
   upstream: string,
   branch: string | null,
 ): Promise<boolean> {
-  return invoke("rebase", { path, upstream, branch });
+  return write(() => invoke("rebase", { path, upstream, branch }));
 }
 
 /** Like `rebase`, but replays the plan the user assembled (`git rebase -i`). */
@@ -226,7 +236,7 @@ export function rebaseInteractive(
   branch: string | null,
   steps: RebaseStep[],
 ): Promise<boolean> {
-  return invoke("rebase_interactive", { path, upstream, branch, steps });
+  return write(() => invoke("rebase_interactive", { path, upstream, branch, steps }));
 }
 
 /** The in-progress op: "merge" | "rebase" | "cherry-pick" | "revert" | "none". */
@@ -236,17 +246,17 @@ export function pendingOp(path: string): Promise<string> {
 
 /** Abort the in-progress operation. */
 export function opAbort(path: string, op: string): Promise<boolean> {
-  return invoke("op_abort", { path, op });
+  return write(() => invoke("op_abort", { path, op }));
 }
 
 /** Continue the in-progress operation (after resolving + staging conflicts). */
 export function opContinue(path: string, op: string): Promise<boolean> {
-  return invoke("op_continue", { path, op });
+  return write(() => invoke("op_continue", { path, op }));
 }
 
 /** Drop the commit the operation stopped on and carry on (`--skip`). */
 export function opSkip(path: string, op: string): Promise<boolean> {
-  return invoke("op_skip", { path, op });
+  return write(() => invoke("op_skip", { path, op }));
 }
 
 /**
@@ -307,7 +317,15 @@ export function commitContainmentDetail(
  * ahead/behind counts. Drives the source-control Changes screen.
  */
 export function status(path: string): Promise<RepoStatus> {
-  return invoke("status", { path });
+  // The porcelain walk visits every file (and every submodule): overlapping
+  // calls for one repo are pure waste, so they share one.
+  return share(`status|${path}`, () => invoke("status", { path }));
+}
+
+/// Branch name, upstream and ahead/behind, read from refs alone — no
+/// working-tree walk. Use this wherever only the branch chip matters.
+export function branchStatus(path: string): Promise<BranchStatus> {
+  return share(`branch_status|${path}`, () => invoke("branch_status", { path }));
 }
 
 /// Declare which repo roots the backend filesystem watcher observes. Submodules
@@ -351,16 +369,22 @@ export function fileDiff(
   force: boolean,
   ueVersion: string | null = null,
 ): Promise<FileDiff> {
-  return invoke("file_diff", {
-    path,
-    start,
-    target,
-    mode,
-    filePath,
-    oldPath,
-    force,
-    ueVersion,
-  });
+  // Re-rendered whenever the diff pane remounts (every mode switch) — and for
+  // an Unreal asset one call means two UAssetGUI runs.
+  return share(
+    `file_diff|${path}|${start}|${target}|${mode}|${filePath}|${oldPath}|${force}|${ueVersion}`,
+    () =>
+      invoke("file_diff", {
+        path,
+        start,
+        target,
+        mode,
+        filePath,
+        oldPath,
+        force,
+        ueVersion,
+      }),
+  );
 }
 
 
@@ -376,14 +400,18 @@ export function changesFileDiff(
   force: boolean,
   ueVersion: string | null = null,
 ): Promise<FileDiff> {
-  return invoke("changes_file_diff", {
-    path,
-    filePath,
-    oldPath,
-    status,
-    force,
-    ueVersion,
-  });
+  return share(
+    `changes_file_diff|${path}|${filePath}|${oldPath}|${status}|${force}|${ueVersion}`,
+    () =>
+      invoke("changes_file_diff", {
+        path,
+        filePath,
+        oldPath,
+        status,
+        force,
+        ueVersion,
+      }),
+  );
 }
 
 /**
@@ -396,7 +424,11 @@ export function changesFileDiff(
  * Returns a flat list of repo-relative paths in `git ls-files` order.
  */
 export function listRepoFiles(path: string): Promise<string[]> {
-  return invoke("list_repo_files", { path });
+  // `git ls-files` over a 200k-file worktree, asked for every repo when the
+  // blame picker opens.
+  return share(`list_repo_files|${path}`, () =>
+    invoke("list_repo_files", { path }),
+  );
 }
 
 /**
@@ -413,12 +445,14 @@ export function blameFile(
   rev: string,
   useContents: boolean,
 ): Promise<Blame> {
-  return invoke("blame_file", {
-    path,
-    filePath,
-    rev,
-    useContents,
-  });
+  return share(`blame_file|${path}|${filePath}|${rev}|${useContents}`, () =>
+    invoke("blame_file", {
+      path,
+      filePath,
+      rev,
+      useContents,
+    }),
+  );
 }
 
 /** Commits that touched `filePath` (newest first) — the file-timelapse timeline. */

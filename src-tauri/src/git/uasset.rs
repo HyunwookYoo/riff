@@ -11,10 +11,14 @@
 //! unversioned assets need a `.usmap` mappings file and are out of scope —
 //! they simply fail to parse and fall back to binary.
 
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
 
@@ -184,6 +188,87 @@ pub fn derive_filediff(
 }
 
 /// Run `UAssetGUI tojson` on one side's bytes and return the filtered JSON.
+/// Entries kept in the rendered-JSON cache, and the total JSON it may hold.
+/// Two per diff (old + new side), so a dozen entries spans several files'
+/// worth of back-and-forth.
+const RENDER_CACHE_ENTRIES: usize = 12;
+const RENDER_CACHE_BYTES: usize = 64 * 1024 * 1024;
+
+/// What a render actually depends on: the asset bytes, the sibling `.uexp`
+/// bytes (0 when there is none), and the engine version it was parsed with.
+type RenderKey = (u64, u64, String);
+
+/// Bounded LRU of rendered asset JSON.
+///
+/// Rendering a side costs a UAssetGUI process, two temp files, and seconds of
+/// work — and riff asks for the same side over and over: every return to the
+/// Changes screen re-mounts the diff view and re-derives both sides of the
+/// selected file, while the old side is a committed blob that cannot have
+/// changed at all. Keyed by content, so a cache hit is only ever the same
+/// bytes rendered the same way.
+#[derive(Default)]
+struct RenderCache {
+    map: HashMap<RenderKey, String>,
+    /// Least-recently-used first.
+    order: VecDeque<RenderKey>,
+    bytes: usize,
+}
+
+impl RenderCache {
+    fn get(&mut self, key: &RenderKey) -> Option<String> {
+        let hit = self.map.get(key)?.clone();
+        if let Some(i) = self.order.iter().position(|k| k == key) {
+            let k = self.order.remove(i).expect("index came from position");
+            self.order.push_back(k);
+        }
+        Some(hit)
+    }
+
+    fn put(&mut self, key: RenderKey, value: String) {
+        // A single render bigger than the whole budget would evict everything
+        // and still not fit — don't admit it.
+        if value.len() > RENDER_CACHE_BYTES {
+            return;
+        }
+        if let Some(old) = self.map.remove(&key) {
+            self.bytes -= old.len();
+            if let Some(i) = self.order.iter().position(|k| *k == key) {
+                self.order.remove(i);
+            }
+        }
+        self.bytes += value.len();
+        self.map.insert(key.clone(), value);
+        self.order.push_back(key);
+        while self.order.len() > RENDER_CACHE_ENTRIES || self.bytes > RENDER_CACHE_BYTES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(dropped) = self.map.remove(&oldest) {
+                self.bytes -= dropped.len();
+            }
+        }
+    }
+}
+
+fn render_cache() -> &'static Mutex<RenderCache> {
+    static CACHE: OnceLock<Mutex<RenderCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(RenderCache::default()))
+}
+
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    let mut h = DefaultHasher::new();
+    bytes.hash(&mut h);
+    h.finish()
+}
+
+fn render_key(asset_bytes: &[u8], uexp_bytes: Option<&[u8]>, engine_version: &str) -> RenderKey {
+    (
+        hash_bytes(asset_bytes),
+        uexp_bytes.map(hash_bytes).unwrap_or(0),
+        engine_version.to_string(),
+    )
+}
+
 fn render_side(
     tool: &str,
     tool_label: &str,
@@ -199,6 +284,13 @@ fn render_side(
         return Err(
             "Git LFS object isn't available locally — run `git lfs pull` and retry.".to_string(),
         );
+    }
+
+    // Only successful renders are cached: a failure is usually a missing or
+    // misconfigured tool, which the user is expected to fix and retry.
+    let key = render_key(asset_bytes, uexp_bytes, engine_version);
+    if let Some(hit) = render_cache().lock().unwrap().get(&key) {
+        return Ok(hit);
     }
 
     let dir = TempDir::new()?;
@@ -233,7 +325,9 @@ fn render_side(
 
     let raw = fs::read_to_string(&json_path)
         .map_err(|e| format!("read UAssetGUI output: {e}"))?;
-    filter_volatile(&raw)
+    let filtered = filter_volatile(&raw)?;
+    render_cache().lock().unwrap().put(key, filtered.clone());
+    Ok(filtered)
 }
 
 /// Reduce the tojson output to a content-focused view: keep only the
@@ -427,6 +521,73 @@ mod tests {
         assert_eq!(sibling_uexp("a.b.uasset").as_deref(), Some("a.b.uexp"));
         // no extension -> no sibling
         assert_eq!(sibling_uexp("noext"), None);
+    }
+
+    fn key(n: u64) -> RenderKey {
+        (n, 0, "5.3".to_string())
+    }
+
+    #[test]
+    fn render_cache_returns_what_it_stored() {
+        let mut c = RenderCache::default();
+        c.put(key(1), "json".into());
+        assert_eq!(c.get(&key(1)).as_deref(), Some("json"));
+        assert!(c.get(&key(2)).is_none());
+    }
+
+    #[test]
+    fn render_cache_keys_on_the_engine_version_too() {
+        // The same bytes parsed as a different engine version are a different
+        // render, not a hit.
+        let mut c = RenderCache::default();
+        c.put((7, 0, "5.3".into()), "as 5.3".into());
+        assert!(c.get(&(7, 0, "5.5".into())).is_none());
+        assert_eq!(c.get(&(7, 0, "5.3".into())).as_deref(), Some("as 5.3"));
+    }
+
+    #[test]
+    fn render_cache_evicts_the_least_recently_used() {
+        let mut c = RenderCache::default();
+        for i in 0..RENDER_CACHE_ENTRIES as u64 {
+            c.put(key(i), format!("v{i}"));
+        }
+        // Touch the oldest so it is no longer the eviction candidate.
+        assert!(c.get(&key(0)).is_some());
+        c.put(key(999), "new".into());
+        assert!(c.get(&key(0)).is_some(), "recently used entry survived");
+        assert!(c.get(&key(1)).is_none(), "least recently used was dropped");
+        assert_eq!(c.map.len(), RENDER_CACHE_ENTRIES);
+    }
+
+    #[test]
+    fn render_cache_replaces_a_key_without_double_counting_bytes() {
+        let mut c = RenderCache::default();
+        c.put(key(1), "aaaa".into());
+        c.put(key(1), "bb".into());
+        assert_eq!(c.get(&key(1)).as_deref(), Some("bb"));
+        assert_eq!(c.map.len(), 1);
+        assert_eq!(c.order.len(), 1);
+        assert_eq!(c.bytes, 2);
+    }
+
+    #[test]
+    fn render_cache_refuses_a_value_larger_than_the_whole_budget() {
+        let mut c = RenderCache::default();
+        c.put(key(1), "x".repeat(RENDER_CACHE_BYTES + 1));
+        assert!(c.get(&key(1)).is_none());
+        assert_eq!(c.bytes, 0);
+    }
+
+    #[test]
+    fn render_key_tracks_the_uexp_side() {
+        assert_ne!(
+            render_key(b"asset", Some(b"uexp"), "5.3"),
+            render_key(b"asset", None, "5.3")
+        );
+        assert_eq!(
+            render_key(b"asset", Some(b"uexp"), "5.3"),
+            render_key(b"asset", Some(b"uexp"), "5.3")
+        );
     }
 
     #[test]

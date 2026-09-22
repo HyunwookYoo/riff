@@ -199,6 +199,16 @@ export interface ConflictVersions {
   binary: boolean;
 }
 
+/// Branch identity without a working-tree walk. Mirrors Rust `BranchStatus`:
+/// the same four fields `RepoStatus` carries, minus the file list, read from
+/// refs alone. Everything that only needs the branch chip uses this.
+export interface BranchStatus {
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+}
+
 /// What a rebase plan does with one commit. Mirrors Rust `RebaseAction`.
 /// `reword` is absent on purpose: it opens git's message editor, and riff has
 /// no commit-message surface.
