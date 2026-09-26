@@ -165,6 +165,11 @@ class AppState {
   bcHasMore = $state(false);
   bcLoadingCommits = $state(false);
   bcDiffRange = $state<{ start: string; target: string } | null>(null);
+  // What the containment pane actually compared: the refs (or, for a
+  // gitlink-followed submodule, the two commits) and the repo they belong to.
+  // The toolbar's own refs are main's, which are not what Focus resolves to in
+  // a multi-root workspace — the pane labels itself from this instead.
+  bcRefs = $state<{ start: string; target: string; repo: string } | null>(null);
   // Command palette (Ctrl+Shift+P) visibility. Session-only.
   paletteOpen = $state(false);
   shortcutsOpen = $state(false);

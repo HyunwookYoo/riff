@@ -6,12 +6,25 @@
     selectBranchCommit,
   } from "$lib/branchContainment";
 
-  // Reload the marked list + marks whenever the compare refs (or repo) change.
-  // Only the diff (bottom) waits for an explicit row / Compare click.
+  // Reload the marked list + marks whenever the compare refs (or repo) change —
+  // and whenever the repo itself moves. Containment is an answer *about the
+  // repo*, so a fetch, checkout, rebase or push (riff's own or another tool's)
+  // invalidates it: without `refsRefresh` the ●/✓ marks and ahead/behind kept
+  // describing the repo as it was when the refs were last picked, which is
+  // exactly when they are most misleading — right after rebasing or pushing
+  // the branch being compared.
   $effect(() => {
     void appState.startBranch;
     void appState.targetBranch;
     void appState.repoPath;
+    void appState.refsRefresh;
+    // Focus and the per-repo overrides decide which repo and refs this pane is
+    // about (see resolveContext): moving Focus or editing a submodule's refs
+    // leaves main's start/target untouched, so without these the pane never
+    // reloaded — and in a workspace where Focus sat on a submodule it never
+    // loaded at all.
+    void appState.activeRepoIdx;
+    void appState.repos;
     if (appState.appMode === "compare") void loadBranchContainment();
   });
 
@@ -29,8 +42,13 @@
     if (notInSet.has(sha)) return "out";
     return "in";
   }
+  // What the pane compared, as resolved by loadBranchContainment. A
+  // gitlink-followed submodule compares two commits, so show those short.
+  const refs = $derived(appState.bcRefs);
+  const shortRef = (r: string) => (/^[0-9a-f]{40}$/.test(r) ? r.slice(0, 7) : r);
+
   function cTitle(cs: CState): string {
-    const t = appState.targetBranch;
+    const t = shortRef(refs?.target ?? "");
     if (cs === "out") return `Not yet in ${t}`;
     if (cs === "equiv") return `Already applied in ${t} (rebase / cherry-pick)`;
     return `In ${t}`;
@@ -68,18 +86,19 @@
 </script>
 
 <div class="bc">
-  {#if !appState.startBranch || !appState.targetBranch}
+  {#if !refs}
     <div class="bc-empty">Pick a start and target branch to check containment.</div>
   {:else}
     <div class="bc-summary">
-      <span class="src" title="Your branch (start)">{appState.startBranch}</span>
+      <span class="repo" title="Repo this compares">{refs.repo}</span>
+      <span class="src" title="Your branch (start)">{shortRef(refs.start)}</span>
       <span class="arrow">→</span>
-      <span class="tgt" title="Target">{appState.targetBranch}</span>
+      <span class="tgt" title="Target">{shortRef(refs.target)}</span>
       {#if summary}
         {#if summary.out > 0}
-          <span class="tag out">● {summary.out} not in {appState.targetBranch}</span>
+          <span class="tag out">● {summary.out} not in {shortRef(refs.target)}</span>
         {:else}
-          <span class="tag allin">✓ fully in {appState.targetBranch}</span>
+          <span class="tag allin">✓ fully in {shortRef(refs.target)}</span>
         {/if}
         {#if summary.equiv > 0}
           <span class="tag equiv" title="Already applied as an equivalent patch (rebase / cherry-pick)">
@@ -97,7 +116,7 @@
         class="bc-row all"
         class:sel={appState.bcSelectedSha === null}
         onclick={() => selectBranchCommit(null)}
-        title="Show every file changed between {appState.startBranch} and {appState.targetBranch}"
+        title="Show every file changed between {shortRef(refs.start)} and {shortRef(refs.target)}"
       >
         <span class="glyph">◆</span>
         <span class="sum">All changes</span>
@@ -122,14 +141,14 @@
       {#if appState.bcLoadingCommits}
         <div class="bc-note">…</div>
       {:else if appState.bcCommits.length === 0}
-        <div class="bc-note">No commits on {appState.startBranch}.</div>
+        <div class="bc-note">No commits on {shortRef(refs.start)}.</div>
       {/if}
     </div>
 
     {#if detail && appState.bcSelectedSha}
       <div class="bc-detail">
         <div class="d-status" class:in={detail.in_target} class:out={!detail.in_target}>
-          {#if detail.in_target}✓ In {appState.targetBranch}{:else}● Not in {appState.targetBranch}{/if}
+          {#if detail.in_target}✓ In {shortRef(refs.target)}{:else}● Not in {shortRef(refs.target)}{/if}
         </div>
         {#if detail.introduced_by}
           {@const m = detail.introduced_by}
@@ -170,6 +189,11 @@
     text-align: center;
     padding: 8px;
     font-size: 0.78em;
+  }
+  .bc-summary .repo {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 0.85em;
   }
   .bc-summary {
     flex: 0 0 auto;

@@ -270,7 +270,9 @@ export function commitLog(
   limit: number,
   skip: number,
 ): Promise<Commit[]> {
-  return invoke("commit_log", { path, startRef, all, limit, skip });
+  return share(`commit_log|${path}|${startRef}|${all}|${limit}|${skip}`, () =>
+    invoke("commit_log", { path, startRef, all, limit, skip }),
+  );
 }
 
 /**
@@ -284,7 +286,9 @@ export function containment(
   source: string,
   target: string,
 ): Promise<Containment> {
-  return invoke("containment", { path, source, target });
+  return share(`containment|${path}|${source}|${target}`, () =>
+    invoke("containment", { path, source, target }),
+  );
 }
 
 /**
@@ -308,7 +312,9 @@ export function commitContainmentDetail(
   sha: string,
   target: string,
 ): Promise<ContainmentDetail> {
-  return invoke("commit_containment_detail", { path, sha, target });
+  return share(`commit_containment_detail|${path}|${sha}|${target}`, () =>
+    invoke("commit_containment_detail", { path, sha, target }),
+  );
 }
 
 /**
