@@ -435,6 +435,36 @@ fn parse_patch_ids(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Arguments for `squash_check`'s candidate scan: the non-merge commits of
+/// `range` as patches, limited to `paths` — or, above `SQUASH_MAX_PATHSPECS` of
+/// them, the newest `SQUASH_SCAN_CAP` commits with no path limit. Pure so the
+/// switch is unit-testable without a repo.
+fn squash_log_args<'a>(range: &'a str, paths: &'a [String]) -> Vec<&'a str> {
+    let mut log = vec![
+        "--literal-pathspecs",
+        "log",
+        "--no-merges",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        "--ignore-submodules=none",
+        "--submodule=short",
+        "-U3",
+        "-p",
+        "--binary",
+        "--format=commit %H",
+        range,
+    ];
+    if paths.len() > SQUASH_MAX_PATHSPECS {
+        log.extend(["-n", SQUASH_SCAN_CAP]);
+    } else {
+        log.push("--");
+        log.extend(paths.iter().map(String::as_str));
+    }
+    log
+}
+
 /// Parse `git rev-list --left-right --count A...B` ("<left>\t<right>") into
 /// `(left, right)`. With `A = target`, `B = source`: left = behind, right =
 /// ahead. Split out for unit testing.
@@ -2246,29 +2276,7 @@ impl GitLayer for GitCli {
             .map(|p| String::from_utf8_lossy(p).into_owned())
             .collect();
         let range = format!("{mb}..{target}");
-        let mut log: Vec<&str> = vec![
-            "--literal-pathspecs",
-            "log",
-            "--no-merges",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-renames",
-            "--ignore-submodules=none",
-            "--submodule=short",
-            "-U3",
-            "-p",
-            "--binary",
-            "--format=commit %H",
-            &range,
-        ];
-        if paths.len() > SQUASH_MAX_PATHSPECS {
-            log.extend(["-n", SQUASH_SCAN_CAP]);
-        } else {
-            log.push("--");
-            log.extend(paths.iter().map(String::as_str));
-        }
-        let candidates = self.run(path, &log)?;
+        let candidates = self.run(path, &squash_log_args(&range, &paths))?;
         if candidates.is_empty() {
             return Ok(verdict(SquashVerdict::None));
         }
@@ -3202,8 +3210,11 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         // newest base commits.
         let repo = squash_fixture("squash-wide");
         git_in(&repo, &["checkout", "-q", "feat"]);
+        // Identical contents: git stores one blob for all of them, so the
+        // fixture stays fast where every new object is slow to write. With
+        // renames off, each path still counts as changed.
         for i in 0..(SQUASH_MAX_PATHSPECS + 5) {
-            fs::write(repo.join(format!("w{i}.txt")), format!("{i}\n")).unwrap();
+            fs::write(repo.join(format!("w{i}.txt")), "same\n").unwrap();
         }
         git_in(&repo, &["add", "-A"]);
         git_in(&repo, &["commit", "-qm", "wide"]);
@@ -3293,6 +3304,31 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
             ]
         );
         assert!(parse_patch_ids("").is_empty());
+    }
+
+    fn numbered_paths(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("p{i}.txt")).collect()
+    }
+
+    #[test]
+    fn squash_log_args_limits_the_scan_to_the_paths_up_to_the_cap() {
+        let paths = numbered_paths(SQUASH_MAX_PATHSPECS);
+        let args = squash_log_args("a..b", &paths);
+        let sep = args.iter().position(|a| *a == "--").expect("a pathspec separator");
+        let want: Vec<&str> = paths.iter().map(String::as_str).collect();
+        assert_eq!(&args[sep + 1..], want.as_slice());
+        assert!(args.contains(&"a..b"));
+        assert!(!args.contains(&"-n"));
+    }
+
+    #[test]
+    fn squash_log_args_scans_the_newest_commits_above_the_cap() {
+        let paths = numbered_paths(SQUASH_MAX_PATHSPECS + 1);
+        let args = squash_log_args("a..b", &paths);
+        assert!(args.ends_with(&["-n", SQUASH_SCAN_CAP]));
+        assert!(args.contains(&"a..b"));
+        assert!(!args.contains(&"--"));
+        assert!(!args.contains(&"p0.txt"));
     }
 
     #[test]
