@@ -12,6 +12,7 @@ import type {
   RebasePlan,
   RepoEntry,
   RepoFile,
+  RepoRange,
   RepoStatus,
   ThemeChoice,
   ViewMode,
@@ -87,6 +88,10 @@ class AppState {
   // Focus state (§13.3 #15, drill-in #17). null = multi-root view (all repos
   // visible), number = focused on repos[activeRepoIdx]. Session-only.
   activeRepoIdx = $state<number | null>(null);
+  // Every repo's resolved base/compare range (repoRange.ts), indexed like
+  // `repos`. Written only by resolveRepoRanges(); read by every surface that
+  // names or diffs a range, so they can never disagree. Session-only.
+  repoRanges = $state<RepoRange[]>([]);
   // Mirror of PersistedState.manual_repos_by_main — kept in sync with the
   // backend so the popover can render without re-fetching on every open.
   manualReposByMain = $state<Record<string, string[]>>({});

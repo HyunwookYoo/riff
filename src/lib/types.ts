@@ -313,6 +313,33 @@ export interface RepoEntry {
   };
 }
 
+/// Where a repo's compare range comes from. See "One range resolver" in
+/// docs/superpowers/specs/2026-09-29-branch-mode-clarity-design.md.
+export type RangeSource = "toolbar" | "gitlink" | "override" | "same-name";
+
+/// Why a repo has no range to compare.
+export type RangeGap =
+  | "no-refs"
+  | "unchanged"
+  | "added"
+  | "removed"
+  | "absent"
+  | "error";
+
+/// One repo's base/compare pair, or the reason it has none. For a `gitlink`
+/// range, `base` / `compare` are the commits the super repo's base / compare
+/// refs pin. `pin` names the one existing pin for `unchanged` / `added` /
+/// `removed`; `message` carries the failure for `error`.
+export type RepoRange =
+  | {
+      ok: true;
+      path: string;
+      base: string;
+      compare: string;
+      source: RangeSource;
+    }
+  | { ok: false; reason: RangeGap; pin?: string; message?: string };
+
 export interface BlameCommit {
   sha: string;
   author: string;
