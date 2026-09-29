@@ -216,9 +216,10 @@
     <button
       class="primary"
       onclick={() => {
-        // "Compare" shows the aggregate start↔target diff — clear any
-        // per-commit drill from the containment list first.
-        appState.bcSelectedSha = null;
+        // "Compare" shows the aggregate base↔compare diff — drop a commit
+        // picked in the commit table first.
+        appState.bcSelected = null;
+        appState.bcSelectedDetail = null;
         appState.bcDiffRange = null;
         void compare();
       }}

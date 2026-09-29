@@ -108,7 +108,10 @@
     if (appState.appMode !== "compare" || !f) return null;
     const idx = f.repoIdx ?? 0;
     const d = appState.bcDiffRange;
-    const drill = d && d.repoIdx === idx ? { target: d.target } : null;
+    const drill =
+      d && d.repoIdx === idx
+        ? { target: d.target, summary: appState.bcSelected?.commit.summary }
+        : null;
     return paneLabels(
       appState.repoRanges[idx],
       { base: appState.startBranch, compare: appState.targetBranch },

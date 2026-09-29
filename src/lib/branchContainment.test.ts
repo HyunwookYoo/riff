@@ -1,0 +1,352 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// branchContainment.ts drives the runes store, four Tauri bindings, the range
+// resolver and compare(); all are stubbed. Specifiers resolve relative to this
+// file (src/lib).
+vi.mock("./store.svelte", () => ({ appState: {} }));
+vi.mock("./git", () => ({
+  containment: vi.fn(),
+  commitLog: vi.fn(),
+  commitLogExcluding: vi.fn(),
+  commitContainmentDetail: vi.fn(),
+}));
+vi.mock("./repoRange", () => ({ resolveRepoRanges: vi.fn() }));
+vi.mock("./compare", () => ({ compare: vi.fn() }));
+
+import {
+  PAGE_SIZE,
+  dropPickOutside,
+  groupCounts,
+  isRepoVisible,
+  loadBranchContainment,
+  loadMoreGroup,
+  rowMark,
+  selectBranchCommit,
+  setShowMerged,
+  showAllChanges,
+  summarize,
+  type VisibleGroup,
+} from "./branchContainment";
+import { appState } from "./store.svelte";
+import {
+  commitContainmentDetail,
+  commitLog,
+  commitLogExcluding,
+  containment,
+} from "./git";
+import { resolveRepoRanges } from "./repoRange";
+import { compare } from "./compare";
+import type { BcGroup, Commit, Containment, RepoEntry, RepoRange } from "./types";
+
+const commit = (sha: string, parents: string[] = ["p"]): Commit => ({
+  sha,
+  short_sha: sha.slice(0, 7),
+  parents,
+  author: "a",
+  time: 0,
+  summary: sha,
+  refs: [],
+  body: "",
+});
+const marks = (m: Partial<Containment>): Containment => ({
+  not_in_target: [],
+  equivalent: [],
+  ahead: 0,
+  behind: 0,
+  source_is_branch: true,
+  ...m,
+});
+const range = (path: string, base: string, compare: string): RepoRange => ({
+  ok: true,
+  path,
+  base,
+  compare,
+  source: "toolbar",
+});
+const repos: RepoEntry[] = [
+  { path: "/main", kind: "main", displayName: "main" },
+  { path: "/main/sub", kind: "submodule", displayName: "sub", parentGitlinkPath: "sub" },
+];
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const group = (g: Partial<BcGroup>): BcGroup => ({
+  path: "/main",
+  base: "main",
+  compare: "feature",
+  status: "ready",
+  error: null,
+  marks: marks({}),
+  commits: [],
+  hasMore: false,
+  loadingMore: false,
+  mergedBy: undefined,
+  ...g,
+});
+const names = { base: "main", compare: "feature" };
+
+beforeEach(() => {
+  for (const f of [containment, commitLog, commitLogExcluding, commitContainmentDetail, resolveRepoRanges, compare]) {
+    vi.mocked(f).mockReset();
+  }
+  Object.assign(appState, {
+    appMode: "compare",
+    repoPath: "/main",
+    repos,
+    activeRepoIdx: null,
+    workspaceLayout: "unified",
+    bcGroups: {},
+    bcSelected: null,
+    bcSelectedDetail: null,
+    bcDiffRange: null,
+    bcShowMerged: false,
+    selectedFile: null,
+    files: [],
+  });
+});
+
+describe("loadBranchContainment", () => {
+  it("builds one group per resolved range, asking about compare's commits against base", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([
+      range("/main", "main", "feature"),
+      { ok: false, reason: "unchanged", pin: "x" },
+    ]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    await loadBranchContainment();
+    expect(containment).toHaveBeenCalledWith("/main", "feature", "main");
+    expect(commitLogExcluding).toHaveBeenCalledWith("/main", "feature", "main", PAGE_SIZE, 0);
+    expect(Object.keys(appState.bcGroups)).toEqual(["0"]);
+    expect(appState.bcGroups[0].status).toBe("ready");
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c1"]);
+    expect(commitContainmentDetail).not.toHaveBeenCalled();
+  });
+
+  it("looks up the introducing merge once nothing is left to merge", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 0 }));
+    vi.mocked(commitContainmentDetail).mockResolvedValue({
+      in_target: true,
+      introduced_by: commit("m1", ["b0", "f1"]),
+    });
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    await loadBranchContainment();
+    expect(commitContainmentDetail).toHaveBeenCalledWith("/main", "feature", "main");
+    expect(appState.bcGroups[0].mergedBy?.sha).toBe("m1");
+  });
+
+  it("keeps a failing group from affecting the others", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([
+      range("/main", "main", "feature"),
+      range("/main/sub", "aaa", "bbb"),
+    ]);
+    vi.mocked(containment).mockImplementation((path) =>
+      path === "/main/sub" ? Promise.reject("boom") : Promise.resolve(marks({ not_in_target: ["c1"], ahead: 1 })),
+    );
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    await loadBranchContainment();
+    expect(appState.bcGroups[0].status).toBe("ready");
+    expect(appState.bcGroups[1].status).toBe("error");
+    expect(appState.bcGroups[1].error).toContain("boom");
+  });
+
+  it("drops results from a load the inputs have moved past", async () => {
+    let release: (m: Containment) => void = () => {};
+    vi.mocked(resolveRepoRanges)
+      .mockResolvedValueOnce([range("/main", "main", "old")])
+      .mockResolvedValueOnce([range("/main", "main", "new")]);
+    vi.mocked(containment)
+      .mockImplementationOnce(() => new Promise<Containment>((r) => (release = r)))
+      .mockResolvedValueOnce(marks({ not_in_target: ["n1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("n1")]);
+    const first = loadBranchContainment();
+    await tick();
+    await loadBranchContainment();
+    release(marks({ not_in_target: ["o1"], ahead: 1 }));
+    await first;
+    expect(appState.bcGroups[0].compare).toBe("new");
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["n1"]);
+  });
+
+  it("drops a picked commit on reload and lists all changes again", async () => {
+    // Review focus: a window-focus refresh must not leave the old commit's
+    // files on screen after its pick is gone.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1", ["c0"])]);
+    vi.mocked(commitContainmentDetail).mockResolvedValue({ in_target: false, introduced_by: null });
+    await loadBranchContainment();
+    selectBranchCommit(0, appState.bcGroups[0].commits[0]);
+    vi.mocked(compare).mockClear();
+    await loadBranchContainment();
+    expect(appState.bcSelected).toBeNull();
+    expect(appState.bcDiffRange).toBeNull();
+    expect(compare).toHaveBeenCalledWith({ silent: true });
+  });
+
+  it("clears a leftover file selection when there is nothing to compare", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([{ ok: false, reason: "no-refs" }]);
+    appState.files = [{ path: "x", old_path: null, status: "modified", repoIdx: 0 }];
+    await loadBranchContainment();
+    expect(appState.bcGroups).toEqual({});
+    expect(appState.files).toEqual([]);
+  });
+});
+
+describe("paging and merged commits", () => {
+  it("loads the next page from where the list ends", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 150 }));
+    vi.mocked(commitLogExcluding)
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`c${i}`)))
+      .mockResolvedValueOnce(Array.from({ length: 50 }, (_, i) => commit(`d${i}`)));
+    await loadBranchContainment();
+    expect(appState.bcGroups[0].hasMore).toBe(true);
+    await loadMoreGroup(0);
+    expect(commitLogExcluding).toHaveBeenLastCalledWith("/main", "feature", "main", PAGE_SIZE, 100);
+    expect(appState.bcGroups[0].commits).toHaveLength(150);
+    expect(appState.bcGroups[0].hasMore).toBe(false);
+  });
+
+  it("lists what the introducing merge brought in when merged commits are shown", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 0 }));
+    vi.mocked(commitContainmentDetail).mockResolvedValue({
+      in_target: true,
+      introduced_by: commit("m1", ["b0", "f1"]),
+    });
+    vi.mocked(commitLogExcluding).mockResolvedValueOnce([]).mockResolvedValueOnce([commit("f1")]);
+    await loadBranchContainment();
+    await setShowMerged(true);
+    expect(commitLogExcluding).toHaveBeenLastCalledWith("/main", "feature", "b0", PAGE_SIZE, 0);
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["f1"]);
+  });
+
+  it("falls back to compare's history when no merge is known", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    vi.mocked(commitLog).mockResolvedValue([commit("c1"), commit("old")]);
+    await loadBranchContainment();
+    await setShowMerged(true);
+    expect(commitLog).toHaveBeenCalledWith("/main", "feature", false, PAGE_SIZE, 0);
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c1", "old"]);
+  });
+});
+
+describe("picking a commit", () => {
+  it("diffs the commit inside its own repo and goes back to all changes", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([
+      range("/main", "main", "feature"),
+      range("/main/sub", "aaa", "bbb"),
+    ]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["s1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("s1", ["s0"])]);
+    vi.mocked(commitContainmentDetail).mockResolvedValue({ in_target: false, introduced_by: null });
+    await loadBranchContainment();
+    selectBranchCommit(1, appState.bcGroups[1].commits[0]);
+    expect(appState.bcDiffRange).toEqual({ repoIdx: 1, start: "s0", target: "s1" });
+    expect(appState.bcSelected?.repoIdx).toBe(1);
+    expect(compare).toHaveBeenCalledTimes(1);
+    showAllChanges();
+    expect(appState.bcDiffRange).toBeNull();
+    expect(appState.bcSelected).toBeNull();
+    expect(compare).toHaveBeenCalledTimes(2);
+  });
+
+  it("diffs a root commit against the empty tree", () => {
+    appState.bcGroups = { 0: group({}) };
+    selectBranchCommit(0, commit("r1", []));
+    expect(appState.bcDiffRange?.start).toBe("4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+  });
+
+  it("drops the pick when the view narrows to another repo", () => {
+    appState.bcGroups = { 0: group({}), 1: group({ path: "/main/sub" }) };
+    selectBranchCommit(1, commit("s1", ["s0"]));
+    expect(dropPickOutside(1)).toBe(false);
+    expect(appState.bcDiffRange?.repoIdx).toBe(1);
+    expect(dropPickOutside(0)).toBe(true);
+    expect(appState.bcDiffRange).toBeNull();
+    expect(appState.bcSelected).toBeNull();
+    expect(dropPickOutside(0)).toBe(false);
+  });
+});
+
+describe("pure helpers", () => {
+  it("counts patch-equivalent commits apart from unmerged ones", () => {
+    expect(groupCounts(group({ marks: marks({ ahead: 5, equivalent: ["a", "b"], behind: 3 }) }))).toEqual({
+      out: 3,
+      patch: 2,
+      behind: 3,
+    });
+  });
+
+  it("marks a row", () => {
+    const notIn = new Set(["a", "b"]);
+    const equiv = new Set(["b"]);
+    expect(rowMark("a", notIn, equiv)).toBe("out");
+    expect(rowMark("b", notIn, equiv)).toBe("patch");
+    expect(rowMark("z", notIn, equiv)).toBe("in");
+  });
+
+  it("follows the active tab in Tabs, and Focus in Unified", () => {
+    // Review focus: with a submodule tab active the table must show that tab.
+    Object.assign(appState, { workspaceLayout: "tabs", activeRepoIdx: 1 });
+    expect([0, 1].map(isRepoVisible)).toEqual([false, true]);
+    Object.assign(appState, { workspaceLayout: "unified", activeRepoIdx: null });
+    expect([0, 1].map(isRepoVisible)).toEqual([true, true]);
+    Object.assign(appState, { activeRepoIdx: 0 });
+    expect([0, 1].map(isRepoVisible)).toEqual([true, false]);
+  });
+});
+
+describe("summarize", () => {
+  const pair = { base: "main", compare: "feature" };
+  const vis = (idx: number, g: BcGroup): VisibleGroup => ({ idx, group: g, names });
+
+  it("uses the single-group wording when one group is visible", () => {
+    // Review focus: repos without a range have no group; one group left means
+    // the single-group sentence.
+    expect(summarize([vis(0, group({ marks: marks({ ahead: 3, behind: 2 }) }))], pair)).toEqual({
+      kind: "unmerged",
+      names,
+      out: 3,
+      patch: 0,
+      behind: 2,
+      repos: 1,
+    });
+    expect(summarize([vis(0, group({ marks: marks({ ahead: 2, equivalent: ["a", "b"] }) }))], pair)).toEqual({
+      kind: "patches",
+      names,
+      patch: 2,
+    });
+    expect(summarize([vis(0, group({ mergedBy: null }))], pair)).toEqual({
+      kind: "merged",
+      names,
+      mergedBy: null,
+    });
+  });
+
+  it("totals several groups", () => {
+    const a = vis(0, group({ marks: marks({ ahead: 3 }) }));
+    const b = vis(1, group({ marks: marks({ ahead: 2, equivalent: ["x"] }) }));
+    expect(summarize([a, b], pair)).toEqual({
+      kind: "unmerged",
+      names: pair,
+      out: 4,
+      patch: 1,
+      behind: null,
+      repos: 2,
+    });
+    expect(summarize([vis(0, group({})), vis(1, group({}))], pair)).toEqual({
+      kind: "all-in",
+      names: pair,
+      repos: 2,
+    });
+  });
+
+  it("covers empty, same, loading and failed states", () => {
+    expect(summarize([], pair)).toEqual({ kind: "no-refs" });
+    expect(summarize([vis(0, group({ compare: "main" }))], pair)).toEqual({ kind: "same" });
+    expect(summarize([vis(0, group({ status: "loading" }))], pair)).toEqual({ kind: "loading" });
+    expect(summarize([vis(0, group({ status: "error" }))], pair)).toEqual({ kind: "error" });
+  });
+});

@@ -1,4 +1,6 @@
 import { appState } from "./store.svelte";
+import { compare } from "./compare";
+import { dropPickOutside } from "./branchContainment";
 import { getActiveDiffView } from "./diff/activeView";
 
 /**
@@ -28,6 +30,12 @@ export function selectTab(idx: number): void {
   }
 
   appState.activeRepoIdx = idx;
+  // A pick lists only its own repo's files: moving to another repo's tab
+  // drops it and re-lists, instead of restoring from a list that lacks them.
+  if (dropPickOutside(idx)) {
+    void compare({ silent: true });
+    return;
+  }
 
   const mem = appState.tabMemory.get(idx);
   const candidates = appState.files.filter((f) => (f.repoIdx ?? 0) === idx);

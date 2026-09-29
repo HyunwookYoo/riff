@@ -1,9 +1,9 @@
 import type {
   AppMode,
+  BcGroup,
   Branch,
   ChangedFile,
   Commit,
-  Containment,
   ContainmentDetail,
   CompareCtx,
   CompareMode,
@@ -154,29 +154,23 @@ class AppState {
   // tabs). The graph takes the remaining height above it. Drag-resizable,
   // session-only.
   graphPanelHeight = $state(262);
-  // Branch-mode containment ("is my branch in target"): in Branch (compare)
-  // mode the start→target pickers drive a marked commit list of `start`'s
-  // history. `containment` holds the ✓/●/equiv marking sets + ahead/behind for
-  // start↔target; `bcCommits` is that commit list (paginated); `bcSelectedSha`
-  // is the row whose per-commit diff + detail show (null = "All changes", the
-  // aggregate start↔target diff); `bcDiffRange` overrides compare()'s range for
-  // a per-commit diff without touching the toolbar ref pickers;
-  // `containmentDetail` is the selected commit's panel data. Session-only.
-  containment = $state<Containment | null>(null);
-  containmentDetail = $state<ContainmentDetail | null>(null);
-  loadingContainment = $state(false);
-  bcCommits = $state<Commit[]>([]);
-  bcSelectedSha = $state<string | null>(null);
-  bcHasMore = $state(false);
-  bcLoadingCommits = $state(false);
+  // Branch-mode commit table: one group per repo whose range resolved, keyed
+  // by repo index (see branchContainment.ts). `bcSelected` is the commit
+  // picked in it, whose own diff shows via `bcDiffRange` (parent..commit inside
+  // that repo) without touching the toolbar; null = all changes.
+  // `bcSelectedDetail` says how the picked commit reached base. Session-only.
+  bcGroups = $state<Record<number, BcGroup>>({});
+  bcSelected = $state<{ repoIdx: number; commit: Commit } | null>(null);
+  bcSelectedDetail = $state<ContainmentDetail | null>(null);
   bcDiffRange = $state<{ repoIdx: number; start: string; target: string } | null>(
     null,
   );
-  // What the containment pane actually compared: the refs (or, for a
-  // gitlink-followed submodule, the two commits) and the repo they belong to.
-  // The toolbar's own refs are main's, which are not what Focus resolves to in
-  // a multi-root workspace — the pane labels itself from this instead.
-  bcRefs = $state<{ start: string; target: string; repo: string } | null>(null);
+  // "Show merged commits": also list the commits already in base.
+  bcShowMerged = $state(false);
+  // Commit table height (px, drag-resizable) and whether it is collapsed to
+  // its summary line. Session-only.
+  commitTableHeight = $state(260);
+  commitTableCollapsed = $state(false);
   // Command palette (Ctrl+Shift+P) visibility. Session-only.
   paletteOpen = $state(false);
   shortcutsOpen = $state(false);

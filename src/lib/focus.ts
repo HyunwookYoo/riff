@@ -1,5 +1,6 @@
 import { appState } from "./store.svelte";
 import { compare } from "./compare";
+import { dropPickOutside } from "./branchContainment";
 import { snapshot } from "./history";
 
 /**
@@ -22,6 +23,7 @@ export function enterFocus(repoIdx: number): void {
   appState.activeRepoIdx = repoIdx;
   // Manual Focus is fresh navigation — drop any redo path (browser-style).
   appState.forwardHistory = [];
+  dropPickOutside(repoIdx);
   // Refetch with the narrower scope. Selection will drop because compare()
   // clears appState.files at start.
   if (appState.repoPath) void compare({ silent: true });

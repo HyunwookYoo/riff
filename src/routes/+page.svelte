@@ -6,7 +6,8 @@
   import FileList from "$lib/ui/FileList.svelte";
   import CommitList from "$lib/ui/CommitList.svelte";
   import CommitDetail from "$lib/ui/CommitDetail.svelte";
-  import BranchContainment from "$lib/ui/BranchContainment.svelte";
+  import CommitTable from "$lib/ui/CommitTable.svelte";
+  import FilesScope from "$lib/ui/FilesScope.svelte";
   import WorkingCopyList from "$lib/ui/WorkingCopyList.svelte";
   import RepoTabs from "$lib/ui/RepoTabs.svelte";
   import RefsSidebar from "$lib/ui/RefsSidebar.svelte";
@@ -116,6 +117,28 @@
       appState.graphPanelHeight = Math.max(
         120,
         Math.min(rect.height - 160, rect.bottom - ev.clientY),
+      );
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  // Branch mode: drag the boundary between the commit table (top) and the file
+  // list + diff below. Session-only; the table keeps a few rows and the diff at
+  // least 160px.
+  let branchColEl = $state<HTMLDivElement | null>(null);
+  function onCommitTableResize(e: PointerEvent) {
+    if (e.button !== 0 || !branchColEl) return;
+    e.preventDefault();
+    const rect = branchColEl.getBoundingClientRect();
+    const onMove = (ev: PointerEvent) => {
+      appState.commitTableHeight = Math.max(
+        80,
+        Math.min(rect.height - 160, ev.clientY - rect.top),
       );
     };
     const onUp = () => {
@@ -634,18 +657,37 @@
         </div>
       </div>
     {:else}
-      <div class="branch-col">
-        <div class="bc-pane"><BranchContainment /></div>
-        <div class="bc-files"><FileList /></div>
-      </div>
       <div
-        class="picker-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize file list"
-        onpointerdown={onResizeStart}
-      ></div>
-      {@render diffPane()}
+        class="branch-col"
+        class:collapsed={appState.commitTableCollapsed}
+        bind:this={branchColEl}
+        style="--ct-h: {appState.commitTableHeight}px;"
+      >
+        <div class="ct-pane"><CommitTable /></div>
+        {#if !appState.commitTableCollapsed}
+          <div
+            class="ct-resizer"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize commit table"
+            onpointerdown={onCommitTableResize}
+          ></div>
+        {/if}
+        <div class="ct-bottom">
+          <div class="bc-files">
+            <FilesScope />
+            <div class="bc-filelist"><FileList /></div>
+          </div>
+          <div
+            class="picker-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize file list"
+            onpointerdown={onResizeStart}
+          ></div>
+          {@render diffPane()}
+        </div>
+      </div>
     {/if}
     </div>
   </div>
@@ -827,22 +869,60 @@
   .gp-commit[hidden] {
     display: none;
   }
-  /* Branch (compare) mode left column: containment list (top) + file list. */
+  /* Branch (compare) mode: the commit table spans the full width on top; the
+     file list and the diff share the rest below, split like the other modes. */
   .branch-col {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-rows: var(--ct-h, 260px) 7px minmax(0, 1fr);
     min-width: 0;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
   }
-  .bc-pane {
-    flex: 1 1 48%;
+  .branch-col.collapsed {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .ct-pane {
+    min-width: 0;
     min-height: 0;
     overflow: hidden;
     border-bottom: 1px solid var(--border);
   }
+  .ct-resizer {
+    z-index: 5;
+    cursor: row-resize;
+    background: transparent;
+    position: relative;
+  }
+  .ct-resizer::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 0;
+    height: 1px;
+    width: 100%;
+    background: var(--border);
+    transition: background 0.1s ease;
+  }
+  .ct-resizer:hover::after {
+    background: var(--accent);
+  }
+  .ct-bottom {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--picker-width, 300px) 1fr;
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+  }
   .bc-files {
-    flex: 1 1 52%;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .bc-filelist {
+    flex: 1;
     min-height: 0;
     overflow: hidden;
   }

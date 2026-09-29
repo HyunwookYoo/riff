@@ -371,3 +371,25 @@ export interface CompareCtx {
   /// sets a temporary override on that repo.
   overrides: Record<number, { startBranch: string; targetBranch: string }>;
 }
+
+/// One repo's group in the Branch-mode commit table: compare's commits the
+/// base lacks, with their marks. See "The commit table" in
+/// docs/superpowers/specs/2026-09-29-branch-mode-clarity-design.md.
+export interface BcGroup {
+  /// The range this group describes (from `appState.repoRanges`).
+  path: string;
+  base: string;
+  compare: string;
+  status: "loading" | "ready" | "error";
+  error: string | null;
+  /// `containment(compare, base)`: the ● set, the ◐ (patch-equivalent) set,
+  /// ahead / behind.
+  marks: Containment | null;
+  /// Rows loaded so far, and whether another page exists.
+  commits: Commit[];
+  hasMore: boolean;
+  loadingMore: boolean;
+  /// Once nothing is left to merge: the merge that brought compare in, null for
+  /// a fast-forward. undefined while unknown or not applicable.
+  mergedBy: Commit | null | undefined;
+}
