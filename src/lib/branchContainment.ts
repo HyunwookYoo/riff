@@ -8,7 +8,7 @@ import {
 } from "./git";
 import { compare, forgetListedRanges, listedRanges } from "./compare";
 import { resolveRepoRanges } from "./repoRange";
-import type { ToolbarPair } from "./rangeText";
+import { shortRef, type ToolbarPair } from "./rangeText";
 import type { Counts, RowMark, SideNames, Summary } from "./commitTableText";
 import type { BcGroup, Commit, RepoRange, SquashCheck } from "./types";
 
@@ -75,8 +75,8 @@ export interface VisibleGroup {
 
 /// The summary line's state for the groups on screen: one group speaks for
 /// itself; several give totals over the groups that answered (noting how many
-/// could not be read), and read as all in once none has ● left and none is
-/// still loading.
+/// could not be read), named by the toolbar pair, and read as all in once none
+/// has ● left and none is still loading.
 export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
   if (groups.length === 0) return { kind: "no-refs" };
   if (groups.length === 1 && groups[0].group.base === groups[0].group.compare) {
@@ -119,10 +119,11 @@ export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
     patch += c.patch;
   }
   const failed = groups.filter((v) => v.group.status === "error").length;
+  const names = { base: shortRef(pair.base), compare: shortRef(pair.compare) };
   if (out > 0) {
     return {
       kind: "unmerged",
-      names: pair,
+      names,
       out,
       patch,
       behind: null,
@@ -131,7 +132,7 @@ export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
     };
   }
   if (loading) return { kind: "loading" };
-  return { kind: "all-in", names: pair, repos: ready.length, failed };
+  return { kind: "all-in", names, repos: ready.length, failed };
 }
 
 type OkRange = Extract<RepoRange, { ok: true }>;

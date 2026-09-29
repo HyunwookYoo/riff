@@ -1,5 +1,5 @@
-import type { ToolbarPair } from "./rangeText";
-import type { Commit, ContainmentDetail, SquashCheck } from "./types";
+import { rangeLabel, type ToolbarPair } from "./rangeText";
+import type { Commit, ContainmentDetail, RepoRange, SquashCheck } from "./types";
 
 /// How a range's two sides are named (see rangeText.sideNames).
 export type SideNames = ToolbarPair;
@@ -100,6 +100,20 @@ export function summaryText(s: Summary): string {
 
 function failedText(n: number): string {
   return `${n} repo${n === 1 ? "" : "s"} couldn't be read`;
+}
+
+/// The summary line while no visible repo has a group. A toolbar pair that
+/// misses a side still asks for refs; otherwise `first`, the first visible
+/// repo's range, says why it has none (an unmoved pin, an added submodule, …)
+/// — or, having resolved, is only waiting for its group.
+export function noGroupSummaryText(
+  pair: ToolbarPair,
+  first: RepoRange | undefined,
+  superName: string,
+): string {
+  if (!pair.base || !pair.compare) return summaryText({ kind: "no-refs" });
+  if (first && !first.ok) return rangeLabel(first, superName, pair);
+  return summaryText({ kind: "loading" });
 }
 
 /// The counts on a group header.

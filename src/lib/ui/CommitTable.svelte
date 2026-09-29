@@ -17,6 +17,7 @@
   import { rangeLabel, rangeTooltip, sideNames } from "$lib/rangeText";
   import {
     groupCountsText,
+    noGroupSummaryText,
     shortDate,
     statusText,
     summaryText,
@@ -62,7 +63,17 @@
         : [];
     }),
   );
-  const summary = $derived(summaryText(summarize(visible, pair)));
+  // With no group on screen (a tab or Focus on a repo without a range), the
+  // visible repo's own reason, unless refs are still to be picked.
+  const summary = $derived(
+    visible.length > 0
+      ? summaryText(summarize(visible, pair))
+      : noGroupSummaryText(
+          pair,
+          rows.length > 0 ? appState.repoRanges[rows[0].idx] : undefined,
+          superName,
+        ),
+  );
 
   // O(1) marks per row.
   const sets = $derived.by(() => {

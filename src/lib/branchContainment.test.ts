@@ -878,6 +878,21 @@ describe("summarize", () => {
     });
   });
 
+  it("names several groups by the toolbar pair, shortened", () => {
+    // A drill-in's `<sha>^ ← <sha>` would otherwise print two 40-hex SHAs.
+    const sha = "a41f2c9d0e1b2c3d4e5f60718293a4b5c6d7e8f9";
+    const drill = { base: `${sha}^`, compare: sha };
+    const short = { base: "a41f2c9^", compare: "a41f2c9" };
+    expect(summarize([vis(0, group({})), vis(1, group({}))], drill)).toEqual({
+      kind: "all-in",
+      names: short,
+      repos: 2,
+      failed: 0,
+    });
+    const out = summarize([vis(0, group({ marks: marks({ ahead: 1 }) })), vis(1, group({}))], drill);
+    expect(out).toMatchObject({ kind: "unmerged", names: short });
+  });
+
   it("totals the groups that answered and counts the ones that failed", () => {
     // Review focus: one unreadable repo must not hold the whole summary on
     // "Checking commits…" (nor inflate "across N repos").

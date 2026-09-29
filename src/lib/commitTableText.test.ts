@@ -3,6 +3,7 @@ import {
   allChangesText,
   commitStateText,
   groupCountsText,
+  noGroupSummaryText,
   statusText,
   summaryText,
 } from "./commitTableText";
@@ -83,6 +84,34 @@ describe("summaryText", () => {
     expect(summaryText({ kind: "same" })).toBe("base and compare are the same.");
     expect(summaryText({ kind: "loading" })).toBe("Checking commits…");
     expect(summaryText({ kind: "error" })).toBe("Couldn't read commits.");
+  });
+});
+
+describe("the summary with no group on screen", () => {
+  const pair = { base: "main", compare: "feature/x" };
+  const pickRefs = "Pick base and compare to see which commits are merged.";
+
+  it("asks for refs while the toolbar pair misses a side", () => {
+    expect(noGroupSummaryText({ base: "main", compare: "" }, { ok: false, reason: "no-refs" }, "sandbox")).toBe(
+      pickRefs,
+    );
+    expect(noGroupSummaryText({ base: "", compare: "" }, undefined, "sandbox")).toBe(pickRefs);
+  });
+
+  it("says why the visible repo has no range once both refs are picked", () => {
+    // Review focus (F5): a submodule tab or Focus on an unmoved pin must not
+    // be told to pick refs that are already picked.
+    const unchanged = { ok: false as const, reason: "unchanged" as const, pin: "1a2b3c4d5e6f7a8b" };
+    expect(noGroupSummaryText(pair, unchanged, "sandbox")).toBe("unchanged: both pin 1a2b3c4");
+    expect(noGroupSummaryText(pair, { ok: false, reason: "added", pin: "b93f7d2" }, "sandbox")).toBe(
+      "only in feature/x (added)",
+    );
+    expect(noGroupSummaryText(pair, { ok: false, reason: "no-refs" }, "sandbox")).toBe("pick both refs");
+  });
+
+  it("waits for the group of a range that resolved", () => {
+    const own = { ok: true as const, path: "/sub", base: "develop", compare: "feature/y", source: "override" as const };
+    expect(noGroupSummaryText(pair, own, "sandbox")).toBe("Checking commits…");
   });
 });
 
