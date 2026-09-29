@@ -396,6 +396,25 @@ describe("refreshes", () => {
     expect(resolveRepoRanges).toHaveBeenCalledTimes(3);
   });
 
+  it("drops the load asked for meanwhile once Branch mode is left", async () => {
+    // The table is off screen; its groups (and a pick) stay for the way back
+    // instead of being cleared by a load nobody is looking at.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    let release: (m: Containment) => void = () => {};
+    vi.mocked(containment).mockImplementationOnce(
+      () => new Promise<Containment>((r) => (release = r)),
+    );
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    const first = loadBranchContainment();
+    await tick();
+    void loadBranchContainment();
+    appState.appMode = "changes";
+    release(marks({ ahead: 0 }));
+    await first;
+    expect(resolveRepoRanges).toHaveBeenCalledTimes(1);
+    expect(appState.bcGroups[0]?.status).toBe("ready");
+  });
+
   it("skips a group whose tips did not move, keeping its rows and verdict", async () => {
     vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
     tipsAt({ main: "b1", feature: "f1" });

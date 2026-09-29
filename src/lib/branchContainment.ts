@@ -340,7 +340,9 @@ export async function loadBranchContainment(): Promise<void> {
     do {
       loadAgain = false;
       await loadOnce();
-    } while (loadAgain);
+      // Asked for in Branch mode: once it is left the table is off screen,
+      // and its groups stay for the way back (the next visit loads anyway).
+    } while (loadAgain && appState.appMode === "compare");
   } finally {
     loadRunning = false;
   }
