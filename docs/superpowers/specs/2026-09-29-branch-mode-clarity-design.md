@@ -83,6 +83,7 @@ Settled in a brainstorming session on 2026-09-29.
 | 5 | **Unmerged first.** The table lists only the commits compare has that base lacks. When there are none it says so in one line and names the merge that brought them in; a toggle lists the merged commits. | Compare's full history with merged rows dimmed. |
 | 6 | UI strings stay English, like the rest of riff. | — |
 | 7 | The internal fields keep their names: `startBranch` is the base and `targetBranch` is compare. A comment at their declaration pins the mapping. | Renaming them across history, graph, `CompareCtx` and tests — a large diff with no behavioral gain. |
+| 8 | **Assume squash merges are in use, and detect them.** The workspace's own history says so: of the last 300 first-parent commits on `origin/master`, sbx-idl has 279 squash merges and no merge commits, while sandbox and Sandbox/Plugins merge their PRs mostly with merge commits. | Leaving squash-merged branches reported as ● not merged, as a known limitation. |
 
 ## The semantic model
 
@@ -94,14 +95,15 @@ Settled in a brainstorming session on 2026-09-29.
 | Commit table | Which of compare's commits are not in base yet? | list `git log compare --not base`; marks from `containment(source = compare, target = base)` |
 | Behind count | What does base have that compare lacks? | the left side of `rev-list --left-right --count base...compare`, already in `Containment.behind` |
 
-Marks: ● not in base; ◐ applied to base as an equivalent patch (`git cherry`,
-i.e. rebased or cherry-picked); ✓ in base (only shown when merged commits are
-listed).
+Marks: ● not in base; ◐ in base by content rather than by ancestry — an
+equivalent patch (`git cherry`: rebased or cherry-picked) or a squash merge (see
+[Squash detection](#squash-detection)); ✓ in base by ancestry (only shown when
+merged commits are listed).
 
-The backend does not change. The frontend passes compare as `source` and base as
-`target` to the existing `containment` and `commit_containment_detail` commands,
-and uses the existing, currently unused `commitLogExcluding` binding for the
-list.
+For containment itself the backend does not change. The frontend passes compare
+as `source` and base as `target` to the existing `containment` and
+`commit_containment_detail` commands, and uses the existing, currently unused
+`commitLogExcluding` binding for the list. Squash detection adds one command.
 
 The diff-mode select gets meaningful labels: `since fork (...)` for three-dot and
 `direct (..)` for two-dot.
@@ -202,8 +204,9 @@ non-main tab is active (Tabs).
 `Compare own branches…` creates the override seeded with the range currently
 shown (for a gitlink, the two pinned SHAs; for `unchanged`, the one pin on both
 sides; for `added`, `removed` or `absent`, whichever side exists), so the screen
-does not change until a ref is picked. `Follow sandbox` / `Use same names` clears the override.
-`× All repos` exits Focus and is absent in Tabs, where the tab bar does that job.
+does not change until a ref is picked. `Follow sandbox` / `Use same names`
+clears the override. `× All repos` exits Focus and is absent in Tabs, where the
+tab bar does that job.
 
 ### Diff header and pane labels
 
@@ -238,9 +241,11 @@ expands it again.
 
 mark · SHA · summary · author · date · status.
 
-The status names the group's base: `not in main` / `applied as patch` /
-`in main`, or `not in main's pin` / `in main's pin` for a gitlink submodule.
-Merge commits carry a muted `merge` tag.
+The status names the group's base: `not in main` / `in main`, or
+`not in main's pin` / `in main's pin` for a gitlink submodule. A ◐ row says how
+it got in: `applied as patch` (from `git cherry`), `squashed into 7f3a2c1`, or
+`changes already in main` (from squash detection). Merge commits carry a muted
+`merge` tag.
 
 ### Summary line
 
@@ -248,7 +253,10 @@ Merge commits carry a muted `merge` tag.
 |---|---|
 | Unmerged, one group | `main ← feature/x: ● 8 not merged · ◐ 1 applied as patch · feature/x is 9 behind` |
 | Unmerged, several groups | `main ← feature/x across 2 repos: ● 140 not merged · ◐ 1 applied as patch` |
-| Only patches left | `✓ Every commit on feature/x is in main, 2 of them as patches (rebased or cherry-picked)` |
+| Only patches left | `✓ Every commit on feature/x is in main, 2 of them as patches (rebased, cherry-picked or squash-merged)` |
+| Squash-merged | `✓ All changes on feature/x are in main — squash-merged as 7f3a2c1 "Add MCP import (#1677)" · Sep 23` |
+| Content already in base | `✓ All changes on feature/x are already in main (content matches; no single squash commit found)` |
+| No net change | `feature/x makes no net change against main` |
 | Everything merged | `✓ All commits on feature/x are in main — merged by 3c9e2f1 "Merge branch 'feature/x'" · Sep 27` |
 | Everything merged, no merge commit | `✓ All commits on feature/x are in main (fast-forward, no merge commit)` |
 | No refs | `Pick base and compare to see which commits are merged.` |
@@ -256,14 +264,20 @@ Merge commits carry a muted `merge` tag.
 
 With one group visible (Focus, a tab, or a single-repo workspace) the summary
 uses that group's display names — `main's pin ← feature/x's pin` for a gitlink
-submodule. With several visible it uses the toolbar pair and totals: the ✓ forms
-appear only when every visible group qualifies, and "merged by" names the super
-repo's introducing merge. Behind counts appear per group only; summing them
-across repos means nothing. The right end of the line holds the
-`Show merged commits` toggle and `▴`.
+submodule. With several visible it uses the toolbar pair and totals. Once every
+visible group is in base — by ancestry, patch or squash — it reads
+`✓ All changes on feature/x are in main across 2 repos`, and how each group got
+there ("merged by", "squash-merged as") stays in the group headers. Behind counts
+appear per group only; summing them across repos means nothing. The right end of
+the line holds the `Show merged commits` toggle and `▴`.
 
 Group headers carry the group's counts: `● 3 ◐ 1 · feature/x is 9 behind`
-(behind only when non-zero), or `✓ all in main · merged by 3c9e2f1`.
+(behind only when non-zero), `✓ all in main · merged by 3c9e2f1`,
+`◐ 3 · squash-merged as 7f3a2c1`, or `◐ 3 · content already in main`. While
+squash detection runs, the header adds `checking for squash…`.
+
+The "Only patches left" line covers single-commit squash merges too: a squash of
+one commit has that commit's patch, so `git cherry` already reports it as ◐.
 
 ### What each group lists
 
@@ -299,7 +313,14 @@ Clicking a row selects that commit:
 | Everything | `All changes · main ← feature/x` |
 | A ● commit | `Commit a41f2c9 · sandbox — not in main` `[× All changes]` |
 | A ◐ commit | `Commit 19c3e77 · sandbox — applied to main as a patch` `[× All changes]` |
+| A squashed commit | `Commit 5ab17e0 · sbx-idl — squashed into main as 7f3a2c1 (Sep 23)` `[× All changes]` |
+| A commit whose content matched | `Commit 5ab17e0 · sbx-idl — its changes are already in main` `[× All changes]` |
 | A ✓ commit | `Commit 5d0e8a2 · sandbox — merged by 3c9e2f1 (Sep 27)` `[× All changes]` |
+
+When squash detection found the group's changes in base, the "Everything" row
+reads `All changes · main ← feature/x — already in main (squash-merged as
+7f3a2c1)`. After a squash the three-dot diff still lists every change, because
+the merge-base did not move; this suffix is what says they have landed.
 
 The "merged by" part is looked up lazily on selection
 (`commitContainmentDetail`), replacing today's detail strip under the pane.
@@ -308,13 +329,95 @@ returns to all changes. The ◆ "All changes" row goes away.
 
 ### Out of scope for v1
 
-- Naming the base-side commit a ◐ row is equivalent to. `git cherry` reports only
-  the compare side, so this needs a new patch-id matching command. Follow-up.
+- Naming the base-side commit a `git cherry` ◐ row is equivalent to. `git cherry`
+  reports only the compare side; pairing needs per-commit patch-id matching.
+  Follow-up.
+- Squash detection commit by commit, for a branch that kept going after its
+  squash merge (see [Limits](#limits)). Follow-up.
 - Keyboard navigation in the table. The file list's ↑/↓ are unchanged.
 - A warning that a submodule pointer would move backward. Getting it right needs
   the merge-base pin; without it, the common case of the base advancing the
   pointer after the fork would be a false alarm.
 - Persisting the table's height.
+
+## Squash detection
+
+A squash merge folds a branch's commits into one new commit S on the base. The
+branch's commits are then neither ancestors of the base nor patch-equivalent to
+any single base commit — S carries their sum — so containment alone reports
+every one of them as ● forever, and the three-dot diff keeps listing all their
+changes. Two signals that fail in different situations recover the answer:
+
+1. **Patch-id match.** The patch-id of the branch's net change
+   (`git diff <merge-base> <compare>`) against the patch-ids of the base commits
+   since the fork. A match names S. S's own patch is fixed in history, so this
+   still works after the base later edits the same lines. It misses when the base
+   changed lines within the hunks' context between the fork and the squash,
+   because context lines are part of the patch-id.
+2. **Content check.** `git merge-tree --write-tree <base> <compare>` yields the
+   base's own tree exactly when merging compare would change nothing — its
+   changes are already there. This catches the context case the patch-id misses,
+   but it cannot name a commit, and it conflicts once the base has edited the
+   same lines after the squash. It needs git ≥ 2.38; on older git this signal is
+   skipped, and the README says so next to the existing git 2.30 note.
+
+Each claim above was checked against git 2.43 on throwaway repositories (plain
+squash; squash then a later edit of the same line; a context-line edit before
+the squash; both; a branch that kept going; an unmerged branch; a single-commit
+squash). The Rust tests encode the same cases.
+
+### The command
+
+`squash_check(path, source, target) -> SquashCheck`, declared on `GitLayer`
+(`src-tauri/src/git/mod.rs`), implemented in `cli.rs`, registered in `lib.rs`.
+`source` is compare and `target` is base, as for `containment`.
+
+```rust
+pub enum SquashVerdict { None, NoNetChange, Squash, Content }
+
+pub struct SquashCheck {
+    pub verdict: SquashVerdict,
+    /// The base commit whose patch equals the branch's net change (`Squash` only).
+    pub squash_commit: Option<Commit>,
+}
+```
+
+It stops at the first step that decides:
+
+1. `merge-base(target, source)` equals `target`: the base has nothing since the
+   fork, so it cannot hold a squash — `None`. This is the common "branch is
+   simply ahead" case and costs one git call.
+2. The net diff `merge-base..source` is empty: `NoNetChange`.
+3. No non-merge base commit since the fork touches the branch's changed paths:
+   `None`. When the branch touches too many paths for one command line, the path
+   filter is dropped and the newest 300 base commits since the fork are used.
+4. Patch-id the net diff and those candidates with `git patch-id --stable`, both
+   sides diffed with the same options (including `--binary`, so binary changes
+   hash by content). A match: `Squash`, with the oldest matching commit.
+5. Otherwise the content check: a clean `merge-tree` whose tree equals
+   `target^{tree}` gives `Content`; a different tree or a conflict gives `None`.
+
+### When it runs
+
+The table renders from containment first. Only then, and only for groups that
+still have ● rows (◐ from `git cherry` needs no explanation), the frontend calls
+`squash_check` in the background; the group header shows `checking for squash…`
+meanwhile. A `Squash` or `Content` verdict turns every ● row of the group into ◐
+with the matching status, and the summary line, the group header and the Files
+header switch to their squash forms. A `NoNetChange` verdict switches the
+summary to its "no net change" line. The check reruns whenever the group
+reloads, and the `bcSession` guard drops verdicts that arrive late.
+
+### Limits
+
+- **A branch that kept going after its squash merge.** Its net change is S plus
+  the new commits, so neither signal matches and every commit stays ●. Checking
+  commit by commit is a follow-up.
+- **Edits on both sides of the squash.** If the base changed lines within the
+  hunks' context before the squash *and* edited the same lines after it, both
+  signals fail and the rows stay ●.
+- **"Already in main" is a statement about content.** A branch whose identical
+  change reached the base some other way reads the same — which is still true.
 
 ## State
 
@@ -325,8 +428,9 @@ returns to all changes. The ◆ "All changes" row goes away.
   `bcHasMore`, `bcLoadingCommits`, `loadingContainment`, `containment`,
   `containmentDetail`, `bcSelectedSha`) with:
   - `bcGroups: Record<number, BcGroup>`, where a group holds its load status and
-    error, its commits and whether more remain, its `Containment` marks, and its
-    introducing merge once looked up;
+    error, its commits and whether more remain, its `Containment` marks, its
+    introducing merge once looked up, and its squash verdict (`checking` until
+    `squash_check` answers);
   - `bcSelected: { repoIdx: number; sha: string } | null`, plus the selected
     commit's lazily loaded detail;
   - `bcShowMerged: boolean`;
@@ -347,8 +451,11 @@ that arrive after the inputs changed.
 | `src/lib/repoRange.ts` (new) | The resolver, its types, `resolveRepoRanges()` |
 | `src/lib/workspace.ts` | `resolveDiffRefsFor` moves into the resolver; the override setters stay |
 | `src/lib/compare.ts` | Reads ranges; honors `bcDiffRange.repoIdx` |
-| `src/lib/branchContainment.ts` | Per-group loading, flipped direction, introducing merge, merged-commits toggle |
-| `src/lib/store.svelte.ts`, `src/lib/types.ts` | The state above |
+| `src/lib/branchContainment.ts` | Per-group loading, flipped direction, introducing merge, merged-commits toggle, background squash check |
+| `src/lib/store.svelte.ts`, `src/lib/types.ts` | The state above; `SquashCheck` |
+| `src/lib/git.ts` | `squashCheck` binding |
+| `src-tauri/src/git/mod.rs`, `src-tauri/src/git/cli.rs`, `src-tauri/src/lib.rs` | `squash_check` on `GitLayer`, its implementation and tests, the command registration |
+| `README.md` | git ≥ 2.38 for the squash content check |
 | `src/lib/ui/BranchModeFields.svelte` | `base` / `compare`, super pair only, no override editing |
 | `src/lib/ui/ScopeBar.svelte` (new) | The scope bar |
 | `src/lib/ui/BranchContainment.svelte` | Rewritten as `CommitTable.svelte` |
@@ -358,7 +465,7 @@ that arrive after the inputs changed.
 | `src/lib/ui/Breadcrumb.svelte` | `main ← feature/x (since fork)` notation instead of `main...feature/x` |
 | `CHANGELOG.md` | Release notes |
 
-No Rust changes.
+The only Rust change is `squash_check`.
 
 ## Edge cases
 
@@ -378,11 +485,10 @@ No Rust changes.
   empty tree, as today.
 - **Repo moves** (fetch, checkout, rebase, push, another tool): `refsRefresh`
   re-resolves ranges and reloads groups, as the pane does today.
-- **Squash-merged branch** (known limitation, unchanged from today): a squash
-  commit is neither an ancestor link nor patch-equivalent to the individual
-  commits, so they stay ● `not in main` even though their content landed. The
-  table reports ancestry truthfully; detecting squashes would need tree
-  comparison and is out of scope.
+- **Squash-merged branch:** reported through [Squash detection](#squash-detection);
+  its [Limits](#limits) list the cases that still read as ●.
+- **Git older than 2.38:** squash detection runs without its content check, so
+  only patch-id matches are found.
 
 ## Error handling
 
@@ -390,6 +496,8 @@ No Rust changes.
 - A group whose containment or list read fails shows its error in the group;
   other groups render normally.
 - A failed introducing-merge lookup drops "merged by" from the summary.
+- A failed `squash_check` leaves the group's rows as containment reported them
+  and clears `checking for squash…`.
 - A failed file diff uses `DiffView`'s existing error display.
 
 ## Testing
@@ -410,8 +518,19 @@ Unit tests (vitest), mocking `./git` and `./store.svelte` the way
   dropped.
 - A compare test for the drill: with `bcDiffRange.repoIdx` on a submodule, only
   that repo is scanned, with the commit's range.
+- Squash in `branchContainment.test.ts` — the check runs only for groups with ●
+  rows; `Squash` and `Content` turn ● rows into ◐ with their statuses;
+  `NoNetChange` switches the summary; a failed check leaves the rows alone.
 
-`npm run check` and `npm test` pass. No Rust tests are affected.
+Rust tests in `cli.rs`, on real throwaway repositories built with the existing
+`temp_repo` / `git_in` helpers, one per case: plain squash (`Squash`, naming S);
+squash then a later edit of the same line (`Squash`, from the patch-id);
+a context-line edit before the squash (`Content`, from merge-tree); the base
+merged back into the branch after its squash (`NoNetChange`); a branch that kept
+going (`None`, pinning the limit); an unmerged branch (`None`); and a base with
+nothing since the fork (`None` at step 1).
+
+`npm run check`, `npm test` and `cargo test` pass.
 
 Manual verification on the nested-submodule Unreal workspace
 (`C:\workspace\sandbox`):
@@ -423,6 +542,8 @@ Manual verification on the nested-submodule Unreal workspace
 5. A cherry-picked commit (◐).
 6. Focus in Unified, and Tabs.
 7. Clicking a submodule commit lists its files (the drill bug).
+8. A squash-merged sbx-idl branch, compared on its own branches and through a
+   super branch that pinned its pre-squash commit.
 
 ## Implementation order
 
@@ -437,4 +558,7 @@ Each step builds and tests on its own.
    headers, the diff header.
 4. **Commit table layout.** The top table and resizer, per-repo groups, the
    merged summary and toggle, the Files header states.
-5. **CHANGELOG.**
+5. **Squash detection.** `squash_check` and its Rust tests, the binding, the
+   background check and the squash forms of the table, headers and summary, the
+   README note.
+6. **CHANGELOG.**
