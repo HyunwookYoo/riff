@@ -8,7 +8,7 @@ use std::path::Path;
 use git::{
     Blame, Branch, BranchStatus, ChangedFile, Commit, Containment, ContainmentDetail,
     ConflictVersions, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer, RebaseStep,
-    ReflogEntry, RepoStatus, SubmoduleInfo,
+    ReflogEntry, RepoStatus, SquashCheck, SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
@@ -438,6 +438,16 @@ async fn commit_containment_detail(
 }
 
 #[tauri::command]
+async fn squash_check(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    source: String,
+    target: String,
+) -> Result<SquashCheck, GitError> {
+    state.squash_check(Path::new(&path), &source, &target)
+}
+
+#[tauri::command]
 fn load_state(app: tauri::AppHandle) -> Result<PersistedState, StoreError> {
     store::load(&app)
 }
@@ -594,6 +604,7 @@ pub fn run() {
             containment,
             commit_log_excluding,
             commit_containment_detail,
+            squash_check,
             load_state,
             add_recent_repo,
             remove_recent_repo,

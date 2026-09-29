@@ -14,7 +14,7 @@ use super::uasset;
 use super::{
     Branch, BranchKind, BranchStatus, ChangedFile, Commit, Containment, ContainmentDetail,
     ConflictVersions, DiffMode, FileDiff, FileStatus, GitError, GitLayer, RebaseStep, ReflogEntry,
-    RepoStatus, StatusEntry, SubmoduleCommit, SubmoduleInfo,
+    RepoStatus, SquashCheck, SquashVerdict, StatusEntry, SubmoduleCommit, SubmoduleInfo,
 };
 
 /// Soft cap on a single side of a diff. Above this, frontend must opt in via `force`.
@@ -23,6 +23,12 @@ const LARGE_FILE_BYTES: u64 = 1_000_000;
 /// Max submodule commits listed per direction in a `FileDiff::Submodule`. The
 /// header still reports the exact full count; excess rows collapse to "+N more".
 const SUBMODULE_LOG_CAP: usize = 50;
+
+/// Above this many changed paths, `squash_check` stops passing them as
+/// pathspecs — a Windows command line holds at most 32K characters — and scans
+/// the newest `SQUASH_SCAN_CAP` base commits since the fork instead.
+const SQUASH_MAX_PATHSPECS: usize = 200;
+const SQUASH_SCAN_CAP: &str = "300";
 
 /// Bytes scanned for NUL when sniffing for binary content.
 const BINARY_SNIFF_BYTES: usize = 8192;
@@ -389,6 +395,43 @@ fn parse_cherry_equivalent(text: &str) -> Vec<String> {
         .filter_map(|l| l.strip_prefix("- "))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Run `git patch-id --stable` over `patches` — a bare diff, or `log -p` output
+/// whose commits start with `commit <sha>` lines — and return the
+/// (patch-id, commit) pairs in input order. A bare diff pairs with the all-zero
+/// commit id.
+fn patch_ids(path: &Path, patches: &[u8]) -> Result<Vec<(String, String)>, GitError> {
+    let mut child = git_command()
+        .arg("-C")
+        .arg(path)
+        .args(["patch-id", "--stable"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let input = patches.to_vec();
+    // patch-id prints as it reads: feed it from a thread so a full stdout pipe
+    // can never stall the write.
+    let feeder = std::thread::spawn(move || stdin.write_all(&input));
+    let out = child.wait_with_output()?;
+    let _ = feeder.join();
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(GitError::CommandFailed(stderr));
+    }
+    Ok(parse_patch_ids(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// Parse `git patch-id` output: one `<patch-id> <commit>` pair per line.
+fn parse_patch_ids(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            Some((parts.next()?.to_string(), parts.next()?.to_string()))
+        })
         .collect()
 }
 
@@ -2123,6 +2166,144 @@ impl GitLayer for GitCli {
             introduced_by,
         })
     }
+
+    fn squash_check(
+        &self,
+        path: &Path,
+        source: &str,
+        target: &str,
+    ) -> Result<SquashCheck, GitError> {
+        let source = validate_ref(source)?;
+        let target = validate_ref(target)?;
+        let verdict = |v: SquashVerdict| SquashCheck {
+            verdict: v,
+            squash_commit: None,
+        };
+
+        // Unrelated histories have no merge-base and nothing to compare.
+        let mb = match self.run(path, &["merge-base", target, source]) {
+            Ok(out) => String::from_utf8_lossy(&out).trim().to_string(),
+            Err(_) => return Ok(verdict(SquashVerdict::None)),
+        };
+
+        // No net change since the fork — e.g. the base merged back in after a
+        // squash. `diff --quiet` exits 1 when the trees differ.
+        let quiet = git_command()
+            .arg("-C")
+            .arg(path)
+            .args(["diff", "--quiet", "--no-ext-diff", "--no-textconv", &mb, source])
+            .output()?;
+        match quiet.status.code() {
+            Some(0) => return Ok(verdict(SquashVerdict::NoNetChange)),
+            Some(1) => {}
+            _ => {
+                let stderr = String::from_utf8_lossy(&quiet.stderr).trim().to_string();
+                return Err(GitError::CommandFailed(stderr));
+            }
+        }
+
+        // The base has nothing since the fork, so it cannot hold a squash —
+        // the common "branch is simply ahead" case.
+        let target_sha = self.run(
+            path,
+            &["rev-parse", "--verify", &format!("{target}^{{commit}}")],
+        )?;
+        if mb == String::from_utf8_lossy(&target_sha).trim() {
+            return Ok(verdict(SquashVerdict::None));
+        }
+
+        // Candidates: non-merge base commits since the fork that touch the
+        // branch's paths, or the newest few hundred when the paths would not
+        // fit on one command line. Renames are off on every diff here so both
+        // sides describe a rename the same way (delete + add).
+        let names = self.run(
+            path,
+            &["diff", "--name-only", "-z", "--no-renames", &mb, source],
+        )?;
+        let paths: Vec<String> = names
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .collect();
+        let range = format!("{mb}..{target}");
+        let mut log: Vec<&str> = vec![
+            "--literal-pathspecs",
+            "log",
+            "--no-merges",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "-p",
+            "--binary",
+            "--format=commit %H",
+            &range,
+        ];
+        if paths.len() > SQUASH_MAX_PATHSPECS {
+            log.extend(["-n", SQUASH_SCAN_CAP]);
+        } else {
+            log.push("--");
+            log.extend(paths.iter().map(String::as_str));
+        }
+        let candidates = self.run(path, &log)?;
+        if candidates.is_empty() {
+            return Ok(verdict(SquashVerdict::None));
+        }
+
+        // A base commit whose patch is exactly the branch's net change.
+        let net = self.run(
+            path,
+            &[
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                "--binary",
+                &mb,
+                source,
+            ],
+        )?;
+        if let Some((want, _)) = patch_ids(path, &net)?.into_iter().next() {
+            // `git log` lists newest first; the oldest match is where it landed.
+            let found = patch_ids(path, &candidates)?
+                .into_iter()
+                .filter(|(id, _)| *id == want)
+                .last();
+            if let Some((_, sha)) = found {
+                let one = self.run(path, &["log", "-1", "-z", COMMIT_LOG_FORMAT, &sha])?;
+                let squash_commit = parse_commit_log(&String::from_utf8_lossy(&one))
+                    .into_iter()
+                    .next();
+                return Ok(SquashCheck {
+                    verdict: SquashVerdict::Squash,
+                    squash_commit,
+                });
+            }
+        }
+
+        // Content check (git 2.38+): merging would change nothing. A conflict
+        // exits non-zero, and so does an older git without --write-tree — both
+        // read as "not detected".
+        let merged = git_command()
+            .arg("-C")
+            .arg(path)
+            .args(["merge-tree", "--write-tree", target, source])
+            .output()?;
+        if merged.status.success() {
+            let tree = String::from_utf8_lossy(&merged.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let target_tree = self.run(path, &["rev-parse", &format!("{target}^{{tree}}")])?;
+            if !tree.is_empty() && tree == String::from_utf8_lossy(&target_tree).trim() {
+                return Ok(verdict(SquashVerdict::Content));
+            }
+        }
+        Ok(verdict(SquashVerdict::None))
+    }
 }
 
 /// Spawn a recursive filesystem watcher rooted at the repo. Each event
@@ -2853,6 +3034,156 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
             .output()
             .unwrap();
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// The squash fixtures' ten-line file, with the given 1-based lines replaced.
+    fn ten_lines(edits: &[(usize, &str)]) -> String {
+        (1..=10)
+            .map(|n| {
+                let text = edits
+                    .iter()
+                    .find(|(at, _)| *at == n)
+                    .map(|(_, t)| t.to_string())
+                    .unwrap_or(format!("l{n}"));
+                format!("{text}\n")
+            })
+            .collect()
+    }
+
+    /// `base` holding the ten-line file, and `feat` off it changing lines 5 and
+    /// 6 in two commits — the branch every squash test merges. Leaves `base`
+    /// checked out.
+    fn squash_fixture(name: &str) -> PathBuf {
+        let repo = temp_repo(name);
+        git_in(&repo, &["config", "core.autocrlf", "false"]);
+        git_in(&repo, &["checkout", "-q", "-b", "base"]);
+        commit_file(&repo, "f.txt", &ten_lines(&[]), "ten lines");
+        git_in(&repo, &["checkout", "-q", "-b", "feat"]);
+        commit_file(&repo, "f.txt", &ten_lines(&[(5, "L5")]), "a");
+        commit_file(&repo, "f.txt", &ten_lines(&[(5, "L5"), (6, "L6")]), "b");
+        git_in(&repo, &["checkout", "-q", "base"]);
+        repo
+    }
+
+    /// Squash-merge `feat` into the checked-out branch as one commit.
+    fn squash_merge(repo: &Path) {
+        git_in(repo, &["merge", "--squash", "-q", "feat"]);
+        git_in(repo, &["commit", "-qm", "squash feat (#1)"]);
+    }
+
+    #[test]
+    fn squash_check_names_the_squash_commit() {
+        let repo = squash_fixture("squash-plain");
+        squash_merge(&repo);
+        let squash = rev_parse(&repo, "base");
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::Squash);
+        assert_eq!(r.squash_commit.map(|c| c.sha), Some(squash));
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_finds_the_squash_after_base_edits_the_same_line() {
+        // The patch-id half: merge-tree conflicts here, but S's own patch is
+        // fixed in history.
+        let repo = squash_fixture("squash-later-edit");
+        squash_merge(&repo);
+        let squash = rev_parse(&repo, "base");
+        commit_file(&repo, "f.txt", &ten_lines(&[(5, "X5"), (6, "L6")]), "later");
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::Squash);
+        assert_eq!(r.squash_commit.map(|c| c.sha), Some(squash));
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_falls_back_to_content_after_a_context_edit() {
+        // The merge-tree half: base changed line 2 — inside the hunk's context,
+        // not adjacent, so the squash still merges cleanly — before the squash.
+        // S's patch-id then differs from the branch's, but merging the branch
+        // would change nothing.
+        let repo = squash_fixture("squash-context");
+        commit_file(&repo, "f.txt", &ten_lines(&[(2, "M2")]), "context");
+        squash_merge(&repo);
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::Content);
+        assert!(r.squash_commit.is_none());
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_reports_no_net_change_once_base_is_merged_back() {
+        let repo = squash_fixture("squash-merged-back");
+        squash_merge(&repo);
+        git_in(&repo, &["checkout", "-q", "feat"]);
+        git_in(&repo, &["merge", "-q", "--no-edit", "base"]);
+        git_in(&repo, &["checkout", "-q", "base"]);
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::NoNetChange);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_misses_a_branch_that_kept_going() {
+        // Pins the documented limit: the net change is S plus new work.
+        let repo = squash_fixture("squash-kept-going");
+        squash_merge(&repo);
+        git_in(&repo, &["checkout", "-q", "feat"]);
+        commit_file(&repo, "f.txt", &ten_lines(&[(5, "L5"), (6, "L6"), (8, "L8")]), "c");
+        git_in(&repo, &["checkout", "-q", "base"]);
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::None);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_ignores_an_unmerged_branch() {
+        let repo = squash_fixture("squash-unmerged");
+        commit_file(&repo, "f.txt", &ten_lines(&[(10, "M10")]), "other");
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::None);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_stops_when_base_has_nothing_since_the_fork() {
+        let repo = squash_fixture("squash-ahead");
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::None);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_scans_without_pathspecs_for_a_wide_branch() {
+        // Review focus: more changed paths than fit on one command line. The
+        // scan drops the path filter and still finds the squash among the
+        // newest base commits.
+        let repo = squash_fixture("squash-wide");
+        git_in(&repo, &["checkout", "-q", "feat"]);
+        for i in 0..(SQUASH_MAX_PATHSPECS + 5) {
+            fs::write(repo.join(format!("w{i}.txt")), format!("{i}\n")).unwrap();
+        }
+        git_in(&repo, &["add", "-A"]);
+        git_in(&repo, &["commit", "-qm", "wide"]);
+        git_in(&repo, &["checkout", "-q", "base"]);
+        squash_merge(&repo);
+        let squash = rev_parse(&repo, "base");
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::Squash);
+        assert_eq!(r.squash_commit.map(|c| c.sha), Some(squash));
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn parse_patch_ids_reads_pairs_in_order() {
+        assert_eq!(
+            parse_patch_ids("aaa 111\nbbb 222\n\n"),
+            vec![
+                ("aaa".to_string(), "111".to_string()),
+                ("bbb".to_string(), "222".to_string())
+            ]
+        );
+        assert!(parse_patch_ids("").is_empty());
     }
 
     #[test]

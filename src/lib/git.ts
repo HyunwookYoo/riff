@@ -17,6 +17,7 @@ import type {
   RebaseStep,
   ReflogEntry,
   RepoStatus,
+  SquashCheck,
   SubmoduleInfo,
   ThemeChoice,
   WorkspaceLayout,
@@ -314,6 +315,20 @@ export function commitContainmentDetail(
 ): Promise<ContainmentDetail> {
   return share(`commit_containment_detail|${path}|${sha}|${target}`, () =>
     invoke("commit_containment_detail", { path, sha, target }),
+  );
+}
+
+/**
+ * Whether `source`'s changes already reached `target` without ancestry: one
+ * squash commit (`squash`, named) or content only (`content`). Read-only.
+ */
+export function squashCheck(
+  path: string,
+  source: string,
+  target: string,
+): Promise<SquashCheck> {
+  return share(`squash_check|${path}|${source}|${target}`, () =>
+    invoke("squash_check", { path, source, target }),
   );
 }
 

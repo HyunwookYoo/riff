@@ -393,3 +393,13 @@ export interface BcGroup {
   /// a fast-forward. undefined while unknown or not applicable.
   mergedBy: Commit | null | undefined;
 }
+
+/// Mirrors Rust `SquashVerdict` (serde kebab-case).
+export type SquashVerdict = "none" | "no-net-change" | "squash" | "content";
+
+/// Mirrors Rust `SquashCheck`: whether a branch's changes reached the base
+/// without ancestry. `squash_commit` is set for `squash` only.
+export interface SquashCheck {
+  verdict: SquashVerdict;
+  squash_commit: Commit | null;
+}

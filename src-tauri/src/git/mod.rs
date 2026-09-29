@@ -94,6 +94,28 @@ pub struct ContainmentDetail {
     pub introduced_by: Option<Commit>,
 }
 
+/// Whether a branch's changes already reached the base without ancestry — the
+/// squash-merge case `containment` cannot see. See `GitLayer::squash_check`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SquashVerdict {
+    /// Not detected: the branch's changes are not (visibly) in the base.
+    None,
+    /// The branch makes no net change against its merge-base with the base.
+    NoNetChange,
+    /// One base commit carries exactly the branch's net change.
+    Squash,
+    /// Merging the branch would change nothing, but no single commit matches.
+    Content,
+}
+
+/// Result of `squash_check`. `squash_commit` is set for `Squash` only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SquashCheck {
+    pub verdict: SquashVerdict,
+    pub squash_commit: Option<Commit>,
+}
+
 /// One entry from `git status --porcelain=v2`. `index_status` / `worktree_status`
 /// are the porcelain-v2 XY status codes: X is the *staged* side (HEAD↔index),
 /// Y the *unstaged* side (index↔worktree). Each is a single character from
@@ -527,6 +549,17 @@ pub trait GitLayer {
         sha: &str,
         target: &str,
     ) -> Result<ContainmentDetail, GitError>;
+    /// Whether `source`'s changes since its merge-base with `target` already
+    /// landed in `target` without ancestry: as one commit whose patch-id equals
+    /// the branch's net change (`Squash`), or as content only — merging would
+    /// change nothing (`Content`, needs git 2.38's `merge-tree --write-tree`).
+    /// Read-only.
+    fn squash_check(
+        &self,
+        path: &Path,
+        source: &str,
+        target: &str,
+    ) -> Result<SquashCheck, GitError>;
     /// Read `.gitmodules` (if present) and return the declared submodules.
     /// Empty list when there is no `.gitmodules` or it contains no
     /// `submodule.<name>.path` entries. Used to auto-populate the multi-root
