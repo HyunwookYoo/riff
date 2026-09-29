@@ -1,5 +1,6 @@
 import { appState } from "./store.svelte";
 import { compare } from "./compare";
+import { clearPick } from "./branchContainment";
 import type { CompareCtx } from "./types";
 
 /** Capture overrides currently set on non-main repos. Round-tripped via
@@ -89,8 +90,8 @@ export function pushAndDrillToCommit(sha: string, repoIdx?: number): void {
   const isNonMainDrill = targetRepo !== null && targetRepo.kind !== "main";
 
   if (isNonMainDrill) {
-    // Set the override on the target repo so fetchRepoChanges hits the
-    // override branch (direct `git diff <sha>^ <sha>` inside that repo).
+    // Set the override on the target repo so resolveRepoRange takes its
+    // override rule (a direct `git diff <sha>^ <sha>` inside that repo).
     // Without this, submodules would fall through to gitlink-follow which
     // tries to resolve the SHA in main's history and gets null.
     const next = [...appState.repos];
@@ -109,6 +110,10 @@ export function pushAndDrillToCommit(sha: string, repoIdx?: number): void {
       appState.activeRepoIdx = repoIdx!;
     }
   }
+  // A commit picked in the commit table outranks everything in compare(); a
+  // drill (above all one into a submodule, which leaves the toolbar pair
+  // alone) is a fresh view, so the pick goes first.
+  clearPick();
   void compare();
 }
 
@@ -141,6 +146,8 @@ function applyCtx(ctx: CompareCtx): void {
   // Compare-side rehydration: reload the file list. Blame-side state lives
   // in `appState.blameTarget` and survives the drill round-trip on its own.
   if (ctx.appMode === "compare") {
+    // The restored view is not the one a commit was picked in.
+    clearPick();
     void compare({ preservePath: ctx.selectedFilePath });
   }
 }

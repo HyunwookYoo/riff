@@ -341,11 +341,7 @@ async function loadOnce(): Promise<void> {
   });
   const drill = appState.bcDiffRange;
   const keepPick = drill !== null && unchanged.has(drill.repoIdx);
-  if (!keepPick) {
-    appState.bcSelected = null;
-    appState.bcSelectedDetail = null;
-    appState.bcDiffRange = null;
-  }
+  if (!keepPick) clearPick();
   appState.bcGroups = groups;
   if (Object.keys(groups).length === 0) {
     // Nothing to compare yet: drop a leftover selection (e.g. a file opened in
@@ -429,11 +425,17 @@ export function selectBranchCommit(repoIdx: number, commit: Commit): void {
   void compare();
 }
 
-/// Drop the picked commit and show all changes again.
-export function showAllChanges(): void {
+/// Drop the picked commit: its selection, detail and diff range. Re-listing
+/// the files is the caller's job.
+export function clearPick(): void {
   appState.bcSelected = null;
   appState.bcSelectedDetail = null;
   appState.bcDiffRange = null;
+}
+
+/// Drop the picked commit and show all changes again.
+export function showAllChanges(): void {
+  clearPick();
   void compare();
 }
 
@@ -443,9 +445,7 @@ export function showAllChanges(): void {
 export function dropPickOutside(idx: number): boolean {
   const d = appState.bcDiffRange;
   if (!d || d.repoIdx === idx) return false;
-  appState.bcSelected = null;
-  appState.bcSelectedDetail = null;
-  appState.bcDiffRange = null;
+  clearPick();
   return true;
 }
 
@@ -468,7 +468,5 @@ async function loadSelectedDetail(repoIdx: number, sha: string): Promise<void> {
 export function clearBranchContainment(): void {
   bcSession++;
   appState.bcGroups = {};
-  appState.bcSelected = null;
-  appState.bcSelectedDetail = null;
-  appState.bcDiffRange = null;
+  clearPick();
 }

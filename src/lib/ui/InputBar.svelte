@@ -3,6 +3,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { appState } from "$lib/store.svelte";
   import { compare } from "$lib/compare";
+  import { clearPick } from "$lib/branchContainment";
   import {
     enterGraphView,
     restoreCompareContext,
@@ -218,9 +219,7 @@
       onclick={() => {
         // "Compare" shows the aggregate base↔compare diff — drop a commit
         // picked in the commit table first.
-        appState.bcSelected = null;
-        appState.bcSelectedDetail = null;
-        appState.bcDiffRange = null;
+        clearPick();
         void compare();
       }}
       disabled={appState.loadingFiles || appState.loadingRepo}

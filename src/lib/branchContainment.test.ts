@@ -16,6 +16,7 @@ vi.mock("./compare", () => ({ compare: vi.fn() }));
 
 import {
   PAGE_SIZE,
+  clearPick,
   dropPickOutside,
   groupCounts,
   isRepoVisible,
@@ -599,6 +600,18 @@ describe("picking a commit", () => {
     appState.bcGroups = { 0: group({}) };
     selectBranchCommit(0, commit("r1", []));
     expect(appState.bcDiffRange?.start).toBe("4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+  });
+
+  it("drops a pick without listing anything itself", () => {
+    appState.bcGroups = { 0: group({}) };
+    selectBranchCommit(0, commit("c1", ["c0"]));
+    appState.bcSelectedDetail = { in_target: false, introduced_by: null };
+    vi.mocked(compare).mockClear();
+    clearPick();
+    expect(appState.bcSelected).toBeNull();
+    expect(appState.bcSelectedDetail).toBeNull();
+    expect(appState.bcDiffRange).toBeNull();
+    expect(compare).not.toHaveBeenCalled();
   });
 
   it("drops the pick when the view narrows to another repo", () => {

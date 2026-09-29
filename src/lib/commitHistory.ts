@@ -1,6 +1,7 @@
 import { appState } from "./store.svelte";
 import { commitLog, status } from "./git";
 import { compare } from "./compare";
+import { clearPick } from "./branchContainment";
 import { loadCurrentBranch, loadPendingOp, mergeDuplicatePaths } from "./workingCopy";
 import type { Branch, Commit } from "./types";
 
@@ -244,11 +245,12 @@ export function openCommit(commit: Commit): void {
   appState.compareMode = "branch";
   appState.mode = "two-dot";
   appState.selectedFile = null;
-  // A per-commit drill from Branch mode (`bcDiffRange`) takes priority in
+  // A commit picked in Branch mode's table (`bcDiffRange`) takes priority in
   // compare() — so a leftover one would make the graph keep diffing that stale
-  // range instead of the commit just clicked (empty/wrong file list). This is
-  // the graph's own parent..commit view, so clear the drill.
-  appState.bcDiffRange = null;
+  // range instead of the commit just clicked (empty/wrong file list), and its
+  // Files header would name it. This is the graph's own parent..commit view,
+  // so the pick goes.
+  clearPick();
 
   if (!repo || repo.kind === "main") {
     appState.startBranch = start;

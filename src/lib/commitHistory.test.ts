@@ -19,10 +19,10 @@ vi.mock("./git", () => ({
 }));
 vi.mock("./compare", () => ({ compare: vi.fn() }));
 
-import { loadWipCount } from "./commitHistory";
+import { loadWipCount, openCommit } from "./commitHistory";
 import { appState } from "./store.svelte";
 import { status } from "./git";
-import type { RepoStatus, StatusEntry } from "./types";
+import type { Commit, RepoStatus, StatusEntry } from "./types";
 
 const entry = (
   path: string,
@@ -72,5 +72,32 @@ describe("loadWipCount", () => {
     vi.mocked(status).mockRejectedValue(new Error("not a repo"));
     await loadWipCount();
     expect(appState.wipCount).toBe(0);
+  });
+});
+
+describe("openCommit", () => {
+  it("drops the whole commit-table pick, not only its diff range", () => {
+    // Review focus (F6): a leftover bcSelected kept the Files header on the
+    // old "Commit abc1234" line over the graph commit's files.
+    const c: Commit = {
+      sha: "g1",
+      short_sha: "g1",
+      parents: ["g0"],
+      author: "a",
+      time: 0,
+      summary: "g1",
+      refs: [],
+      body: "",
+    };
+    Object.assign(appState, {
+      bcSelected: { repoIdx: 0, commit: { ...c, sha: "c1" } },
+      bcSelectedDetail: { in_target: true, introduced_by: null },
+      bcDiffRange: { repoIdx: 0, start: "c0", target: "c1" },
+    });
+    openCommit(c);
+    expect(appState.bcSelected).toBeNull();
+    expect(appState.bcSelectedDetail).toBeNull();
+    expect(appState.bcDiffRange).toBeNull();
+    expect(appState.targetBranch).toBe("g1");
   });
 });
