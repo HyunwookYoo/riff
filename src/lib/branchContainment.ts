@@ -21,8 +21,8 @@ const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 // Monotonic guard, bumped by every load (and by clearBranchContainment). A
 // load that another has taken over — a call for a different pair, repo or
 // override starts at once — finds it moved at its next await and drops its
-// results. A refresh alone (same inputs) never bumps it: it waits for the
-// running load instead (see loadBranchContainment).
+// results. A refresh (same inputs) never bumps it while a load runs: it asks
+// for one more pass, run once that load is done (see loadBranchContainment).
 let bcSession = 0;
 
 // Bumped by every "Show merged commits" toggle: a page fetched for the other
@@ -309,16 +309,21 @@ function settlePick(idx: number): void {
 /// A group that has an answer keeps it while the next one is on its way —
 /// refsRefresh fires on every saved file, and ◐ rows must not flicker back to ●.
 /// The group's tips are stored with the answer (or the failure); an answer
-/// dropped because a newer load took over stores none.
+/// dropped because a newer load took over stores none. Nor does one that
+/// lands after a merged-commits toggle: the group's rows are the other list's
+/// until the toggle's refetch lands, and the tips the toggle cleared are what
+/// makes a load that drops that refetch reload the group.
 async function checkSquash(idx: number, s: number, tips: Tips): Promise<void> {
   const g = appState.bcGroups[idx];
   if (!g) return;
+  const list = listSession;
   if (g.squash === null) patchGroup(idx, { squash: "checking" });
+  const stored = () => (list === listSession ? tips : {});
   try {
     const result = await squashCheck(g.path, g.compare, g.base);
-    if (s === bcSession) patchGroup(idx, { squash: result, ...tips });
+    if (s === bcSession) patchGroup(idx, { squash: result, ...stored() });
   } catch {
-    if (s === bcSession) patchGroup(idx, { squash: null, ...tips });
+    if (s === bcSession) patchGroup(idx, { squash: null, ...stored() });
   }
 }
 

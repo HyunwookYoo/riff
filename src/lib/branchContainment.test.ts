@@ -658,6 +658,61 @@ describe("refreshes", () => {
     expect(appState.bcGroups[0].loadingMore).toBe(false);
   });
 
+  describe("a toggle while a squash check runs", () => {
+    // Review focus (round 3): the toggle clears the group's tips so a load
+    // that drops its refetch reloads the group. A verdict landing in between
+    // must not store them again, or that load skips the group and the old
+    // list's rows stay under the new checkbox.
+    let releasePage: (c: Commit[]) => void = () => {};
+    let releaseSq: (c: SquashCheck) => void = () => {};
+
+    beforeEach(() => {
+      vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+      // Tip reads answer at once; the toggle's refetch (the merged list's
+      // first page) waits; a later merged page is the whole list.
+      let pages = 0;
+      vi.mocked(commitLog).mockImplementation((_path, ref, _all, limit) => {
+        if (limit === 1) return Promise.resolve([commit(`${ref}-tip`)]);
+        pages++;
+        return pages === 1
+          ? new Promise<Commit[]>((r) => (releasePage = r))
+          : Promise.resolve([commit("c1"), commit("old")]);
+      });
+      vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+      vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+      vi.mocked(squashCheck)
+        .mockImplementationOnce(() => new Promise<SquashCheck>((r) => (releaseSq = r)))
+        .mockResolvedValue(none);
+    });
+
+    it("reloads the new list when a refresh follows a verdict that beat the refetch", async () => {
+      const first = loadBranchContainment();
+      await tick();
+      expect(appState.bcGroups[0].squash).toBe("checking");
+      const toggle = setShowMerged(true);
+      releaseSq(none);
+      await first;
+      await loadBranchContainment();
+      releasePage([commit("c1")]);
+      await toggle;
+      expect(appState.bcShowMerged).toBe(true);
+      expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c1", "old"]);
+    });
+
+    it("reloads the new list in the extra pass the verdict's load runs next", async () => {
+      const first = loadBranchContainment();
+      await tick();
+      void loadBranchContainment();
+      const toggle = setShowMerged(true);
+      releaseSq(none);
+      await first;
+      releasePage([commit("c1")]);
+      await toggle;
+      expect(appState.bcShowMerged).toBe(true);
+      expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c1", "old"]);
+    });
+  });
+
   it("reloads the new list when a refresh drops a toggle's refetch", async () => {
     // The refresh's session drops the refetch; skipping the group by its tips
     // would then leave the old list's rows under the new checkbox.
