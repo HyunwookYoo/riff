@@ -384,17 +384,22 @@ pub struct SquashCheck {
 
 It stops at the first step that decides:
 
-1. `merge-base(target, source)` equals `target`: the base has nothing since the
-   fork, so it cannot hold a squash — `None`. This is the common "branch is
-   simply ahead" case and costs one git call.
-2. The net diff `merge-base..source` is empty: `NoNetChange`.
-3. No non-merge base commit since the fork touches the branch's changed paths:
+1. No merge-base (unrelated histories): `None`.
+2. The net diff `merge-base..source` is empty (`git diff --quiet`):
+   `NoNetChange`. This comes before step 3 so a branch that merged the base back
+   in after its squash reads as "no net change" rather than "simply ahead".
+   (Corrected while planning; the first draft had the two steps the other way
+   round.)
+3. `merge-base` equals `target`: the base has nothing since the fork, so it
+   cannot hold a squash — `None`. The common "branch is simply ahead" case.
+4. No non-merge base commit since the fork touches the branch's changed paths:
    `None`. When the branch touches too many paths for one command line, the path
    filter is dropped and the newest 300 base commits since the fork are used.
-4. Patch-id the net diff and those candidates with `git patch-id --stable`, both
-   sides diffed with the same options (including `--binary`, so binary changes
-   hash by content). A match: `Squash`, with the oldest matching commit.
-5. Otherwise the content check: a clean `merge-tree` whose tree equals
+5. Patch-id the net diff and those candidates with `git patch-id --stable`, both
+   sides diffed with the same options — `--binary` so binary changes hash by
+   content, renames and textconv off so both sides describe a change the same
+   way. A match: `Squash`, with the oldest matching commit.
+6. Otherwise the content check: a clean `merge-tree` whose tree equals
    `target^{tree}` gives `Content`; a different tree or a conflict gives `None`.
 
 ### When it runs
@@ -527,8 +532,9 @@ Rust tests in `cli.rs`, on real throwaway repositories built with the existing
 squash then a later edit of the same line (`Squash`, from the patch-id);
 a context-line edit before the squash (`Content`, from merge-tree); the base
 merged back into the branch after its squash (`NoNetChange`); a branch that kept
-going (`None`, pinning the limit); an unmerged branch (`None`); and a base with
-nothing since the fork (`None` at step 1).
+going (`None`, pinning the limit); an unmerged branch (`None`); a base with
+nothing since the fork (`None` at step 3); and a branch touching more paths than
+fit on one command line (`Squash`, found without the path filter).
 
 `npm run check`, `npm test` and `cargo test` pass.
 
