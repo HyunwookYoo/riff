@@ -6,7 +6,7 @@
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
   import { changesFileDiff, fileDiff, setUeVersionForRepo } from "$lib/git";
-  import { resolveDiffRefsFor } from "$lib/workspace";
+  import { resolveRepoRanges } from "$lib/repoRange";
   import type { ChangedFile, FileDiff } from "$lib/types";
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
@@ -176,9 +176,12 @@
           force,
           ueVersion,
         );
-      } else if (appState.bcDiffRange && repoIdx === 0) {
-        // Branch-mode containment drill: this file's diff is parent..commit
-        // (the selected commit), not the toolbar's start..target.
+      } else if (
+        appState.bcDiffRange &&
+        appState.bcDiffRange.repoIdx === repoIdx
+      ) {
+        // A commit picked in the commit table: this file's diff is
+        // parent..commit inside the commit's own repo, not the toolbar range.
         const range = appState.bcDiffRange;
         next = await fileDiff(
           repoPath,
@@ -191,14 +194,14 @@
           ueVersion,
         );
       } else {
-        const refs = await resolveDiffRefsFor(repoIdx);
-        if (!refs) {
+        const range = (await resolveRepoRanges())[repoIdx];
+        if (!range?.ok) {
           nextErr = "no refs to compare for this file";
         } else {
           next = await fileDiff(
-            refs.path,
-            refs.start,
-            refs.target,
+            range.path,
+            range.base,
+            range.compare,
             appState.mode,
             file.path,
             file.old_path,

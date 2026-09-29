@@ -169,7 +169,9 @@ class AppState {
   bcSelectedSha = $state<string | null>(null);
   bcHasMore = $state(false);
   bcLoadingCommits = $state(false);
-  bcDiffRange = $state<{ start: string; target: string } | null>(null);
+  bcDiffRange = $state<{ repoIdx: number; start: string; target: string } | null>(
+    null,
+  );
   // What the containment pane actually compared: the refs (or, for a
   // gitlink-followed submodule, the two commits) and the repo they belong to.
   // The toolbar's own refs are main's, which are not what Focus resolves to in

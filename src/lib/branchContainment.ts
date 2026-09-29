@@ -1,10 +1,6 @@
 import { appState } from "./store.svelte";
-import {
-  commitContainmentDetail,
-  commitLog,
-  containment,
-  submoduleShaAt,
-} from "./git";
+import { commitContainmentDetail, commitLog, containment } from "./git";
+import { resolveRepoRanges } from "./repoRange";
 import { compare } from "./compare";
 import type { Commit } from "./types";
 
@@ -19,21 +15,10 @@ const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 // abandoned when the comparison context changes.
 let bcSession = 0;
 
-/// The main repo's path — the one whose gitlinks say where a submodule sits.
-function mainPath(): string {
-  return appState.repos[0]?.path ?? appState.repoPath;
-}
-
-/// The repo and refs this pane describes: whatever Focus is on, resolved the
-/// same way `compare()` resolves it, so the marks always describe the diff on
-/// screen.
-///
-/// This used to be main-only, reading `appState.startBranch` / `targetBranch`
-/// against `repos[0]`. In a multi-root workspace those are not the refs the
-/// toolbar edits once Focus moves off main — it edits that repo's *override*
-/// instead — so the pane sat inert: no marks, and picking refs changed
-/// nothing, because main's refs never moved.
+/// The repo and refs this pane describes: whatever Focus is on, resolved by
+/// the same resolver compare() uses, so the marks describe the diff on screen.
 interface BcContext {
+  idx: number;
   path: string;
   start: string;
   target: string;
@@ -44,44 +29,15 @@ interface BcContext {
 async function resolveContext(): Promise<BcContext | null> {
   if (appState.appMode !== "compare" || !appState.repoPath) return null;
   const idx = appState.activeRepoIdx ?? 0;
-  const repo = appState.repos[idx];
-  const label = repo?.displayName || "repo";
-  // Main (or a single-repo workspace): the toolbar's own refs.
-  if (!repo || repo.kind === "main") {
-    if (!appState.startBranch || !appState.targetBranch) return null;
-    return {
-      path: mainPath(),
-      start: appState.startBranch,
-      target: appState.targetBranch,
-      repo: label,
-    };
-  }
-  // A per-repo override wins wherever it is set — it is exactly what the
-  // toolbar pickers write while that repo is focused.
-  if (repo.override?.startBranch && repo.override.targetBranch) {
-    return {
-      path: repo.path,
-      start: repo.override.startBranch,
-      target: repo.override.targetBranch,
-      repo: label,
-    };
-  }
-  if (repo.kind === "manual") return null;
-  // Gitlink-follow: an un-overridden submodule is compared between the commits
-  // main's two refs point at, so containment answers the same question about
-  // that commit range.
-  if (!repo.parentGitlinkPath || !appState.startBranch || !appState.targetBranch) {
-    return null;
-  }
-  const [oldSha, newSha] = await Promise.all([
-    submoduleShaAt(mainPath(), appState.startBranch, repo.parentGitlinkPath),
-    submoduleShaAt(mainPath(), appState.targetBranch, repo.parentGitlinkPath),
-  ]);
-  if (!oldSha || !newSha || oldSha === newSha) return null;
-  // Same mapping as everywhere else in Branch mode: start is what the toolbar
-  // calls start (main's start ref), target is its target — here, the commits
-  // those two refs pin the submodule to.
-  return { path: repo.path, start: oldSha, target: newSha, repo: label };
+  const range = (await resolveRepoRanges())[idx];
+  if (!range?.ok) return null;
+  return {
+    idx,
+    path: range.path,
+    start: range.base,
+    target: range.compare,
+    repo: appState.repos[idx]?.displayName || "repo",
+  };
 }
 
 /// The context the current list and marks were loaded for; `loadMore` and the
@@ -178,6 +134,7 @@ export function selectBranchCommit(commit: Commit | null): void {
   }
   appState.bcSelectedSha = commit.sha;
   appState.bcDiffRange = {
+    repoIdx: bcContext?.idx ?? 0,
     start: commit.parents[0] ?? EMPTY_TREE,
     target: commit.sha,
   };

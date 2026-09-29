@@ -1,5 +1,6 @@
 import { appState } from "./store.svelte";
-import { diffFiles, submoduleShaAt } from "./git";
+import { diffFiles } from "./git";
+import { resolveRepoRanges } from "./repoRange";
 import { detectLanguage } from "./diff/lang";
 import { preloadLanguages } from "./diff/shiki";
 import { restoreCompareContext } from "./commitHistory";
@@ -48,7 +49,7 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
       !focusedHasOwnRefs &&
       (!appState.startBranch || !appState.targetBranch)
     ) {
-      if (!opts.silent) appState.error = "start and target are required";
+      if (!opts.silent) appState.error = "base and compare are required";
       return;
     }
   }
@@ -64,12 +65,15 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
   appState.files = [];
   appState.selectedFile = null;
 
-  // Which repos this pass will actually scan (mirrors the per-repo loop's
-  // skips below). A submodule that won't be scanned has no group of its own in
-  // this view, which drives the gitlink decision just below.
+  // Which repos this pass will actually scan. A commit picked in the commit
+  // table is diffed inside its own repo and nothing else is scanned; otherwise
+  // Focus (Unified) narrows the scan. A submodule that won't be scanned has no
+  // group of its own in this view, which drives the gitlink decision below.
+  const drill = appState.bcDiffRange;
   const willScan = (i: number) =>
-    !(appState.bcDiffRange && i !== 0) &&
-    !(!isTabMode && appState.activeRepoIdx !== null && appState.activeRepoIdx !== i);
+    drill
+      ? i === drill.repoIdx
+      : !(!isTabMode && appState.activeRepoIdx !== null && appState.activeRepoIdx !== i);
 
   // Paths of submodule gitlinks inside main. When main lists a changed file at
   // one of these paths it's actually the submodule-pointer bump (git reports
@@ -150,29 +154,40 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
     appState.repos.length > 0
       ? appState.repos
       : [{ path: appState.repoPath, kind: "main", displayName: "" }];
-  const mainPath = repos[0].path;
 
   try {
+    const ranges = await resolveRepoRanges();
     // Sequential per-repo. The Rust `GitCli` keeps a single
     // `Mutex<Option<Session>>` slot so parallel calls with different
-    // paths would thrash and drop each others' children mid-stream. A
-    // per-path session map would unlock real parallelism — tracked as a
-    // future optimization (§14 follow-up).
+    // paths would thrash and drop each others' children mid-stream.
     for (let i = 0; i < repos.length; i++) {
       if (session !== compareSession) break;
-      // A per-commit drill (Branch-mode containment) is a single-repo view —
-      // diff only the main repo, not submodule gitlinks for unrelated refs.
-      if (appState.bcDiffRange && i !== 0) continue;
-      if (
-        !isTabMode &&
-        appState.activeRepoIdx !== null &&
-        appState.activeRepoIdx !== i
-      ) {
-        continue;
-      }
+      if (!willScan(i)) continue;
       const repo = repos[i];
       try {
-        await fetchRepoChanges(repo, mainPath, makeOnFile(i));
+        if (drill) {
+          await diffFiles(
+            repo.path,
+            drill.start,
+            drill.target,
+            "two-dot",
+            appState.ignoreWhitespace,
+            makeOnFile(i),
+          );
+          continue;
+        }
+        const range = ranges[i];
+        // No range — refs missing, pointer unchanged, submodule added or
+        // removed — means nothing to list for this repo.
+        if (!range?.ok) continue;
+        await diffFiles(
+          range.path,
+          range.base,
+          range.compare,
+          appState.mode,
+          appState.ignoreWhitespace,
+          makeOnFile(i),
+        );
       } catch (e) {
         // One repo failing shouldn't kill the whole compare.
         console.warn(`compare: repo ${repo.path} failed:`, e);
@@ -205,89 +220,6 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
       appState.loadingFiles = false;
     }
   }
-}
-
-/**
- * Fetch one repo's changed files for the current compare mode/refs and feed
- * them to `onFile`. Implements the per-kind resolution rules (§13.3 #7-#10):
- *
- * - main: refs from appState directly
- * - submodule: derive old/new SHAs via submoduleShaAt from main's start/target
- *   gitlinks (gitlink-follow), unless a per-repo override is set
- * - manual: override refs if set, else same names as main
- */
-async function fetchRepoChanges(
-  repo: RepoEntry,
-  mainPath: string,
-  onFile: (file: ChangedFile) => void,
-): Promise<void> {
-  if (repo.kind === "main") {
-    // Branch-mode containment drills into one commit via `bcDiffRange`
-    // (parent..commit, two-dot) without disturbing the toolbar ref pickers.
-    // null = the user's start↔target ("All changes").
-    const range = appState.bcDiffRange;
-    await diffFiles(
-      repo.path,
-      range ? range.start : appState.startBranch,
-      range ? range.target : appState.targetBranch,
-      range ? "two-dot" : appState.mode,
-      appState.ignoreWhitespace,
-      onFile,
-    );
-    return;
-  }
-  if (repo.kind === "submodule") {
-    // Per-repo override (§13.3 #9) wins over gitlink-follow when set. Useful
-    // when the user wants to compare two branches *inside* the submodule
-    // independently of where main's gitlinks point.
-    if (repo.override) {
-      const { startBranch, targetBranch } = repo.override;
-      if (!startBranch || !targetBranch) return;
-      await diffFiles(
-        repo.path,
-        startBranch,
-        targetBranch,
-        appState.mode,
-        appState.ignoreWhitespace,
-        onFile,
-      );
-      return;
-    }
-    if (!repo.parentGitlinkPath) return;
-    const [oldSha, newSha] = await Promise.all([
-      submoduleShaAt(mainPath, appState.startBranch, repo.parentGitlinkPath),
-      submoduleShaAt(mainPath, appState.targetBranch, repo.parentGitlinkPath),
-    ]);
-    // Both sides must resolve to a gitlink commit. Newly-added or removed
-    // submodules (one side null) are skipped for now — §13.10 tracks this.
-    if (!oldSha || !newSha || oldSha === newSha) return;
-    await diffFiles(
-      repo.path,
-      oldSha,
-      newSha,
-      appState.mode,
-      appState.ignoreWhitespace,
-      onFile,
-    );
-    return;
-  }
-  if (repo.kind === "manual") {
-    const start = repo.override?.startBranch ?? appState.startBranch;
-    const target = repo.override?.targetBranch ?? appState.targetBranch;
-    if (!start || !target) return;
-    await diffFiles(
-      repo.path,
-      start,
-      target,
-      appState.mode,
-      appState.ignoreWhitespace,
-      onFile,
-    );
-    return;
-  }
-  // Exhaustive: unreachable for known RepoKind values.
-  const _exhaustive: never = repo.kind;
-  void _exhaustive;
 }
 
 /// Cycle the workspace: Changes → Compare → Blame → Changes.
