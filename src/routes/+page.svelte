@@ -974,6 +974,13 @@
   .diff .chev {
     opacity: 0.5;
   }
+  /* A long path gives way first, so the range on the right stays readable. */
+  .diff .path {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .diff .range {
     margin-left: auto;
     flex-shrink: 0;

@@ -18,6 +18,11 @@
 
   let { value, options, placeholder, onchange, title, label }: Props = $props();
 
+  // The trigger truncates a long ref; its hover text carries the whole value.
+  const triggerTitle = $derived(
+    value ? (title ? `${title} — ${value}` : value) : title,
+  );
+
   let open = $state(false);
   let triggerEl = $state<HTMLButtonElement | undefined>(undefined);
   let searchEl = $state<HTMLInputElement | undefined>(undefined);
@@ -140,7 +145,7 @@
     type="button"
     class="trigger"
     bind:this={triggerEl}
-    {title}
+    title={triggerTitle}
     onclick={open ? close : openPanel}
     onkeydown={onTriggerKeyDown}
     aria-haspopup="listbox"
