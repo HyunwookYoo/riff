@@ -119,6 +119,8 @@ beforeEach(() => {
   Object.assign(appState, {
     appMode: "compare",
     repoPath: "/main",
+    startBranch: "main",
+    targetBranch: "feature",
     repos,
     activeRepoIdx: null,
     workspaceLayout: "unified",
@@ -352,7 +354,19 @@ describe("loadBranchContainment", () => {
     vi.mocked(commitLogExcluding).mockResolvedValue([]);
     await loadBranchContainment();
     expect(compare).toHaveBeenCalledTimes(1);
-    expect(compare).toHaveBeenCalledWith({ silent: true });
+    expect(compare).toHaveBeenCalledWith({ silent: true, preservePath: null });
+  });
+
+  it("keeps the open file when it lists the files again", async () => {
+    // Review focus (minor 4): a refresh that moves a gitlink pin must not
+    // snap the diff to the first file.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(listedRanges).mockReturnValue(JSON.stringify([range("/main", "main", "old")]));
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 0 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    appState.selectedFile = { path: "src/a.cpp", old_path: null, status: "modified", repoIdx: 0 };
+    await loadBranchContainment();
+    expect(compare).toHaveBeenCalledWith({ silent: true, preservePath: "src/a.cpp" });
   });
 
   it("leaves the file list alone when it holds these ranges already", async () => {
@@ -394,6 +408,146 @@ describe("refreshes", () => {
     expect(containment).toHaveBeenCalledTimes(2);
     await loadBranchContainment();
     expect(resolveRepoRanges).toHaveBeenCalledTimes(3);
+  });
+
+  it("starts a load for a new pair at once and drops the load it replaces", async () => {
+    // Review focus (NB1): the old range's rows must not land under the new
+    // range's labels, nor hold off the new load (and its file list) until the
+    // old one ends.
+    vi.mocked(resolveRepoRanges)
+      .mockResolvedValueOnce([range("/main", "main", "feature-x")])
+      .mockResolvedValueOnce([range("/main", "main", "feature-y")]);
+    let release: (m: Containment) => void = () => {};
+    vi.mocked(containment)
+      .mockImplementationOnce(() => new Promise<Containment>((r) => (release = r)))
+      .mockResolvedValueOnce(marks({ not_in_target: ["y1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("y1")]);
+    vi.mocked(squashCheck).mockResolvedValue(none);
+    appState.targetBranch = "feature-x";
+    const old = loadBranchContainment();
+    await tick();
+    vi.mocked(compare).mockClear();
+
+    appState.targetBranch = "feature-y";
+    await loadBranchContainment();
+    expect(resolveRepoRanges).toHaveBeenCalledTimes(2);
+    expect(appState.bcGroups[0]).toMatchObject({ compare: "feature-y", status: "ready" });
+    // The new range's files are listed now, not once the old load ends.
+    expect(compare).toHaveBeenCalledTimes(1);
+
+    vi.mocked(commitLogExcluding).mockClear();
+    release(marks({ not_in_target: ["x1"], ahead: 1 }));
+    await old;
+    // The replaced load stopped at its first check: no page, no landing.
+    expect(commitLogExcluding).not.toHaveBeenCalled();
+    expect(appState.bcGroups[0].marks?.not_in_target).toEqual(["y1"]);
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["y1"]);
+  });
+
+  it("reloads a kept group whose squash check a replaced load abandoned", async () => {
+    // The submodule's pins are the same under both pairs, so the new load
+    // keeps its group; the old check can no longer land, and the group must
+    // not be skipped with "checking" (or an old verdict) left on it.
+    const sub: RepoRange = { ok: true, path: "/main/sub", base: "aaa", compare: "bbb", source: "gitlink" };
+    vi.mocked(resolveRepoRanges)
+      .mockResolvedValueOnce([range("/main", "main", "feature-x"), sub])
+      .mockResolvedValueOnce([range("/main", "main", "feature-y"), sub]);
+    vi.mocked(containment).mockImplementation(async (path) =>
+      path === "/main/sub" ? marks({ not_in_target: ["s1"], ahead: 1 }) : marks({ ahead: 0 }),
+    );
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    let release: (c: SquashCheck) => void = () => {};
+    vi.mocked(squashCheck)
+      .mockImplementationOnce(() => new Promise<SquashCheck>((r) => (release = r)))
+      .mockResolvedValueOnce(none);
+    appState.targetBranch = "feature-x";
+    const old = loadBranchContainment();
+    await tick();
+    expect(appState.bcGroups[1].squash).toBe("checking");
+
+    appState.targetBranch = "feature-y";
+    await loadBranchContainment();
+    expect(vi.mocked(containment).mock.calls.filter((c) => c[0] === "/main/sub")).toHaveLength(2);
+    expect(appState.bcGroups[1]).toMatchObject({ squash: none, baseTip: "aaa", compareTip: "bbb" });
+
+    release(squashed);
+    await old;
+    expect(appState.bcGroups[1]).toMatchObject({ squash: none, baseTip: "aaa", compareTip: "bbb" });
+  });
+
+  it("lists no files for a load that ends after Branch mode was left", async () => {
+    // Review focus (minor 2): Working Copy shares selectedFile, which a
+    // re-list would seed again.
+    let release: (r: RepoRange[]) => void = () => {};
+    vi.mocked(resolveRepoRanges).mockImplementationOnce(
+      () => new Promise<RepoRange[]>((r) => (release = r)),
+    );
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 0 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    const load = loadBranchContainment();
+    appState.appMode = "changes";
+    release([range("/main", "main", "feature")]);
+    await load;
+    expect(compare).not.toHaveBeenCalled();
+  });
+
+  it("drops a pick without listing files once Branch mode was left", async () => {
+    // Both ways a load drops a pick: its range changed, or its reloaded group
+    // no longer holds it.
+    appState.bcGroups = { 0: group({ compare: "old" }) };
+    selectBranchCommit(0, commit("c1", ["c0"]));
+    vi.mocked(compare).mockClear();
+    let release: (r: RepoRange[]) => void = () => {};
+    vi.mocked(resolveRepoRanges).mockImplementationOnce(
+      () => new Promise<RepoRange[]>((r) => (release = r)),
+    );
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 0 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    const load = loadBranchContainment();
+    appState.appMode = "changes";
+    release([range("/main", "main", "feature")]);
+    await load;
+    expect(appState.bcSelected).toBeNull();
+    expect(compare).not.toHaveBeenCalled();
+
+    // Kept range, but the reloaded group no longer holds the pick.
+    appState.appMode = "compare";
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    tipsAt({ main: "b1", feature: "f1" });
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1", ["c0"])]);
+    vi.mocked(squashCheck).mockResolvedValue(none);
+    await loadBranchContainment();
+    selectBranchCommit(0, appState.bcGroups[0].commits[0]);
+    tipsAt({ main: "b1", feature: "f2" });
+    let releaseMarks: (m: Containment) => void = () => {};
+    vi.mocked(containment).mockImplementationOnce(
+      () => new Promise<Containment>((r) => (releaseMarks = r)),
+    );
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1b", ["c0"])]);
+    const reload = loadBranchContainment();
+    await tick();
+    vi.mocked(compare).mockClear();
+    appState.appMode = "changes";
+    releaseMarks(marks({ not_in_target: ["c1b"], ahead: 1 }));
+    await reload;
+    expect(appState.bcSelected).toBeNull();
+    expect(compare).not.toHaveBeenCalled();
+  });
+
+  it("clears no selection for a load that finds nothing after Branch mode was left", async () => {
+    const file = { path: "a.txt", old_path: null, status: "modified" as const, repoIdx: 0 };
+    appState.selectedFile = file;
+    let release: (r: RepoRange[]) => void = () => {};
+    vi.mocked(resolveRepoRanges).mockImplementationOnce(
+      () => new Promise<RepoRange[]>((r) => (release = r)),
+    );
+    const load = loadBranchContainment();
+    appState.appMode = "changes";
+    release([{ ok: false, reason: "no-refs" }]);
+    await load;
+    expect(appState.selectedFile).toBe(file);
+    expect(forgetListedRanges).not.toHaveBeenCalled();
   });
 
   it("drops the load asked for meanwhile once Branch mode is left", async () => {

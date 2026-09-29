@@ -18,8 +18,11 @@ export const PAGE_SIZE = 100;
 /// Git's empty-tree object — the "before" side for a root commit (no parent).
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-// Monotonic guard: every reload bumps it, so the results of an older load
-// can't land on the new groups.
+// Monotonic guard, bumped by every load (and by clearBranchContainment). A
+// load that another has taken over — a call for a different pair, repo or
+// override starts at once — finds it moved at its next await and drops its
+// results. A refresh alone (same inputs) never bumps it: it waits for the
+// running load instead (see loadBranchContainment).
 let bcSession = 0;
 
 // Bumped by every "Show merged commits" toggle: a page fetched for the other
@@ -257,8 +260,9 @@ async function loadGroup(idx: number, s: number, tips: Tips): Promise<void> {
     // rows (and a page abandoned by this reload stops showing "Loading…").
     // A verdict describes ● rows: with none left, it goes too. The tips are
     // those read before this load, so a commit landing meanwhile moves them
-    // on the next refresh; its squash check lands before that refresh starts
-    // (loads never overlap).
+    // on the next refresh. With ● rows they wait for the squash verdict: a
+    // check that a newer load abandons leaves none, so that load reloads the
+    // group rather than skipping it with "checking" or an old verdict on it.
     patchGroup(idx, {
       marks,
       mergedBy,
@@ -267,11 +271,10 @@ async function loadGroup(idx: number, s: number, tips: Tips): Promise<void> {
       status: "ready",
       error: null,
       loadingMore: false,
-      ...tips,
-      ...(unmerged ? {} : { squash: null }),
+      ...(unmerged ? { baseTip: null, compareTip: null } : { ...tips, squash: null }),
     });
     settlePick(idx);
-    if (unmerged) await checkSquash(idx, s);
+    if (unmerged) await checkSquash(idx, s, tips);
   } catch (e) {
     // No tips: a failed group loads again on the next refresh.
     if (s === bcSession) {
@@ -296,30 +299,46 @@ function settlePick(idx: number): void {
     return;
   }
   clearPick();
-  void compare({ silent: true });
+  // Only Branch mode's list: a load that ends after the mode was left must
+  // not seed selectedFile, which Working Copy shares.
+  if (appState.appMode === "compare") void compare({ silent: true });
 }
 
 /// Ask whether a group's unmerged commits landed as a squash. The group is
 /// already on screen; only its marks and wording change when the answer comes.
 /// A group that has an answer keeps it while the next one is on its way —
 /// refsRefresh fires on every saved file, and ◐ rows must not flicker back to ●.
-async function checkSquash(idx: number, s: number): Promise<void> {
+/// The group's tips are stored with the answer (or the failure); an answer
+/// dropped because a newer load took over stores none.
+async function checkSquash(idx: number, s: number, tips: Tips): Promise<void> {
   const g = appState.bcGroups[idx];
   if (!g) return;
   if (g.squash === null) patchGroup(idx, { squash: "checking" });
   try {
     const result = await squashCheck(g.path, g.compare, g.base);
-    if (s === bcSession) patchGroup(idx, { squash: result });
+    if (s === bcSession) patchGroup(idx, { squash: result, ...tips });
   } catch {
-    if (s === bcSession) patchGroup(idx, { squash: null });
+    if (s === bcSession) patchGroup(idx, { squash: null, ...tips });
   }
 }
 
-// One load runs at a time. refsRefresh fires on every saved file, and loads
-// left to overlap pile up git processes that no one waits for (see
-// inflight.ts): a call made while one runs asks for one more, run after it.
-let loadRunning = false;
-let loadAgain = false;
+/// What a load is for, refsRefresh aside: the repo, the toolbar pair and the
+/// repos with their overrides (the range resolver's other inputs).
+function loadInputs(): string {
+  return JSON.stringify([
+    appState.repoPath,
+    appState.startBranch,
+    appState.targetBranch,
+    appState.repos.map((r) => [r.path, r.kind, r.parentGitlinkPath ?? "", r.override ?? null]),
+  ]);
+}
+
+// The load running now, and the inputs it started with. refsRefresh fires on
+// every saved file, and refreshes left to overlap pile up git processes that
+// no one waits for (see inflight.ts): a call for the same inputs asks the
+// running load for one more pass after it. A call for other inputs takes
+// over at once, so the old range's rows never land under the new labels.
+let running: { inputs: string; again: boolean } | null = null;
 
 /// Rebuild the commit table for the current inputs: one group per repo whose
 /// range resolved, each loading its marks and first page on its own. A group
@@ -328,23 +347,26 @@ let loadAgain = false;
 /// or reset the diff being read — and so does a commit picked in it; a group
 /// whose tips did not move is not reloaded at all. A pick whose range changed
 /// or vanished belonged to the old comparison, so it is dropped and the file
-/// list goes back to all changes. Calls made while a load runs collapse into
-/// one more load after it.
+/// list goes back to all changes. A call made while a load runs collapses into
+/// one more load after it, unless the pair, repo or overrides changed: then it
+/// starts now, and the load it replaces drops its results.
 export async function loadBranchContainment(): Promise<void> {
-  if (loadRunning) {
-    loadAgain = true;
+  const inputs = loadInputs();
+  if (running && running.inputs === inputs) {
+    running.again = true;
     return;
   }
-  loadRunning = true;
+  const me = { inputs, again: false };
+  running = me;
   try {
     do {
-      loadAgain = false;
+      me.again = false;
       await loadOnce();
       // Asked for in Branch mode: once it is left the table is off screen,
       // and its groups stay for the way back (the next visit loads anyway).
-    } while (loadAgain && appState.appMode === "compare");
+    } while (me.again && running === me && appState.appMode === "compare");
   } finally {
-    loadRunning = false;
+    if (running === me) running = null;
   }
 }
 
@@ -375,21 +397,28 @@ async function loadOnce(): Promise<void> {
   const keepPick = drill !== null && unchanged.has(drill.repoIdx);
   if (!keepPick) clearPick();
   appState.bcGroups = groups;
+  // The file list and the selection are Branch mode's to touch only while it
+  // is on screen: Working Copy shares selectedFile, and a load can end after
+  // the mode was left. Whatever is skipped here, the first load back does.
+  const listing = appState.appMode === "compare";
   if (Object.keys(groups).length === 0) {
     // Nothing to compare yet: drop a leftover selection (e.g. a file opened in
     // Changes) so the diff pane shows its placeholder, not an error.
-    appState.selectedFile = null;
-    appState.files = [];
-    forgetListedRanges();
+    if (listing) {
+      appState.selectedFile = null;
+      appState.files = [];
+      forgetListedRanges();
+    }
     return;
   }
-  if (drill && !keepPick) {
+  if (listing && drill && !keepPick) {
     void compare({ silent: true });
-  } else if (!drill && listedRanges() !== JSON.stringify(ranges)) {
+  } else if (listing && !drill && listedRanges() !== JSON.stringify(ranges)) {
     // The file list follows the ranges as the table does, so no two surfaces
     // describe different ones: list these unless compare() already has. (A
-    // kept pick's own files are what the list holds.)
-    void compare({ silent: true });
+    // kept pick's own files are what the list holds.) The open file stays
+    // open if the new list has it.
+    void compare({ silent: true, preservePath: appState.selectedFile?.path ?? null });
   }
   await Promise.all(toLoad.map(([i, r]) => refreshGroup(i, r, s)));
 }
