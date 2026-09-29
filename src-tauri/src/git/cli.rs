@@ -2187,11 +2187,23 @@ impl GitLayer for GitCli {
         };
 
         // No net change since the fork — e.g. the base merged back in after a
-        // squash. `diff --quiet` exits 1 when the trees differ.
+        // squash. `diff --quiet` exits 1 when the trees differ. Every diff here
+        // pins how submodules and context render (submodules never ignored and
+        // shown as plain gitlink lines, three lines of context), so a user's
+        // diff.* settings or a submodule's `ignore` cannot hide a change or
+        // shift a patch-id.
         let quiet = git_command()
             .arg("-C")
             .arg(path)
-            .args(["diff", "--quiet", "--no-ext-diff", "--no-textconv", &mb, source])
+            .args([
+                "diff",
+                "--quiet",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--ignore-submodules=none",
+                &mb,
+                source,
+            ])
             .output()?;
         match quiet.status.code() {
             Some(0) => return Ok(verdict(SquashVerdict::NoNetChange)),
@@ -2218,7 +2230,15 @@ impl GitLayer for GitCli {
         // sides describe a rename the same way (delete + add).
         let names = self.run(
             path,
-            &["diff", "--name-only", "-z", "--no-renames", &mb, source],
+            &[
+                "diff",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                "--ignore-submodules=none",
+                &mb,
+                source,
+            ],
         )?;
         let paths: Vec<String> = names
             .split(|b| *b == 0)
@@ -2234,6 +2254,9 @@ impl GitLayer for GitCli {
             "--no-ext-diff",
             "--no-textconv",
             "--no-renames",
+            "--ignore-submodules=none",
+            "--submodule=short",
+            "-U3",
             "-p",
             "--binary",
             "--format=commit %H",
@@ -2259,6 +2282,9 @@ impl GitLayer for GitCli {
                 "--no-ext-diff",
                 "--no-textconv",
                 "--no-renames",
+                "--ignore-submodules=none",
+                "--submodule=short",
+                "-U3",
                 "--binary",
                 &mb,
                 source,
@@ -3071,6 +3097,22 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         git_in(repo, &["commit", "-qm", "squash feat (#1)"]);
     }
 
+    /// Point the fixture's `sub` at `sha` as a gitlink and commit. No real
+    /// submodule: git only records the commit id.
+    fn commit_gitlink(repo: &Path, sha: &str, msg: &str) {
+        let entry = format!("160000,{sha},sub");
+        git_in(repo, &["update-index", "--add", "--cacheinfo", &entry]);
+        git_in(repo, &["commit", "-qm", msg]);
+    }
+
+    /// User settings that hide a submodule change from `git diff` or print it
+    /// as a log summary — neither of which `patch-id` can read. Set last, so
+    /// the fixture's own commits are unaffected.
+    fn hide_submodules_from_diffs(repo: &Path) {
+        git_in(repo, &["config", "diff.submodule", "log"]);
+        git_in(repo, &["config", "diff.ignoreSubmodules", "all"]);
+    }
+
     #[test]
     fn squash_check_names_the_squash_commit() {
         let repo = squash_fixture("squash-plain");
@@ -3171,6 +3213,73 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
         assert_eq!(r.verdict, SquashVerdict::Squash);
         assert_eq!(r.squash_commit.map(|c| c.sha), Some(squash));
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_counts_a_gitlink_change_the_base_commit_lacks() {
+        // The branch edits a file and bumps a submodule pointer; the base commit
+        // carries only the file edit. With the settings applied below, git shows
+        // the bump nowhere, so unpinned diffs would call that commit the squash.
+        let repo = squash_fixture("squash-gitlink-lacked");
+        let pointer = rev_parse(&repo, "base");
+        git_in(&repo, &["checkout", "-q", "feat"]);
+        commit_gitlink(&repo, &pointer, "bump sub");
+        git_in(&repo, &["checkout", "-q", "base"]);
+        commit_file(&repo, "f.txt", &ten_lines(&[(5, "L5"), (6, "L6")]), "file edit only");
+        hide_submodules_from_diffs(&repo);
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::None);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_counts_a_bump_only_branch_as_a_net_change() {
+        // ignoreSubmodules=all makes a plain `git diff` call a branch that only
+        // moves a submodule pointer empty, which is not "no net change".
+        let repo = squash_fixture("squash-bump-only");
+        let (old, new) = (rev_parse(&repo, "base"), rev_parse(&repo, "feat"));
+        commit_gitlink(&repo, &old, "add sub");
+        git_in(&repo, &["checkout", "-q", "-b", "bump"]);
+        commit_gitlink(&repo, &new, "bump sub");
+        git_in(&repo, &["checkout", "-q", "base"]);
+        hide_submodules_from_diffs(&repo);
+        let r = GitCli::new().squash_check(&repo, "bump", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::None);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_finds_a_squash_that_carried_a_gitlink_change() {
+        // The other side: a squash that took the pointer along is still found,
+        // because its patch and the branch's net change show the pointer alike
+        // whatever the settings.
+        let repo = squash_fixture("squash-gitlink-carried");
+        let pointer = rev_parse(&repo, "base");
+        git_in(&repo, &["checkout", "-q", "feat"]);
+        commit_gitlink(&repo, &pointer, "bump sub");
+        git_in(&repo, &["checkout", "-q", "base"]);
+        squash_merge(&repo);
+        let squash = rev_parse(&repo, "base");
+        hide_submodules_from_diffs(&repo);
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::Squash);
+        assert_eq!(r.squash_commit.map(|c| c.sha), Some(squash));
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn squash_check_ignores_a_users_diff_context() {
+        // The context-edit history again. With one line of context instead of
+        // three, S's hunk no longer reaches the line base edited, so an unpinned
+        // scan would call S the squash: the verdict must not move with the setting.
+        let repo = squash_fixture("squash-user-context");
+        commit_file(&repo, "f.txt", &ten_lines(&[(2, "M2")]), "context");
+        squash_merge(&repo);
+        git_in(&repo, &["config", "diff.context", "1"]);
+        let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
+        assert_eq!(r.verdict, SquashVerdict::Content);
+        assert!(r.squash_commit.is_none());
         let _ = fs::remove_dir_all(&repo);
     }
 
