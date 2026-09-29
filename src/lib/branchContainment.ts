@@ -18,8 +18,8 @@ export const PAGE_SIZE = 100;
 /// Git's empty-tree object — the "before" side for a root commit (no parent).
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-// Monotonic guard: every reload bumps it, so the results of an older load,
-// page or detail fetch can't land on the new groups.
+// Monotonic guard: every reload bumps it, so the results of an older load or
+// detail fetch can't land on the new groups.
 let bcSession = 0;
 
 // Bumped by every "Show merged commits" toggle: a page fetched for the other
@@ -287,21 +287,27 @@ export async function loadBranchContainment(): Promise<void> {
 export async function loadMoreGroup(idx: number): Promise<void> {
   const g = appState.bcGroups[idx];
   if (!g || g.status !== "ready" || !g.hasMore || g.loadingMore) return;
-  const s = bcSession;
   const list = listSession;
+  // The rows this page continues: once a reload or a toggle has replaced them,
+  // its offset means nothing and the page is dropped.
+  const rows = g.commits;
   patchGroup(idx, { loadingMore: true });
   try {
-    const page = await fetchPage(g, g.mergedBy, g.commits.length);
-    if (s !== bcSession || list !== listSession) return;
+    const page = await fetchPage(g, g.mergedBy, rows.length);
+    if (list !== listSession) return;
+    if (appState.bcGroups[idx]?.commits !== rows) {
+      patchGroup(idx, { loadingMore: false });
+      return;
+    }
+    // compare's history can shift between two pages; a row is listed once.
+    const listed = new Set(rows.map((c) => c.sha));
     patchGroup(idx, {
-      commits: appState.bcGroups[idx].commits.concat(page),
+      commits: rows.concat(page.filter((c) => !listed.has(c.sha))),
       hasMore: page.length === PAGE_SIZE,
       loadingMore: false,
     });
   } catch {
-    if (s === bcSession && list === listSession) {
-      patchGroup(idx, { loadingMore: false });
-    }
+    if (list === listSession) patchGroup(idx, { loadingMore: false });
   }
 }
 

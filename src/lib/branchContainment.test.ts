@@ -273,6 +273,34 @@ describe("loadBranchContainment", () => {
     expect(appState.bcGroups[0].loadingMore).toBe(false);
   });
 
+  it("drops a page whose click came before a refresh replaced the rows", async () => {
+    // Review focus (F2): the click captures the refresh's session and the old
+    // offset; appending its page to the fresh page 0 would repeat SHAs, which
+    // the keyed row list rejects.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    let releaseMarks: (m: Containment) => void = () => {};
+    vi.mocked(containment)
+      .mockResolvedValueOnce(marks({ ahead: 150 }))
+      .mockImplementationOnce(() => new Promise<Containment>((r) => (releaseMarks = r)));
+    let releasePage: (c: Commit[]) => void = () => {};
+    vi.mocked(commitLogExcluding)
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`c${i}`)))
+      .mockImplementationOnce(() => new Promise<Commit[]>((r) => (releasePage = r)))
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`c${i}`)));
+    await loadBranchContainment();
+    const refresh = loadBranchContainment();
+    await tick();
+    const more = loadMoreGroup(0);
+    releaseMarks(marks({ ahead: 150 }));
+    await refresh;
+    releasePage([commit("c99"), ...Array.from({ length: 49 }, (_, i) => commit(`d${i}`))]);
+    await more;
+    const shas = appState.bcGroups[0].commits.map((c) => c.sha);
+    expect(shas).toHaveLength(100);
+    expect(new Set(shas).size).toBe(shas.length);
+    expect(appState.bcGroups[0].loadingMore).toBe(false);
+  });
+
   it("clears a leftover file selection when there is nothing to compare", async () => {
     vi.mocked(resolveRepoRanges).mockResolvedValue([{ ok: false, reason: "no-refs" }]);
     appState.files = [{ path: "x", old_path: null, status: "modified", repoIdx: 0 }];
@@ -295,6 +323,25 @@ describe("paging and merged commits", () => {
     expect(commitLogExcluding).toHaveBeenLastCalledWith("/main", "feature", "main", PAGE_SIZE, 100);
     expect(appState.bcGroups[0].commits).toHaveLength(150);
     expect(appState.bcGroups[0].hasMore).toBe(false);
+  });
+
+  it("appends a page that overlaps the rows without repeating a SHA", async () => {
+    // compare's history can shift between two pages.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 150 }));
+    vi.mocked(commitLogExcluding)
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`c${i}`)))
+      .mockResolvedValueOnce([
+        commit("c98"),
+        commit("c99"),
+        ...Array.from({ length: 48 }, (_, i) => commit(`d${i}`)),
+      ]);
+    await loadBranchContainment();
+    await loadMoreGroup(0);
+    const shas = appState.bcGroups[0].commits.map((c) => c.sha);
+    expect(shas).toHaveLength(148);
+    expect(new Set(shas).size).toBe(148);
+    expect(shas.slice(98, 101)).toEqual(["c98", "c99", "d0"]);
   });
 
   it("lists what the introducing merge brought in when merged commits are shown", async () => {
