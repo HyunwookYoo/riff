@@ -231,7 +231,7 @@
             class:focused={isFocused}
             title={isFocused
               ? "Exit Focus (back to multi-root)"
-              : "Enter this repo — edits refs above"}
+              : "Focus on this repo"}
             aria-label={isFocused ? "Exit focus" : "Focus on this repo"}
             onclick={() => toggleFocus(group.idx)}
           >

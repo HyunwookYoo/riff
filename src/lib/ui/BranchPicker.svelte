@@ -12,9 +12,11 @@
     placeholder?: string;
     onchange: (v: string) => void;
     title?: string;
+    /// Muted word shown before the value inside the trigger ("base", "compare").
+    label?: string;
   }
 
-  let { value, options, placeholder, onchange, title }: Props = $props();
+  let { value, options, placeholder, onchange, title, label }: Props = $props();
 
   let open = $state(false);
   let triggerEl = $state<HTMLButtonElement | undefined>(undefined);
@@ -144,6 +146,9 @@
     aria-haspopup="listbox"
     aria-expanded={open}
   >
+    {#if label}
+      <span class="prefix">{label}</span>
+    {/if}
     <span class="label" class:empty={!value}>
       {value || placeholder || "—"}
     </span>
@@ -216,6 +221,11 @@
   }
   .trigger:hover {
     background: var(--hover);
+  }
+  .prefix {
+    flex-shrink: 0;
+    color: var(--muted);
+    font-size: 0.85em;
   }
   .label {
     overflow: hidden;

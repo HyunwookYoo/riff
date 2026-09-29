@@ -22,6 +22,7 @@
   import BlameView from "$lib/ui/BlameView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
   import TabBar from "$lib/ui/TabBar.svelte";
+  import ScopeBar from "$lib/ui/ScopeBar.svelte";
   import TitleBar from "$lib/ui/TitleBar.svelte";
   import { appState } from "$lib/store.svelte";
   import { loadState, setBlamePickerWidth, setWatchedRepos } from "$lib/git";
@@ -464,6 +465,9 @@
   <Timelapse />
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />
+  {/if}
+  {#if appState.appMode === "compare"}
+    <ScopeBar />
   {/if}
   {#if appState.repos.length > 1 && appState.appMode === "history"}
     <RepoTabs value={appState.historyRepoIdx} onselect={setHistoryRepo} />
