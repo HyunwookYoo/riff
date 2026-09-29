@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { EditorView, keymap, lineNumbers } from "@codemirror/view";
   import { EditorState, type Extension } from "@codemirror/state";
   import { MergeView, unifiedMergeView, Change } from "@codemirror/merge";
@@ -153,6 +153,12 @@
     void cm;
     void uv;
     void appState.bcDiffRange;
+    // The range is resolved untracked inside load(): a picker or override
+    // change reloads the diff through these, a watcher refresh alone
+    // (refsRefresh) does not — it would remount image and binary views.
+    void appState.startBranch;
+    void appState.targetBranch;
+    void appState.repos;
     load(false);
   });
 
@@ -214,7 +220,9 @@
           ueVersion,
         );
       } else {
-        const range = (await resolveRepoRanges())[repoIdx];
+        // Untracked: the resolver reads refsRefresh and every override, which
+        // must not become this effect's dependencies (see the effect).
+        const range = (await untrack(() => resolveRepoRanges()))[repoIdx];
         if (!range?.ok) {
           nextErr = "no refs to compare for this file";
         } else {
