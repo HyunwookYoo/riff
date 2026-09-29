@@ -31,11 +31,15 @@ export type Summary =
       out: number;
       patch: number;
       behind: number | null;
+      /// Groups that answered, and how many more could not be read.
       repos: number;
+      failed: number;
     }
   | { kind: "patches"; names: SideNames; patch: number }
-  | { kind: "merged"; names: SideNames; mergedBy: Commit | null }
-  | { kind: "all-in"; names: SideNames; repos: number };
+  // mergedBy: the merge commit, null for a fast-forward, undefined when the
+  // lookup failed (says nothing about how it got in).
+  | { kind: "merged"; names: SideNames; mergedBy: Commit | null | undefined }
+  | { kind: "all-in"; names: SideNames; repos: number; failed: number };
 
 /// The table's short date, in the user's locale.
 export function shortDate(unixSec: number): string {
@@ -61,17 +65,27 @@ export function summaryText(s: Summary): string {
       const parts = [`● ${s.out} not merged`];
       if (s.patch > 0) parts.push(`◐ ${s.patch} applied as patch`);
       if (s.behind) parts.push(`${s.names.compare} is ${s.behind} behind`);
+      if (s.failed > 0) parts.push(failedText(s.failed));
       return `${head} ${parts.join(" · ")}`;
     }
     case "patches":
       return `✓ Every commit on ${s.names.compare} is in ${s.names.base}, ${s.patch} of them as ${s.patch === 1 ? "a patch" : "patches"} (rebased, cherry-picked or squash-merged)`;
-    case "merged":
-      return s.mergedBy
-        ? `✓ All commits on ${s.names.compare} are in ${s.names.base} — merged by ${s.mergedBy.short_sha} "${s.mergedBy.summary}" · ${shortDate(s.mergedBy.time)}`
-        : `✓ All commits on ${s.names.compare} are in ${s.names.base} (fast-forward, no merge commit)`;
-    case "all-in":
-      return `✓ All changes on ${s.names.compare} are in ${s.names.base} across ${s.repos} repos`;
+    case "merged": {
+      const all = `✓ All commits on ${s.names.compare} are in ${s.names.base}`;
+      if (s.mergedBy) {
+        return `${all} — merged by ${s.mergedBy.short_sha} "${s.mergedBy.summary}" · ${shortDate(s.mergedBy.time)}`;
+      }
+      return s.mergedBy === null ? `${all} (fast-forward, no merge commit)` : all;
+    }
+    case "all-in": {
+      const all = `✓ All changes on ${s.names.compare} are in ${s.names.base} across ${s.repos} repo${s.repos === 1 ? "" : "s"}`;
+      return s.failed > 0 ? `${all} · ${failedText(s.failed)}` : all;
+    }
   }
+}
+
+function failedText(n: number): string {
+  return `${n} repo${n === 1 ? "" : "s"} couldn't be read`;
 }
 
 /// The counts on a group header.

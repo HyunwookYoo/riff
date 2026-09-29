@@ -312,6 +312,7 @@ describe("summarize", () => {
       patch: 0,
       behind: 2,
       repos: 1,
+      failed: 0,
     });
     expect(summarize([vis(0, group({ marks: marks({ ahead: 2, equivalent: ["a", "b"] }) }))], pair)).toEqual({
       kind: "patches",
@@ -325,6 +326,15 @@ describe("summarize", () => {
     });
   });
 
+  it("passes an unknown introducing merge through instead of calling it a fast-forward", () => {
+    // A failed lookup leaves mergedBy undefined; null is the real "no merge commit".
+    expect(summarize([vis(0, group({ mergedBy: undefined }))], pair)).toStrictEqual({
+      kind: "merged",
+      names,
+      mergedBy: undefined,
+    });
+  });
+
   it("totals several groups", () => {
     const a = vis(0, group({ marks: marks({ ahead: 3 }) }));
     const b = vis(1, group({ marks: marks({ ahead: 2, equivalent: ["x"] }) }));
@@ -335,11 +345,48 @@ describe("summarize", () => {
       patch: 1,
       behind: null,
       repos: 2,
+      failed: 0,
     });
     expect(summarize([vis(0, group({})), vis(1, group({}))], pair)).toEqual({
       kind: "all-in",
       names: pair,
       repos: 2,
+      failed: 0,
+    });
+  });
+
+  it("totals the groups that answered and counts the ones that failed", () => {
+    // Review focus: one unreadable repo must not hold the whole summary on
+    // "Checking commits…" (nor inflate "across N repos").
+    const failed = vis(1, group({ status: "error", error: "boom", marks: null }));
+    expect(summarize([vis(0, group({})), failed], pair)).toEqual({
+      kind: "all-in",
+      names: pair,
+      repos: 1,
+      failed: 1,
+    });
+    expect(summarize([vis(0, group({ marks: marks({ ahead: 3 }) })), failed], pair)).toEqual({
+      kind: "unmerged",
+      names: pair,
+      out: 3,
+      patch: 0,
+      behind: null,
+      repos: 1,
+      failed: 1,
+    });
+  });
+
+  it("waits only while a group is loading and none has commits left", () => {
+    const loading = vis(1, group({ status: "loading", marks: null }));
+    expect(summarize([vis(0, group({})), loading], pair)).toEqual({ kind: "loading" });
+    expect(summarize([vis(0, group({ marks: marks({ ahead: 2 }) })), loading], pair)).toEqual({
+      kind: "unmerged",
+      names: pair,
+      out: 2,
+      patch: 0,
+      behind: null,
+      repos: 1,
+      failed: 0,
     });
   });
 

@@ -60,26 +60,33 @@ export interface VisibleGroup {
 }
 
 /// The summary line's state for the groups on screen: one group speaks for
-/// itself; several give totals, and read as all in once none has ● left.
+/// itself; several give totals over the groups that answered (noting how many
+/// could not be read), and read as all in once none has ● left and none is
+/// still loading.
 export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
   if (groups.length === 0) return { kind: "no-refs" };
   if (groups.length === 1 && groups[0].group.base === groups[0].group.compare) {
     return { kind: "same" };
   }
   const ready = groups.filter((v) => v.group.status === "ready");
-  if (ready.length === 0) {
-    return groups.some((v) => v.group.status === "loading")
-      ? { kind: "loading" }
-      : { kind: "error" };
-  }
+  const loading = groups.some((v) => v.group.status === "loading");
+  if (ready.length === 0) return loading ? { kind: "loading" } : { kind: "error" };
   if (groups.length === 1) {
     const { group: g, names } = groups[0];
     const c = groupCounts(g);
     if (c.out > 0) {
-      return { kind: "unmerged", names, out: c.out, patch: c.patch, behind: c.behind, repos: 1 };
+      return {
+        kind: "unmerged",
+        names,
+        out: c.out,
+        patch: c.patch,
+        behind: c.behind,
+        repos: 1,
+        failed: 0,
+      };
     }
     if (c.patch > 0) return { kind: "patches", names, patch: c.patch };
-    return { kind: "merged", names, mergedBy: g.mergedBy ?? null };
+    return { kind: "merged", names, mergedBy: g.mergedBy };
   }
   let out = 0;
   let patch = 0;
@@ -88,11 +95,20 @@ export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
     out += c.out;
     patch += c.patch;
   }
+  const failed = groups.filter((v) => v.group.status === "error").length;
   if (out > 0) {
-    return { kind: "unmerged", names: pair, out, patch, behind: null, repos: groups.length };
+    return {
+      kind: "unmerged",
+      names: pair,
+      out,
+      patch,
+      behind: null,
+      repos: ready.length,
+      failed,
+    };
   }
-  if (ready.length < groups.length) return { kind: "loading" };
-  return { kind: "all-in", names: pair, repos: groups.length };
+  if (loading) return { kind: "loading" };
+  return { kind: "all-in", names: pair, repos: ready.length, failed };
 }
 
 function emptyGroup(range: Extract<RepoRange, { ok: true }>): BcGroup {

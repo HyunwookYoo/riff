@@ -22,14 +22,29 @@ const merge: Commit = {
 
 describe("summaryText", () => {
   it("counts what is not merged yet", () => {
-    expect(summaryText({ kind: "unmerged", names, out: 8, patch: 1, behind: 9, repos: 1 })).toBe(
+    expect(summaryText({ kind: "unmerged", names, out: 8, patch: 1, behind: 9, repos: 1, failed: 0 })).toBe(
       "main ← feature/x: ● 8 not merged · ◐ 1 applied as patch · feature/x is 9 behind",
     );
-    expect(summaryText({ kind: "unmerged", names, out: 140, patch: 1, behind: null, repos: 2 })).toBe(
+    expect(summaryText({ kind: "unmerged", names, out: 140, patch: 1, behind: null, repos: 2, failed: 0 })).toBe(
       "main ← feature/x across 2 repos: ● 140 not merged · ◐ 1 applied as patch",
     );
-    expect(summaryText({ kind: "unmerged", names, out: 3, patch: 0, behind: 0, repos: 1 })).toBe(
+    expect(summaryText({ kind: "unmerged", names, out: 3, patch: 0, behind: 0, repos: 1, failed: 0 })).toBe(
       "main ← feature/x: ● 3 not merged",
+    );
+  });
+
+  it("says how many repos couldn't be read", () => {
+    expect(summaryText({ kind: "unmerged", names, out: 3, patch: 0, behind: null, repos: 1, failed: 1 })).toBe(
+      "main ← feature/x: ● 3 not merged · 1 repo couldn't be read",
+    );
+    expect(summaryText({ kind: "unmerged", names, out: 140, patch: 1, behind: null, repos: 2, failed: 2 })).toBe(
+      "main ← feature/x across 2 repos: ● 140 not merged · ◐ 1 applied as patch · 2 repos couldn't be read",
+    );
+    expect(summaryText({ kind: "all-in", names, repos: 1, failed: 1 })).toBe(
+      "✓ All changes on feature/x are in main across 1 repo · 1 repo couldn't be read",
+    );
+    expect(summaryText({ kind: "all-in", names, repos: 3, failed: 2 })).toBe(
+      "✓ All changes on feature/x are in main across 3 repos · 2 repos couldn't be read",
     );
   });
 
@@ -51,8 +66,15 @@ describe("summaryText", () => {
     );
   });
 
+  it("does not call an unknown merge a fast-forward", () => {
+    // The introducing-merge lookup can fail; that only drops "merged by".
+    expect(summaryText({ kind: "merged", names, mergedBy: undefined })).toBe(
+      "✓ All commits on feature/x are in main",
+    );
+  });
+
   it("covers the remaining states", () => {
-    expect(summaryText({ kind: "all-in", names, repos: 2 })).toBe(
+    expect(summaryText({ kind: "all-in", names, repos: 2, failed: 0 })).toBe(
       "✓ All changes on feature/x are in main across 2 repos",
     );
     expect(summaryText({ kind: "no-refs" })).toBe(
