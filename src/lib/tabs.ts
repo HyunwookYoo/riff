@@ -3,6 +3,17 @@ import { compare } from "./compare";
 import { dropPickOutside } from "./branchContainment";
 import { getActiveDiffView } from "./diff/activeView";
 
+/// Select tab `idx`'s remembered file, else its first file, from the loaded
+/// list.
+function restoreTabSelection(idx: number): void {
+  const mem = appState.tabMemory.get(idx);
+  const candidates = appState.files.filter((f) => (f.repoIdx ?? 0) === idx);
+  const restored = mem?.filePath
+    ? candidates.find((f) => f.path === mem.filePath)
+    : undefined;
+  appState.selectedFile = restored ?? candidates[0] ?? null;
+}
+
 /**
  * Switch to the tab at `idx` (§14). Snapshots the outgoing tab's selected
  * file + scroll position into `tabMemory`, then restores the incoming tab's
@@ -32,17 +43,16 @@ export function selectTab(idx: number): void {
   appState.activeRepoIdx = idx;
   // A pick lists only its own repo's files: moving to another repo's tab
   // drops it and re-lists, instead of restoring from a list that lacks them.
+  // compare() selects the first file it streams (repo 0's, in Tabs), so the
+  // tab's own file is chosen once the list is complete.
   if (dropPickOutside(idx)) {
-    void compare({ silent: true });
+    void compare({ silent: true }).then(() => {
+      if (appState.activeRepoIdx === idx) restoreTabSelection(idx);
+    });
     return;
   }
 
-  const mem = appState.tabMemory.get(idx);
-  const candidates = appState.files.filter((f) => (f.repoIdx ?? 0) === idx);
-  const restored = mem?.filePath
-    ? candidates.find((f) => f.path === mem.filePath)
-    : undefined;
-  appState.selectedFile = restored ?? candidates[0] ?? null;
+  restoreTabSelection(idx);
 }
 
 /**
