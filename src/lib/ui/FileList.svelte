@@ -60,6 +60,12 @@
     base: appState.startBranch,
     compare: appState.targetBranch,
   });
+  // Branch mode: a repo with no range has no files (compare() skips it), so its
+  // group shows dimmed and collapsed. Drawn from the range, not written to
+  // collapsedRepos, which graph mode and +page.svelte's keyboard navigation read.
+  function isGap(idx: number): boolean {
+    return appState.appMode === "compare" && appState.repoRanges[idx]?.ok === false;
+  }
 
   // Tree-mode local state. Directory collapses are keyed by `<repoIdx>:<path>`
   // so the same path in two repos doesn't share a collapse state.
@@ -210,8 +216,7 @@
           class="group-header"
           class:collapsed={appState.collapsedRepos.has(group.idx)}
           class:focused={isFocused}
-          class:dim={appState.appMode === "compare" &&
-            appState.repoRanges[group.idx]?.ok === false}
+          class:dim={isGap(group.idx)}
           title={group.repo.path}
         >
           <button
@@ -221,7 +226,7 @@
             onclick={() => toggleRepo(group.idx)}
           >
             <span class="caret" aria-hidden="true">
-              {appState.collapsedRepos.has(group.idx) ? "▸" : "▾"}
+              {appState.collapsedRepos.has(group.idx) || isGap(group.idx) ? "▸" : "▾"}
             </span>
             <span class="repo-name">{group.repo.displayName}</span>
             <span class="kind-badge" data-kind={group.repo.kind}>
@@ -255,7 +260,7 @@
         {/if}
       {/if}
 
-      {#if !showGroups || !appState.collapsedRepos.has(group.idx)}
+      {#if !showGroups || (!appState.collapsedRepos.has(group.idx) && !isGap(group.idx))}
         {#if appState.fileViewMode === "tree"}
           {#each buildTree(group.files) as node (node.kind === "dir" ? "d:" + group.idx + ":" + node.path : "f:" + group.idx + ":" + node.file.path)}
             <TreeNode
