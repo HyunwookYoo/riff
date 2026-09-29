@@ -21,6 +21,10 @@ const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 // page or detail fetch can't land on the new groups.
 let bcSession = 0;
 
+// Bumped by every "Show merged commits" toggle: a page fetched for the other
+// list (first page, "Load more" or refetch) is dropped when it lands.
+let listSession = 0;
+
 /// Whether repo `idx` is on screen: the active tab in Tabs, the focused repo
 /// (or every repo) in Unified. The commit table and the file list agree on it.
 export function isRepoVisible(idx: number): boolean {
@@ -165,8 +169,15 @@ async function loadGroup(idx: number, s: number): Promise<void> {
       }
       if (s !== bcSession) return;
     }
-    const commits = await fetchPage(g, mergedBy, 0);
-    if (s !== bcSession) return;
+    // Fetch again if the list was toggled meanwhile: the toggle skips a group
+    // that has no rows yet, so this is what puts it in the new list.
+    let commits: Commit[];
+    let list: number;
+    do {
+      list = listSession;
+      commits = await fetchPage(g, mergedBy, 0);
+      if (s !== bcSession) return;
+    } while (list !== listSession);
     // One patch, so a group refreshed in place never shows new marks over old
     // rows (and a page abandoned by this reload stops showing "Loading…").
     patchGroup(idx, {
@@ -235,24 +246,35 @@ export async function loadMoreGroup(idx: number): Promise<void> {
   const g = appState.bcGroups[idx];
   if (!g || g.status !== "ready" || !g.hasMore || g.loadingMore) return;
   const s = bcSession;
+  const list = listSession;
   patchGroup(idx, { loadingMore: true });
   try {
     const page = await fetchPage(g, g.mergedBy, g.commits.length);
-    if (s !== bcSession) return;
+    if (s !== bcSession || list !== listSession) return;
     patchGroup(idx, {
       commits: appState.bcGroups[idx].commits.concat(page),
       hasMore: page.length === PAGE_SIZE,
       loadingMore: false,
     });
   } catch {
-    if (s === bcSession) patchGroup(idx, { loadingMore: false });
+    if (s === bcSession && list === listSession) {
+      patchGroup(idx, { loadingMore: false });
+    }
   }
 }
 
 /// Show or hide the commits already in base, reloading every group's rows.
 export async function setShowMerged(on: boolean): Promise<void> {
   appState.bcShowMerged = on;
+  const list = ++listSession;
   const s = bcSession;
+  // A "Load more" in flight belongs to the other list and will be dropped, so
+  // it can no longer clear its own "Loading…".
+  for (const k of Object.keys(appState.bcGroups)) {
+    if (appState.bcGroups[Number(k)].loadingMore) {
+      patchGroup(Number(k), { loadingMore: false });
+    }
+  }
   await Promise.all(
     Object.keys(appState.bcGroups).map(async (k) => {
       const idx = Number(k);
@@ -260,10 +282,12 @@ export async function setShowMerged(on: boolean): Promise<void> {
       if (!g || g.status !== "ready") return;
       try {
         const commits = await fetchPage(g, g.mergedBy, 0);
-        if (s !== bcSession) return;
+        if (s !== bcSession || list !== listSession) return;
         patchGroup(idx, { commits, hasMore: commits.length === PAGE_SIZE });
       } catch (e) {
-        if (s === bcSession) patchGroup(idx, { status: "error", error: String(e) });
+        if (s === bcSession && list === listSession) {
+          patchGroup(idx, { status: "error", error: String(e) });
+        }
       }
     }),
   );

@@ -317,6 +317,60 @@ describe("paging and merged commits", () => {
     expect(commitLog).toHaveBeenCalledWith("/main", "feature", false, PAGE_SIZE, 0);
     expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c1", "old"]);
   });
+
+  it("ends with the rows of the last toggle when merged commits go on and off quickly", async () => {
+    // Review focus: the stale "on" fetch lands last and must not win.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    let release: (c: Commit[]) => void = () => {};
+    vi.mocked(commitLog).mockImplementationOnce(() => new Promise<Commit[]>((r) => (release = r)));
+    await loadBranchContainment();
+    const on = setShowMerged(true);
+    const off = setShowMerged(false);
+    await off;
+    release([commit("c1"), commit("old")]);
+    await on;
+    expect(appState.bcShowMerged).toBe(false);
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c1"]);
+  });
+
+  it("drops a page that was loading when merged commits were toggled", async () => {
+    // Review focus: the old list's page must not be appended to the new list's
+    // first page (duplicate keys in the keyed row list).
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 150 }));
+    let release: (c: Commit[]) => void = () => {};
+    vi.mocked(commitLogExcluding)
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`c${i}`)))
+      .mockImplementationOnce(() => new Promise<Commit[]>((r) => (release = r)));
+    vi.mocked(commitLog).mockResolvedValue([commit("m1")]);
+    await loadBranchContainment();
+    const more = loadMoreGroup(0);
+    expect(appState.bcGroups[0].loadingMore).toBe(true);
+    await setShowMerged(true);
+    // The abandoned page can no longer clear "Loading…", so the toggle does.
+    expect(appState.bcGroups[0].loadingMore).toBe(false);
+    release(Array.from({ length: 50 }, (_, i) => commit(`d${i}`)));
+    await more;
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["m1"]);
+    expect(appState.bcGroups[0].loadingMore).toBe(false);
+  });
+
+  it("fetches the new list for a group whose first page was still loading", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    let release: (c: Commit[]) => void = () => {};
+    vi.mocked(commitLogExcluding).mockImplementationOnce(() => new Promise<Commit[]>((r) => (release = r)));
+    vi.mocked(commitLog).mockResolvedValue([commit("c1"), commit("old")]);
+    const load = loadBranchContainment();
+    await tick();
+    await setShowMerged(true);
+    release([commit("c1")]);
+    await load;
+    expect(appState.bcGroups[0].status).toBe("ready");
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c1", "old"]);
+  });
 });
 
 describe("picking a commit", () => {
