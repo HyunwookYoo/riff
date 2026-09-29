@@ -12,7 +12,11 @@ vi.mock("./git", () => ({
   squashCheck: vi.fn(),
 }));
 vi.mock("./repoRange", () => ({ resolveRepoRanges: vi.fn() }));
-vi.mock("./compare", () => ({ compare: vi.fn() }));
+vi.mock("./compare", () => ({
+  compare: vi.fn(),
+  listedRanges: vi.fn(),
+  forgetListedRanges: vi.fn(),
+}));
 
 import {
   PAGE_SIZE,
@@ -39,7 +43,7 @@ import {
   squashCheck,
 } from "./git";
 import { resolveRepoRanges } from "./repoRange";
-import { compare } from "./compare";
+import { compare, forgetListedRanges, listedRanges } from "./compare";
 import type {
   BcGroup,
   Commit,
@@ -99,7 +103,17 @@ const group = (g: Partial<BcGroup>): BcGroup => ({
 const names = { base: "main", compare: "feature" };
 
 beforeEach(() => {
-  for (const f of [containment, commitLog, commitLogExcluding, commitContainmentDetail, squashCheck, resolveRepoRanges, compare]) {
+  for (const f of [
+    containment,
+    commitLog,
+    commitLogExcluding,
+    commitContainmentDetail,
+    squashCheck,
+    resolveRepoRanges,
+    compare,
+    listedRanges,
+    forgetListedRanges,
+  ]) {
     vi.mocked(f).mockReset();
   }
   Object.assign(appState, {
@@ -197,6 +211,7 @@ describe("loadBranchContainment", () => {
     expect(appState.bcSelected).toBeNull();
     expect(appState.bcSelectedDetail).toBeNull();
     expect(appState.bcDiffRange).toBeNull();
+    expect(compare).toHaveBeenCalledTimes(1);
     expect(compare).toHaveBeenCalledWith({ silent: true });
   });
 
@@ -217,6 +232,7 @@ describe("loadBranchContainment", () => {
     expect(Object.keys(appState.bcGroups)).toEqual(["0"]);
     expect(appState.bcSelected).toBeNull();
     expect(appState.bcDiffRange).toBeNull();
+    expect(compare).toHaveBeenCalledTimes(1);
     expect(compare).toHaveBeenCalledWith({ silent: true });
   });
 
@@ -322,6 +338,31 @@ describe("loadBranchContainment", () => {
     await loadBranchContainment();
     expect(appState.bcGroups).toEqual({});
     expect(appState.files).toEqual([]);
+    // The emptied list holds no ranges: the next ones are listed even if they
+    // equal the last ones compare() listed.
+    expect(forgetListedRanges).toHaveBeenCalled();
+  });
+
+  it("lists the files again when the ranges differ from those last listed", async () => {
+    // Review focus (F7): the table follows the pickers at once; the file list
+    // and its header must not go on describing the old range.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(listedRanges).mockReturnValue(JSON.stringify([range("/main", "main", "old")]));
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 0 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    await loadBranchContainment();
+    expect(compare).toHaveBeenCalledTimes(1);
+    expect(compare).toHaveBeenCalledWith({ silent: true });
+  });
+
+  it("leaves the file list alone when it holds these ranges already", async () => {
+    // Compared by value: a refresh resolves a fresh but equal array.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(listedRanges).mockReturnValue(JSON.stringify([range("/main", "main", "feature")]));
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 0 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    await loadBranchContainment();
+    expect(compare).not.toHaveBeenCalled();
   });
 });
 
@@ -711,6 +752,7 @@ describe("picking a commit", () => {
     vi.mocked(commitLogExcluding).mockResolvedValue([commit("s1", ["s0"])]);
     vi.mocked(commitContainmentDetail).mockResolvedValue({ in_target: false, introduced_by: null });
     await loadBranchContainment();
+    vi.mocked(compare).mockClear();
     selectBranchCommit(1, appState.bcGroups[1].commits[0]);
     expect(appState.bcDiffRange).toEqual({ repoIdx: 1, start: "s0", target: "s1" });
     expect(appState.bcSelected?.repoIdx).toBe(1);

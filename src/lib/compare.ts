@@ -12,6 +12,22 @@ import type { ChangedFile, RepoEntry } from "./types";
 // already in flight on the JS bus would otherwise still land.
 let compareSession = 0;
 
+// The resolved ranges (as JSON) the file list was last built from; null while
+// it holds a picked commit's files, or was emptied outside compare().
+let listedKey: string | null = null;
+
+/// The resolved ranges, as JSON, that the file list was last built from — null
+/// while it holds a picked commit's files. Branch mode lists again whenever
+/// the ranges on screen are different ones.
+export function listedRanges(): string | null {
+  return listedKey;
+}
+
+/// The file list was emptied outside compare(): it holds no ranges now.
+export function forgetListedRanges(): void {
+  listedKey = null;
+}
+
 interface CompareOptions {
   /**
    * If true, swallow errors (only log to console). Used by background
@@ -157,6 +173,9 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
 
   try {
     const ranges = await resolveRepoRanges();
+    if (session === compareSession) {
+      listedKey = drill ? null : JSON.stringify(ranges);
+    }
     // Sequential per-repo. The Rust `GitCli` keeps a single
     // `Mutex<Option<Session>>` slot so parallel calls with different
     // paths would thrash and drop each others' children mid-stream.

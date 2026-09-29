@@ -28,7 +28,7 @@ vi.mock("./diff/shiki", () => ({ preloadLanguages: vi.fn() }));
 vi.mock("./commitHistory", () => ({ restoreCompareContext: vi.fn() }));
 vi.mock("./workingCopy", () => ({ enterChangesMode: vi.fn() }));
 
-import { compare } from "./compare";
+import { compare, forgetListedRanges, listedRanges } from "./compare";
 import { appState } from "./store.svelte";
 import { diffFiles } from "./git";
 import { resolveRepoRanges } from "./repoRange";
@@ -129,5 +129,22 @@ describe("compare", () => {
     expect(vi.mocked(diffFiles).mock.calls.map((c) => c[0])).toEqual([
       "/manual",
     ]);
+  });
+
+  it("remembers the ranges it listed, and none while it lists a picked commit", async () => {
+    // loadBranchContainment re-lists when the ranges on screen differ (F7).
+    vi.mocked(resolveRepoRanges).mockResolvedValue(allOk);
+    await compare();
+    expect(listedRanges()).toBe(JSON.stringify(allOk));
+    appState.bcDiffRange = { repoIdx: 0, start: "p0", target: "c0" };
+    await compare();
+    expect(listedRanges()).toBeNull();
+  });
+
+  it("forgets the ranges it listed once the list is emptied elsewhere", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue(allOk);
+    await compare();
+    forgetListedRanges();
+    expect(listedRanges()).toBeNull();
   });
 });

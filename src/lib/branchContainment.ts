@@ -6,7 +6,7 @@ import {
   containment,
   squashCheck,
 } from "./git";
-import { compare } from "./compare";
+import { compare, forgetListedRanges, listedRanges } from "./compare";
 import { resolveRepoRanges } from "./repoRange";
 import type { ToolbarPair } from "./rangeText";
 import type { Counts, RowMark, SideNames, Summary } from "./commitTableText";
@@ -368,9 +368,17 @@ async function loadOnce(): Promise<void> {
     // Changes) so the diff pane shows its placeholder, not an error.
     appState.selectedFile = null;
     appState.files = [];
+    forgetListedRanges();
     return;
   }
-  if (drill && !keepPick) void compare({ silent: true });
+  if (drill && !keepPick) {
+    void compare({ silent: true });
+  } else if (!drill && listedRanges() !== JSON.stringify(ranges)) {
+    // The file list follows the ranges as the table does, so no two surfaces
+    // describe different ones: list these unless compare() already has. (A
+    // kept pick's own files are what the list holds.)
+    void compare({ silent: true });
+  }
   await Promise.all(toLoad.map(([i, r]) => refreshGroup(i, r, s)));
 }
 
