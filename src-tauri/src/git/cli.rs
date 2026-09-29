@@ -3263,8 +3263,8 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
     #[test]
     fn squash_check_finds_a_squash_that_carried_a_gitlink_change() {
         // The other side: a squash that took the pointer along is still found,
-        // because its patch and the branch's net change show the pointer alike
-        // whatever the settings.
+        // because its patch and the branch's net change render alike whatever
+        // the settings — a half-pinned scan would read them differently.
         let repo = squash_fixture("squash-gitlink-carried");
         let pointer = rev_parse(&repo, "base");
         git_in(&repo, &["checkout", "-q", "feat"]);
@@ -3273,6 +3273,7 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         squash_merge(&repo);
         let squash = rev_parse(&repo, "base");
         hide_submodules_from_diffs(&repo);
+        git_in(&repo, &["config", "diff.context", "1"]);
         let r = GitCli::new().squash_check(&repo, "feat", "base").unwrap();
         assert_eq!(r.verdict, SquashVerdict::Squash);
         assert_eq!(r.squash_commit.map(|c| c.sha), Some(squash));
