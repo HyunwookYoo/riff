@@ -83,6 +83,8 @@ const group = (g: Partial<BcGroup>): BcGroup => ({
   loadingMore: false,
   mergedBy: undefined,
   squash: null,
+  baseTip: null,
+  compareTip: null,
   ...g,
 });
 const names = { base: "main", compare: "feature" };
@@ -152,7 +154,7 @@ describe("loadBranchContainment", () => {
     expect(appState.bcGroups[1].error).toContain("boom");
   });
 
-  it("drops results from a load the inputs have moved past", async () => {
+  it("ends on the inputs of a call made while an older load ran", async () => {
     let release: (m: Containment) => void = () => {};
     vi.mocked(resolveRepoRanges)
       .mockResolvedValueOnce([range("/main", "main", "old")])
@@ -250,10 +252,14 @@ describe("loadBranchContainment", () => {
     vi.mocked(containment).mockResolvedValueOnce(marks({ not_in_target: ["c1"], ahead: 1 }));
     vi.mocked(commitLogExcluding).mockResolvedValueOnce([commit("c1")]);
     await loadBranchContainment();
-    vi.mocked(containment).mockImplementationOnce(() => new Promise<Containment>(() => {}));
-    void loadBranchContainment();
+    let release: (m: Containment) => void = () => {};
+    vi.mocked(containment).mockImplementationOnce(() => new Promise<Containment>((r) => (release = r)));
+    const reload = loadBranchContainment();
     await tick();
     expect(appState.bcGroups[0]).toMatchObject({ compare: "other", status: "loading", commits: [] });
+    // Let the load finish: one left running would hold off every later load.
+    release(marks({ ahead: 0 }));
+    await reload;
   });
 
   it("releases a page that was loading when its group refreshed", async () => {
@@ -307,6 +313,151 @@ describe("loadBranchContainment", () => {
     await loadBranchContainment();
     expect(appState.bcGroups).toEqual({});
     expect(appState.files).toEqual([]);
+  });
+});
+
+describe("refreshes", () => {
+  // Tip reads are one-commit logs; answer them from a ref → tip table.
+  const tipsAt = (tips: Record<string, string>) =>
+    vi.mocked(commitLog).mockImplementation(async (_path, ref, _all, limit) =>
+      limit === 1 ? [commit(tips[ref] ?? `${ref}-tip`)] : [],
+    );
+  const none: SquashCheck = { verdict: "none", squash_commit: null };
+  const squashed: SquashCheck = { verdict: "squash", squash_commit: commit("s1") };
+
+  it("runs one more load for any number of calls made while one runs", async () => {
+    // Review focus (F1): refsRefresh fires on every saved file; overlapping
+    // loads would pile up git processes that nothing waits for.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    let release: (m: Containment) => void = () => {};
+    vi.mocked(containment)
+      .mockImplementationOnce(() => new Promise<Containment>((r) => (release = r)))
+      .mockResolvedValue(marks({ ahead: 0 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    const first = loadBranchContainment();
+    await tick();
+    await Promise.all([loadBranchContainment(), loadBranchContainment(), loadBranchContainment()]);
+    expect(resolveRepoRanges).toHaveBeenCalledTimes(1);
+    release(marks({ ahead: 0 }));
+    await first;
+    expect(resolveRepoRanges).toHaveBeenCalledTimes(2);
+    expect(containment).toHaveBeenCalledTimes(2);
+    await loadBranchContainment();
+    expect(resolveRepoRanges).toHaveBeenCalledTimes(3);
+  });
+
+  it("skips a group whose tips did not move, keeping its rows and verdict", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    tipsAt({ main: "b1", feature: "f1" });
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    vi.mocked(squashCheck).mockResolvedValue(squashed);
+    await loadBranchContainment();
+    expect(appState.bcGroups[0]).toMatchObject({ baseTip: "b1", compareTip: "f1", squash: squashed });
+    const kept = appState.bcGroups[0];
+    for (const f of [containment, commitLog, commitLogExcluding, squashCheck]) vi.mocked(f).mockClear();
+
+    await loadBranchContainment();
+    expect(commitLog).toHaveBeenCalledWith("/main", "main", false, 1, 0);
+    expect(commitLog).toHaveBeenCalledWith("/main", "feature", false, 1, 0);
+    expect(containment).not.toHaveBeenCalled();
+    expect(commitLogExcluding).not.toHaveBeenCalled();
+    expect(squashCheck).not.toHaveBeenCalled();
+    expect(appState.bcGroups[0]).toBe(kept);
+  });
+
+  it("reloads and checks for a squash again once compare's tip moved", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    tipsAt({ main: "b1", feature: "f1" });
+    vi.mocked(containment)
+      .mockResolvedValueOnce(marks({ not_in_target: ["c1"], ahead: 1 }))
+      .mockResolvedValueOnce(marks({ not_in_target: ["c2", "c1"], ahead: 2 }));
+    vi.mocked(commitLogExcluding)
+      .mockResolvedValueOnce([commit("c1")])
+      .mockResolvedValueOnce([commit("c2"), commit("c1")]);
+    vi.mocked(squashCheck).mockResolvedValueOnce(squashed).mockResolvedValueOnce(none);
+    await loadBranchContainment();
+
+    tipsAt({ main: "b1", feature: "f2" });
+    await loadBranchContainment();
+    expect(containment).toHaveBeenCalledTimes(2);
+    expect(squashCheck).toHaveBeenCalledTimes(2);
+    expect(appState.bcGroups[0]).toMatchObject({ compareTip: "f2", squash: none });
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c2", "c1"]);
+  });
+
+  it("takes a gitlink range's pins as its tips without reading them", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([
+      range("/main", "main", "feature"),
+      { ok: true, path: "/main/sub", base: "aaa", compare: "bbb", source: "gitlink" },
+    ]);
+    tipsAt({ main: "b1", feature: "f1" });
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 0 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    await loadBranchContainment();
+    expect(appState.bcGroups[1]).toMatchObject({ baseTip: "aaa", compareTip: "bbb" });
+    expect(vi.mocked(commitLog).mock.calls.every((c) => c[0] === "/main")).toBe(true);
+
+    await loadBranchContainment();
+    expect(containment).toHaveBeenCalledTimes(2);
+  });
+
+  it("reloads a group that failed, even when its tips did not move", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    tipsAt({ main: "b1", feature: "f1" });
+    vi.mocked(containment).mockRejectedValueOnce("boom").mockResolvedValueOnce(marks({ ahead: 0 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    await loadBranchContainment();
+    expect(appState.bcGroups[0].status).toBe("error");
+    await loadBranchContainment();
+    expect(containment).toHaveBeenCalledTimes(2);
+    expect(appState.bcGroups[0].status).toBe("ready");
+  });
+
+  it("appends a page that lands after a refresh skipped its group", async () => {
+    // The skipped group keeps its rows, so the page still continues them —
+    // and ends its own "Loading…", since no reload lands to do it.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    tipsAt({ main: "b1", feature: "f1" });
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 150 }));
+    let release: (c: Commit[]) => void = () => {};
+    vi.mocked(commitLogExcluding)
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`c${i}`)))
+      .mockImplementationOnce(() => new Promise<Commit[]>((r) => (release = r)))
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`c${i}`)));
+    await loadBranchContainment();
+    const more = loadMoreGroup(0);
+    await loadBranchContainment();
+    release(Array.from({ length: 50 }, (_, i) => commit(`d${i}`)));
+    await more;
+    expect(commitLogExcluding).toHaveBeenCalledTimes(2);
+    expect(appState.bcGroups[0].commits).toHaveLength(150);
+    expect(appState.bcGroups[0].loadingMore).toBe(false);
+  });
+
+  it("reloads the new list when a refresh drops a toggle's refetch", async () => {
+    // The refresh's session drops the refetch; skipping the group by its tips
+    // would then leave the old list's rows under the new checkbox.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    let release: (c: Commit[]) => void = () => {};
+    let pages = 0;
+    vi.mocked(commitLog).mockImplementation((_path, ref, _all, limit) => {
+      if (limit === 1) return Promise.resolve([commit(`${ref}-tip`)]);
+      pages++;
+      return pages === 1
+        ? new Promise<Commit[]>((r) => (release = r))
+        : Promise.resolve([commit("c1"), commit("old")]);
+    });
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    vi.mocked(squashCheck).mockResolvedValue(none);
+    await loadBranchContainment();
+    const toggle = setShowMerged(true);
+    await loadBranchContainment();
+    release([commit("c1")]);
+    await toggle;
+    expect(appState.bcShowMerged).toBe(true);
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c1", "old"]);
   });
 });
 
@@ -374,9 +525,9 @@ describe("paging and merged commits", () => {
     vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
     vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
     vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    await loadBranchContainment();
     let release: (c: Commit[]) => void = () => {};
     vi.mocked(commitLog).mockImplementationOnce(() => new Promise<Commit[]>((r) => (release = r)));
-    await loadBranchContainment();
     const on = setShowMerged(true);
     const off = setShowMerged(false);
     await off;
@@ -716,7 +867,7 @@ describe("squash detection", () => {
     expect(groupCounts(appState.bcGroups[0])).toEqual({ out: 0, patch: 2, behind: 0 });
   });
 
-  it("drops a verdict that arrives after the inputs moved on", async () => {
+  it("ends on the new range's verdict when the inputs move during a check", async () => {
     vi.mocked(resolveRepoRanges)
       .mockResolvedValueOnce([range("/main", "main", "old")])
       .mockResolvedValueOnce([range("/main", "main", "new")]);

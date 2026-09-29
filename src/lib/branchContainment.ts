@@ -134,7 +134,12 @@ export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
   return { kind: "all-in", names: pair, repos: ready.length, failed };
 }
 
-function emptyGroup(range: Extract<RepoRange, { ok: true }>): BcGroup {
+type OkRange = Extract<RepoRange, { ok: true }>;
+
+/// Where a group's base and compare point (BcGroup.baseTip / compareTip).
+type Tips = Pick<BcGroup, "baseTip" | "compareTip">;
+
+function emptyGroup(range: OkRange): BcGroup {
   return {
     path: range.path,
     base: range.base,
@@ -147,7 +152,22 @@ function emptyGroup(range: Extract<RepoRange, { ok: true }>): BcGroup {
     loadingMore: false,
     mergedBy: undefined,
     squash: null,
+    baseTip: null,
+    compareTip: null,
   };
+}
+
+/// The commits a range's sides point at now: a one-commit log per ref. A
+/// gitlink range's sides are commits already.
+async function readTips(range: OkRange): Promise<Tips> {
+  if (range.source === "gitlink") {
+    return { baseTip: range.base, compareTip: range.compare };
+  }
+  const [base, compare] = await Promise.all([
+    commitLog(range.path, range.base, false, 1, 0),
+    commitLog(range.path, range.compare, false, 1, 0),
+  ]);
+  return { baseTip: base[0]?.sha ?? null, compareTip: compare[0]?.sha ?? null };
 }
 
 function patchGroup(idx: number, patch: Partial<BcGroup>): void {
@@ -173,7 +193,29 @@ function fetchPage(
     : commitLog(g.path, g.compare, false, PAGE_SIZE, skip);
 }
 
-async function loadGroup(idx: number, s: number): Promise<void> {
+/// Refresh group `idx`: reload it, unless both of its tips still point where
+/// they did when it last loaded — then its marks, rows, merge and squash
+/// verdict all still hold, and no further git work is done.
+async function refreshGroup(idx: number, range: OkRange, s: number): Promise<void> {
+  let tips: Tips;
+  try {
+    tips = await readTips(range);
+  } catch {
+    // Unreadable (a ref is gone): reload, and let the load report it.
+    tips = { baseTip: null, compareTip: null };
+  }
+  if (s !== bcSession) return;
+  const g = appState.bcGroups[idx];
+  const unmoved =
+    !!g &&
+    tips.baseTip !== null &&
+    tips.compareTip !== null &&
+    tips.baseTip === g.baseTip &&
+    tips.compareTip === g.compareTip;
+  if (!unmoved) await loadGroup(idx, s, tips);
+}
+
+async function loadGroup(idx: number, s: number, tips: Tips): Promise<void> {
   const g = appState.bcGroups[idx];
   if (!g) return;
   try {
@@ -203,7 +245,10 @@ async function loadGroup(idx: number, s: number): Promise<void> {
     const unmerged = Math.max(0, marks.ahead - marks.equivalent.length) > 0;
     // One patch, so a group refreshed in place never shows new marks over old
     // rows (and a page abandoned by this reload stops showing "Loading…").
-    // A verdict describes ● rows: with none left, it goes too.
+    // A verdict describes ● rows: with none left, it goes too. The tips are
+    // those read before this load, so a commit landing meanwhile moves them
+    // on the next refresh; its squash check lands before that refresh starts
+    // (loads never overlap).
     patchGroup(idx, {
       marks,
       mergedBy,
@@ -212,11 +257,15 @@ async function loadGroup(idx: number, s: number): Promise<void> {
       status: "ready",
       error: null,
       loadingMore: false,
+      ...tips,
       ...(unmerged ? {} : { squash: null }),
     });
     if (unmerged) await checkSquash(idx, s);
   } catch (e) {
-    if (s === bcSession) patchGroup(idx, { status: "error", error: String(e) });
+    // No tips: a failed group loads again on the next refresh.
+    if (s === bcSession) {
+      patchGroup(idx, { status: "error", error: String(e), baseTip: null, compareTip: null });
+    }
   }
 }
 
@@ -236,14 +285,38 @@ async function checkSquash(idx: number, s: number): Promise<void> {
   }
 }
 
+// One load runs at a time. refsRefresh fires on every saved file, and loads
+// left to overlap pile up git processes that no one waits for (see
+// inflight.ts): a call made while one runs asks for one more, run after it.
+let loadRunning = false;
+let loadAgain = false;
+
 /// Rebuild the commit table for the current inputs: one group per repo whose
 /// range resolved, each loading its marks and first page on its own. A group
 /// whose range is unchanged keeps its rows and marks while its fresh results
 /// load — a refresh (fetch, checkout, a saved file) must not blank the table
-/// or reset the diff being read — and so does a commit picked in it. A pick
-/// whose range changed or vanished belonged to the old comparison, so it is
-/// dropped and the file list goes back to all changes.
+/// or reset the diff being read — and so does a commit picked in it; a group
+/// whose tips did not move is not reloaded at all. A pick whose range changed
+/// or vanished belonged to the old comparison, so it is dropped and the file
+/// list goes back to all changes. Calls made while a load runs collapse into
+/// one more load after it.
 export async function loadBranchContainment(): Promise<void> {
+  if (loadRunning) {
+    loadAgain = true;
+    return;
+  }
+  loadRunning = true;
+  try {
+    do {
+      loadAgain = false;
+      await loadOnce();
+    } while (loadAgain);
+  } finally {
+    loadRunning = false;
+  }
+}
+
+async function loadOnce(): Promise<void> {
   const s = ++bcSession;
   if (appState.appMode !== "compare" || !appState.repoPath) {
     clearBranchContainment();
@@ -254,6 +327,7 @@ export async function loadBranchContainment(): Promise<void> {
   const before = appState.bcGroups;
   const groups: Record<number, BcGroup> = {};
   const unchanged = new Set<number>();
+  const toLoad: [number, OkRange][] = [];
   ranges.forEach((r, i) => {
     if (!r.ok) return;
     const prev = before[i];
@@ -263,6 +337,7 @@ export async function loadBranchContainment(): Promise<void> {
     } else {
       groups[i] = emptyGroup(r);
     }
+    toLoad.push([i, r]);
   });
   const drill = appState.bcDiffRange;
   const keepPick = drill !== null && unchanged.has(drill.repoIdx);
@@ -280,7 +355,7 @@ export async function loadBranchContainment(): Promise<void> {
     return;
   }
   if (drill && !keepPick) void compare({ silent: true });
-  await Promise.all(Object.keys(groups).map((k) => loadGroup(Number(k), s)));
+  await Promise.all(toLoad.map(([i, r]) => refreshGroup(i, r, s)));
 }
 
 /// The next page of group `idx` — its "Load 100 more" row.
@@ -317,11 +392,11 @@ export async function setShowMerged(on: boolean): Promise<void> {
   const list = ++listSession;
   const s = bcSession;
   // A "Load more" in flight belongs to the other list and will be dropped, so
-  // it can no longer clear its own "Loading…".
+  // it can no longer clear its own "Loading…". Until its refetch lands a
+  // group's rows belong to the other list too, so its tips go: a refresh that
+  // drops the refetch must reload the group, not skip it as unmoved.
   for (const k of Object.keys(appState.bcGroups)) {
-    if (appState.bcGroups[Number(k)].loadingMore) {
-      patchGroup(Number(k), { loadingMore: false });
-    }
+    patchGroup(Number(k), { loadingMore: false, baseTip: null, compareTip: null });
   }
   await Promise.all(
     Object.keys(appState.bcGroups).map(async (k) => {

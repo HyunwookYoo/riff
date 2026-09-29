@@ -395,6 +395,11 @@ export interface BcGroup {
   /// Squash detection for a group that still has ● rows: "checking" while
   /// squash_check runs, its answer once back, null when not run or failed.
   squash: SquashCheck | "checking" | null;
+  /// The commits base and compare pointed at when the group last loaded; a
+  /// refresh that finds them unmoved keeps the group as it is. null until the
+  /// group has loaded (and after a failed load or a list toggle).
+  baseTip: string | null;
+  compareTip: string | null;
 }
 
 /// Mirrors Rust `SquashVerdict` (serde kebab-case).
