@@ -133,13 +133,17 @@ function patchGroup(idx: number, patch: Partial<BcGroup>): void {
 }
 
 /// One page of a group's rows. Default: compare's commits the base lacks.
-/// With merged commits shown: what the introducing merge brought in when it
-/// is known, otherwise compare's history.
-function fetchPage(g: BcGroup, skip: number): Promise<Commit[]> {
+/// With merged commits shown: what the introducing merge (`mergedBy`) brought
+/// in when it is known, otherwise compare's history.
+function fetchPage(
+  g: Pick<BcGroup, "path" | "base" | "compare">,
+  mergedBy: BcGroup["mergedBy"],
+  skip: number,
+): Promise<Commit[]> {
   if (!appState.bcShowMerged) {
     return commitLogExcluding(g.path, g.compare, g.base, PAGE_SIZE, skip);
   }
-  const beforeMerge = g.mergedBy?.parents[0];
+  const beforeMerge = mergedBy?.parents[0];
   return beforeMerge
     ? commitLogExcluding(g.path, g.compare, beforeMerge, PAGE_SIZE, skip)
     : commitLog(g.path, g.compare, false, PAGE_SIZE, skip);
@@ -161,13 +165,18 @@ async function loadGroup(idx: number, s: number): Promise<void> {
       }
       if (s !== bcSession) return;
     }
-    patchGroup(idx, { marks, mergedBy });
-    const commits = await fetchPage(appState.bcGroups[idx], 0);
+    const commits = await fetchPage(g, mergedBy, 0);
     if (s !== bcSession) return;
+    // One patch, so a group refreshed in place never shows new marks over old
+    // rows (and a page abandoned by this reload stops showing "Loading…").
     patchGroup(idx, {
-      status: "ready",
+      marks,
+      mergedBy,
       commits,
       hasMore: commits.length === PAGE_SIZE,
+      status: "ready",
+      error: null,
+      loadingMore: false,
     });
   } catch (e) {
     if (s === bcSession) patchGroup(idx, { status: "error", error: String(e) });
@@ -175,9 +184,12 @@ async function loadGroup(idx: number, s: number): Promise<void> {
 }
 
 /// Rebuild the commit table for the current inputs: one group per repo whose
-/// range resolved, each loading its marks and first page on its own. A picked
-/// commit belonged to the old comparison, so it is dropped — and the file list
-/// goes back to all changes rather than keep showing that commit's files.
+/// range resolved, each loading its marks and first page on its own. A group
+/// whose range is unchanged keeps its rows and marks while its fresh results
+/// load — a refresh (fetch, checkout, a saved file) must not blank the table
+/// or reset the diff being read — and so does a commit picked in it. A pick
+/// whose range changed or vanished belonged to the old comparison, so it is
+/// dropped and the file list goes back to all changes.
 export async function loadBranchContainment(): Promise<void> {
   const s = ++bcSession;
   if (appState.appMode !== "compare" || !appState.repoPath) {
@@ -186,14 +198,26 @@ export async function loadBranchContainment(): Promise<void> {
   }
   const ranges = await resolveRepoRanges();
   if (s !== bcSession) return;
-  const hadPick = appState.bcDiffRange !== null;
-  appState.bcSelected = null;
-  appState.bcSelectedDetail = null;
-  appState.bcDiffRange = null;
+  const before = appState.bcGroups;
   const groups: Record<number, BcGroup> = {};
+  const unchanged = new Set<number>();
   ranges.forEach((r, i) => {
-    if (r.ok) groups[i] = emptyGroup(r);
+    if (!r.ok) return;
+    const prev = before[i];
+    if (prev && prev.path === r.path && prev.base === r.base && prev.compare === r.compare) {
+      groups[i] = prev;
+      unchanged.add(i);
+    } else {
+      groups[i] = emptyGroup(r);
+    }
   });
+  const drill = appState.bcDiffRange;
+  const keepPick = drill !== null && unchanged.has(drill.repoIdx);
+  if (!keepPick) {
+    appState.bcSelected = null;
+    appState.bcSelectedDetail = null;
+    appState.bcDiffRange = null;
+  }
   appState.bcGroups = groups;
   if (Object.keys(groups).length === 0) {
     // Nothing to compare yet: drop a leftover selection (e.g. a file opened in
@@ -202,7 +226,7 @@ export async function loadBranchContainment(): Promise<void> {
     appState.files = [];
     return;
   }
-  if (hadPick) void compare({ silent: true });
+  if (drill && !keepPick) void compare({ silent: true });
   await Promise.all(Object.keys(groups).map((k) => loadGroup(Number(k), s)));
 }
 
@@ -213,7 +237,7 @@ export async function loadMoreGroup(idx: number): Promise<void> {
   const s = bcSession;
   patchGroup(idx, { loadingMore: true });
   try {
-    const page = await fetchPage(g, g.commits.length);
+    const page = await fetchPage(g, g.mergedBy, g.commits.length);
     if (s !== bcSession) return;
     patchGroup(idx, {
       commits: appState.bcGroups[idx].commits.concat(page),
@@ -235,7 +259,7 @@ export async function setShowMerged(on: boolean): Promise<void> {
       const g = appState.bcGroups[idx];
       if (!g || g.status !== "ready") return;
       try {
-        const commits = await fetchPage(g, 0);
+        const commits = await fetchPage(g, g.mergedBy, 0);
         if (s !== bcSession) return;
         patchGroup(idx, { commits, hasMore: commits.length === PAGE_SIZE });
       } catch (e) {

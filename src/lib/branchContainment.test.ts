@@ -166,10 +166,12 @@ describe("loadBranchContainment", () => {
     expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["n1"]);
   });
 
-  it("drops a picked commit on reload and lists all changes again", async () => {
-    // Review focus: a window-focus refresh must not leave the old commit's
-    // files on screen after its pick is gone.
-    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+  it("drops a picked commit when its range changes on reload and lists all changes again", async () => {
+    // Review focus: a reload onto another range must not leave the old
+    // commit's files on screen after its pick is gone.
+    vi.mocked(resolveRepoRanges)
+      .mockResolvedValueOnce([range("/main", "main", "feature")])
+      .mockResolvedValueOnce([range("/main", "main", "other")]);
     vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
     vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1", ["c0"])]);
     vi.mocked(commitContainmentDetail).mockResolvedValue({ in_target: false, introduced_by: null });
@@ -178,8 +180,93 @@ describe("loadBranchContainment", () => {
     vi.mocked(compare).mockClear();
     await loadBranchContainment();
     expect(appState.bcSelected).toBeNull();
+    expect(appState.bcSelectedDetail).toBeNull();
     expect(appState.bcDiffRange).toBeNull();
     expect(compare).toHaveBeenCalledWith({ silent: true });
+  });
+
+  it("drops a picked commit when its repo's range disappears", async () => {
+    vi.mocked(resolveRepoRanges)
+      .mockResolvedValueOnce([range("/main", "main", "feature"), range("/main/sub", "aaa", "bbb")])
+      .mockResolvedValueOnce([
+        range("/main", "main", "feature"),
+        { ok: false, reason: "unchanged", pin: "x" },
+      ]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["s1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("s1", ["s0"])]);
+    vi.mocked(commitContainmentDetail).mockResolvedValue({ in_target: false, introduced_by: null });
+    await loadBranchContainment();
+    selectBranchCommit(1, appState.bcGroups[1].commits[0]);
+    vi.mocked(compare).mockClear();
+    await loadBranchContainment();
+    expect(Object.keys(appState.bcGroups)).toEqual(["0"]);
+    expect(appState.bcSelected).toBeNull();
+    expect(appState.bcDiffRange).toBeNull();
+    expect(compare).toHaveBeenCalledWith({ silent: true });
+  });
+
+  it("keeps the rows and the pick while an unchanged range refreshes", async () => {
+    // Review focus: a watcher refresh (a worktree save) must not blank the
+    // table, drop the pick or re-run compare under the diff being read.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValueOnce(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValueOnce([commit("c1", ["c0"])]);
+    vi.mocked(commitContainmentDetail).mockResolvedValue({ in_target: false, introduced_by: null });
+    await loadBranchContainment();
+    selectBranchCommit(0, appState.bcGroups[0].commits[0]);
+    await tick();
+    vi.mocked(compare).mockClear();
+
+    let release: (m: Containment) => void = () => {};
+    vi.mocked(containment).mockImplementationOnce(() => new Promise<Containment>((r) => (release = r)));
+    vi.mocked(commitLogExcluding).mockResolvedValueOnce([commit("c2", ["c1"]), commit("c1", ["c0"])]);
+    const reload = loadBranchContainment();
+    await tick();
+    // Mid-refresh nothing has been blanked.
+    expect(appState.bcGroups[0].status).toBe("ready");
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c1"]);
+    expect(appState.bcSelected?.commit.sha).toBe("c1");
+    expect(appState.bcSelectedDetail).not.toBeNull();
+    expect(appState.bcDiffRange).toEqual({ repoIdx: 0, start: "c0", target: "c1" });
+
+    release(marks({ not_in_target: ["c2", "c1"], ahead: 2 }));
+    await reload;
+    // The fresh results land together, and the pick stays without a re-compare.
+    expect(appState.bcGroups[0].marks?.ahead).toBe(2);
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c2", "c1"]);
+    expect(appState.bcSelected?.commit.sha).toBe("c1");
+    expect(appState.bcDiffRange?.target).toBe("c1");
+    expect(compare).not.toHaveBeenCalled();
+  });
+
+  it("starts a group whose range changed as an empty loading group", async () => {
+    vi.mocked(resolveRepoRanges)
+      .mockResolvedValueOnce([range("/main", "main", "feature")])
+      .mockResolvedValueOnce([range("/main", "main", "other")]);
+    vi.mocked(containment).mockResolvedValueOnce(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValueOnce([commit("c1")]);
+    await loadBranchContainment();
+    vi.mocked(containment).mockImplementationOnce(() => new Promise<Containment>(() => {}));
+    void loadBranchContainment();
+    await tick();
+    expect(appState.bcGroups[0]).toMatchObject({ compare: "other", status: "loading", commits: [] });
+  });
+
+  it("releases a page that was loading when its group refreshed", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 150 }));
+    let release: (c: Commit[]) => void = () => {};
+    vi.mocked(commitLogExcluding)
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`c${i}`)))
+      .mockImplementationOnce(() => new Promise<Commit[]>((r) => (release = r)))
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`c${i}`)));
+    await loadBranchContainment();
+    const more = loadMoreGroup(0);
+    await loadBranchContainment();
+    release(Array.from({ length: 50 }, (_, i) => commit(`d${i}`)));
+    await more;
+    expect(appState.bcGroups[0].commits).toHaveLength(100);
+    expect(appState.bcGroups[0].loadingMore).toBe(false);
   });
 
   it("clears a leftover file selection when there is nothing to compare", async () => {
