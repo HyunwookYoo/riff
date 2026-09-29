@@ -3,15 +3,9 @@
   import type { ChangedFile, FileStatus, RepoEntry } from "$lib/types";
   import { toggleFocus } from "$lib/focus";
   import { setFileViewMode } from "$lib/git";
+  import { rangeLabel, rangeTooltip } from "$lib/rangeText";
   import { buildTree } from "./tree";
   import TreeNode from "./TreeNode.svelte";
-
-  // Abbreviate a ref for display: full hex SHAs (e.g. a commit picked in the
-  // history browser) shrink to 7 chars like git's short SHA; branch/tag names
-  // pass through untouched. The full value stays in the row's tooltip.
-  function shortRef(ref: string): string {
-    return /^[0-9a-f]{12,40}$/i.test(ref) ? ref.slice(0, 7) : ref;
-  }
 
   // Multi-root grouping (§13). Each group is one repo's files. When there is
   // only one repo (the common single-repo case) we render without the group
@@ -58,6 +52,14 @@
   // active repo is conveyed by the tab bar above, so the header would be
   // redundant noise.
   const showGroups = $derived(!isTabMode && appState.repos.length > 1);
+  // Branch mode names each group's range under its header, for every repo:
+  // where it comes from (toolbar, gitlink pins, own branches, same names) or
+  // why it has none.
+  const superName = $derived(appState.repos[0]?.displayName ?? "");
+  const pair = $derived({
+    base: appState.startBranch,
+    compare: appState.targetBranch,
+  });
 
   // Tree-mode local state. Directory collapses are keyed by `<repoIdx>:<path>`
   // so the same path in two repos doesn't share a collapse state.
@@ -208,6 +210,8 @@
           class="group-header"
           class:collapsed={appState.collapsedRepos.has(group.idx)}
           class:focused={isFocused}
+          class:dim={appState.appMode === "compare" &&
+            appState.repoRanges[group.idx]?.ok === false}
           title={group.repo.path}
         >
           <button
@@ -238,15 +242,15 @@
             {isFocused ? "←" : "→"}
           </button>
         </div>
-        {#if appState.compareMode === "branch" && group.repo.kind !== "main" && group.repo.override}
+        {#if appState.appMode === "compare" && appState.repoRanges[group.idx]}
+          {@const range = appState.repoRanges[group.idx]}
           <div
             class="group-refs"
             class:focused={isFocused}
-            title={`${group.repo.override.startBranch} → ${group.repo.override.targetBranch}`}
+            class:gap={!range.ok}
+            title={rangeTooltip(range, pair) ?? rangeLabel(range, superName, pair)}
           >
-            <span class="ref">{shortRef(group.repo.override.startBranch)}</span>
-            <span class="arrow" aria-hidden="true">→</span>
-            <span class="ref">{shortRef(group.repo.override.targetBranch)}</span>
+            <span class="ref">{rangeLabel(range, superName, pair)}</span>
           </div>
         {/if}
       {/if}
@@ -518,8 +522,11 @@
     min-width: 0;
     flex: 0 1 auto;
   }
-  .group-refs .arrow {
-    flex-shrink: 0;
+  .group-refs.gap {
+    font-style: italic;
+    opacity: 0.7;
+  }
+  .group-header.dim {
     opacity: 0.6;
   }
   .group-header .enter-btn {

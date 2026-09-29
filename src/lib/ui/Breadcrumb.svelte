@@ -1,17 +1,20 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import { popHistory } from "$lib/history";
+  import { diffModeName, pairLabel } from "$lib/rangeText";
+  import type { DiffMode } from "$lib/types";
+
+  function ctxLabel(start: string, target: string, mode: DiffMode): string {
+    return `${pairLabel(start, target)} (${diffModeName(mode)})`;
+  }
 
   function currentLabel(): string {
-    const sep = appState.mode === "two-dot" ? ".." : "...";
-    return `${appState.startBranch}${sep}${appState.targetBranch}`;
+    return ctxLabel(appState.startBranch, appState.targetBranch, appState.mode);
   }
 
   function previousLabel(): string | null {
     const prev = appState.history[appState.history.length - 1];
-    if (!prev) return null;
-    const sep = prev.mode === "two-dot" ? ".." : "...";
-    return `${prev.startBranch}${sep}${prev.targetBranch}`;
+    return prev ? ctxLabel(prev.startBranch, prev.targetBranch, prev.mode) : null;
   }
 </script>
 

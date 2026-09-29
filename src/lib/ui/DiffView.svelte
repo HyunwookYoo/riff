@@ -7,6 +7,7 @@
   import { appState } from "$lib/store.svelte";
   import { changesFileDiff, fileDiff, setUeVersionForRepo } from "$lib/git";
   import { resolveRepoRanges } from "$lib/repoRange";
+  import { paneLabels } from "$lib/rangeText";
   import type { ChangedFile, FileDiff } from "$lib/types";
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
@@ -99,6 +100,22 @@
   );
   const svgUrl = (s: string): string | null =>
     s ? `data:image/svg+xml;utf8,${encodeURIComponent(s)}` : null;
+
+  // Branch mode: name what each pane shows — base / compare, or parent /
+  // commit for a commit picked in the commit table.
+  const labels = $derived.by(() => {
+    const f = appState.selectedFile;
+    if (appState.appMode !== "compare" || !f) return null;
+    const idx = f.repoIdx ?? 0;
+    const d = appState.bcDiffRange;
+    const drill = d && d.repoIdx === idx ? { target: d.target } : null;
+    return paneLabels(
+      appState.repoRanges[idx],
+      { base: appState.startBranch, compare: appState.targetBranch },
+      appState.mode,
+      drill,
+    );
+  });
 
   function changeUeVersion(v: string) {
     const repo = selectedRepoPath;
@@ -470,6 +487,19 @@
     {/if}
   </div>
 
+  {#if labels && diff && diff.kind !== "submodule"}
+    {#if effectiveViewMode === "side-by-side" && diff.kind === "text" && !showSvgPreview}
+      <div class="pane-labels split">
+        <span title={labels.left}>{labels.left}</span>
+        <span title={labels.right}>{labels.right}</span>
+      </div>
+    {:else}
+      <div class="pane-labels">
+        <span>{labels.left} ← {labels.right}</span>
+      </div>
+    {/if}
+  {/if}
+
   {#if pending}
     <div class="state">Loading diff…</div>
   {:else if loadError}
@@ -601,6 +631,25 @@
     min-width: 28px;
     font-variant-numeric: tabular-nums;
     opacity: 0.75;
+  }
+  .pane-labels {
+    display: flex;
+    padding: 2px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bar-bg);
+    color: var(--muted);
+    font-size: 0.78em;
+    font-family: var(--mono);
+  }
+  .pane-labels.split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .pane-labels span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .host {
     flex: 1;

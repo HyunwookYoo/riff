@@ -46,6 +46,7 @@
   import { getActiveDiffView } from "$lib/diff/activeView";
   import { preheatHighlighter } from "$lib/diff/shiki";
   import { checkForUpdate } from "$lib/updater";
+  import { diffRangeText } from "$lib/rangeText";
 
   let pendingUpdate: Awaited<ReturnType<typeof checkForUpdate>> = null;
 
@@ -89,6 +90,19 @@
         null)
       : null,
   );
+
+  // Branch mode: the diff header's right side names what the diff is between —
+  // the commit picked in the commit table, else the file's repo range.
+  const headerRange = $derived.by(() => {
+    const f = appState.selectedFile;
+    if (appState.appMode !== "compare" || !f) return null;
+    const idx = f.repoIdx ?? 0;
+    const d = appState.bcDiffRange;
+    return diffRangeText(
+      appState.repoRanges[idx],
+      d && d.repoIdx === idx ? d.target : null,
+    );
+  });
 
   // Graph mode: drag the boundary between the graph (top) and the commit-detail
   // panel (bottom). Adjusts the panel's height; session-only. Dragging upward
@@ -494,9 +508,22 @@
             <span class="badge" data-status={appState.selectedFile.status}>
               {conflicted ? "conflict" : appState.selectedFile.status}
             </span>
+            {#if appState.appMode === "compare" && appState.repos.length > 1}
+              {@const repo = appState.repos[appState.selectedFile.repoIdx ?? 0]}
+              {#if repo}
+                <span class="repo-kind" data-kind={repo.kind}>
+                  {repo.kind === "main" ? "super" : repo.kind}
+                </span>
+                <span class="repo-name">{repo.displayName}</span>
+                <span class="chev" aria-hidden="true">›</span>
+              {/if}
+            {/if}
             <span class="path">{appState.selectedFile.path}</span>
             {#if appState.selectedFile.old_path}
               <span class="from">(from {appState.selectedFile.old_path})</span>
+            {/if}
+            {#if headerRange}
+              <span class="range">{headerRange}</span>
             {/if}
           </header>
           {#if conflicted}
@@ -847,6 +874,30 @@
   .diff .from {
     opacity: 0.5;
     font-size: 0.85em;
+  }
+  .diff .repo-kind {
+    font-size: 0.7em;
+    padding: 1px 6px;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .diff .repo-kind[data-kind="submodule"] {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .diff .repo-name {
+    font-weight: 600;
+  }
+  .diff .chev {
+    opacity: 0.5;
+  }
+  .diff .range {
+    margin-left: auto;
+    flex-shrink: 0;
+    color: var(--muted);
   }
   .placeholder {
     flex: 1;
