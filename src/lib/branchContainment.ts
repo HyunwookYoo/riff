@@ -10,7 +10,7 @@ import { compare, forgetListedRanges, listedRanges } from "./compare";
 import { resolveRepoRanges } from "./repoRange";
 import { shortRef, type ToolbarPair } from "./rangeText";
 import type { Counts, RowMark, SideNames, Summary } from "./commitTableText";
-import type { BcGroup, Commit, RepoRange, SquashCheck } from "./types";
+import type { BcGroup, Commit, Containment, RepoRange, SquashCheck } from "./types";
 
 /// Rows fetched per page of a commit-table group.
 export const PAGE_SIZE = 100;
@@ -177,6 +177,15 @@ function patchGroup(idx: number, patch: Partial<BcGroup>): void {
   appState.bcGroups = { ...appState.bcGroups, [idx]: { ...cur, ...patch } };
 }
 
+/// Whether a group's list goes on past `rows`, `page` being the last page
+/// fetched. The default list is as long as containment's ahead count; a
+/// merged-commits list has no known length, so only a full page says so.
+function moreToLoad(marks: Containment | null, rows: Commit[], page: Commit[]): boolean {
+  return appState.bcShowMerged
+    ? page.length === PAGE_SIZE
+    : rows.length < (marks?.ahead ?? 0);
+}
+
 /// One page of a group's rows. Default: compare's commits the base lacks.
 /// With merged commits shown: what the introducing merge (`mergedBy`) brought
 /// in when it is known, otherwise compare's history.
@@ -254,7 +263,7 @@ async function loadGroup(idx: number, s: number, tips: Tips): Promise<void> {
       marks,
       mergedBy,
       commits,
-      hasMore: commits.length === PAGE_SIZE,
+      hasMore: moreToLoad(marks, commits, commits),
       status: "ready",
       error: null,
       loadingMore: false,
@@ -401,9 +410,10 @@ export async function loadMoreGroup(idx: number): Promise<void> {
     }
     // compare's history can shift between two pages; a row is listed once.
     const listed = new Set(rows.map((c) => c.sha));
+    const commits = rows.concat(page.filter((c) => !listed.has(c.sha)));
     patchGroup(idx, {
-      commits: rows.concat(page.filter((c) => !listed.has(c.sha))),
-      hasMore: page.length === PAGE_SIZE,
+      commits,
+      hasMore: moreToLoad(g.marks, commits, page),
       loadingMore: false,
     });
   } catch {
@@ -431,7 +441,8 @@ export async function setShowMerged(on: boolean): Promise<void> {
       try {
         const commits = await fetchPage(g, g.mergedBy, 0);
         if (s !== bcSession || list !== listSession) return;
-        patchGroup(idx, { commits, hasMore: commits.length === PAGE_SIZE });
+        const marks = appState.bcGroups[idx]?.marks ?? null;
+        patchGroup(idx, { commits, hasMore: moreToLoad(marks, commits, commits) });
       } catch (e) {
         if (s === bcSession && list === listSession) {
           patchGroup(idx, { status: "error", error: String(e) });
@@ -498,7 +509,9 @@ async function loadSelectedDetail(repoIdx: number, sha: string): Promise<void> {
   }
 }
 
-/// Reset the commit table (leaving compare mode, switching repo).
+/// Empty the commit table and drop the pick; results of a load still in
+/// flight are dropped too. A load calls it when there is nothing to load:
+/// outside Branch mode, or with no repo open.
 export function clearBranchContainment(): void {
   bcSession++;
   appState.bcGroups = {};

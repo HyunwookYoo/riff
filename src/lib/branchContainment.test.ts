@@ -643,6 +643,46 @@ describe("paging and merged commits", () => {
     expect(appState.bcGroups[0].hasMore).toBe(false);
   });
 
+  it("ends the default list once its rows reach the ahead count", async () => {
+    // A full last page no longer offers "Load 100 more (0 left)".
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 200 }));
+    vi.mocked(commitLogExcluding)
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`c${i}`)))
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => commit(`d${i}`)));
+    await loadBranchContainment();
+    expect(appState.bcGroups[0].hasMore).toBe(true);
+    await loadMoreGroup(0);
+    expect(appState.bcGroups[0].commits).toHaveLength(200);
+    expect(appState.bcGroups[0].hasMore).toBe(false);
+  });
+
+  it("offers no more rows when the first page holds every unmerged commit", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 100 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue(
+      Array.from({ length: 100 }, (_, i) => commit(`c${i}`)),
+    );
+    await loadBranchContainment();
+    expect(appState.bcGroups[0].hasMore).toBe(false);
+  });
+
+  it("pages a merged-commits list while its pages come back full", async () => {
+    // compare's history has no known length; the default list is back to its
+    // ahead count once the toggle is off.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    vi.mocked(commitLog).mockImplementation(async (_path, ref, _all, limit) =>
+      limit === 1 ? [commit(`${ref}-tip`)] : Array.from({ length: 100 }, (_, i) => commit(`m${i}`)),
+    );
+    await loadBranchContainment();
+    await setShowMerged(true);
+    expect(appState.bcGroups[0].hasMore).toBe(true);
+    await setShowMerged(false);
+    expect(appState.bcGroups[0].hasMore).toBe(false);
+  });
+
   it("appends a page that overlaps the rows without repeating a SHA", async () => {
     // compare's history can shift between two pages.
     vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
