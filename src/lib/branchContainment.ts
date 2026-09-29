@@ -4,12 +4,13 @@ import {
   commitLog,
   commitLogExcluding,
   containment,
+  squashCheck,
 } from "./git";
 import { compare } from "./compare";
 import { resolveRepoRanges } from "./repoRange";
 import type { ToolbarPair } from "./rangeText";
 import type { Counts, RowMark, SideNames, Summary } from "./commitTableText";
-import type { BcGroup, Commit, RepoRange } from "./types";
+import type { BcGroup, Commit, RepoRange, SquashCheck } from "./types";
 
 /// Rows fetched per page of a commit-table group.
 export const PAGE_SIZE = 100;
@@ -34,25 +35,34 @@ export function isRepoVisible(idx: number): boolean {
   return appState.activeRepoIdx === null || appState.activeRepoIdx === idx;
 }
 
-/// ● (not in base), ◐ (in base as an equivalent patch) and behind counts.
+/// The group's squash answer when it puts the ● commits in base.
+export function squashLanded(g: BcGroup): SquashCheck | null {
+  const sq = g.squash;
+  return sq && sq !== "checking" && (sq.verdict === "squash" || sq.verdict === "content")
+    ? sq
+    : null;
+}
+
+/// ● (not in base), ◐ (in base as a patch, or by a squash) and behind counts.
 export function groupCounts(g: BcGroup): Counts {
   if (!g.marks) return { out: 0, patch: 0, behind: 0 };
   const patch = g.marks.equivalent.length;
-  return {
-    out: Math.max(0, g.marks.ahead - patch),
-    patch,
-    behind: g.marks.behind,
-  };
+  const out = Math.max(0, g.marks.ahead - patch);
+  // A detected squash puts the ● commits in base too, by content.
+  if (squashLanded(g)) return { out: 0, patch: patch + out, behind: g.marks.behind };
+  return { out, patch, behind: g.marks.behind };
 }
 
-/// A row's mark from its group's ● and ◐ sets.
+/// A row's mark from its group's ● and ◐ sets; `squashed` when the group's
+/// squash check put its ● commits in base.
 export function rowMark(
   sha: string,
   notIn: Set<string>,
   equiv: Set<string>,
+  squashed = false,
 ): RowMark {
   if (equiv.has(sha)) return "patch";
-  if (notIn.has(sha)) return "out";
+  if (notIn.has(sha)) return squashed ? "squash" : "out";
   return "in";
 }
 
@@ -77,6 +87,15 @@ export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
   if (ready.length === 0) return loading ? { kind: "loading" } : { kind: "error" };
   if (groups.length === 1) {
     const { group: g, names } = groups[0];
+    const landed = squashLanded(g);
+    if (landed) {
+      return landed.verdict === "squash" && landed.squash_commit
+        ? { kind: "squash", names, commit: landed.squash_commit }
+        : { kind: "content", names };
+    }
+    if (g.squash && g.squash !== "checking" && g.squash.verdict === "no-net-change") {
+      return { kind: "no-net-change", names };
+    }
     const c = groupCounts(g);
     if (c.out > 0) {
       return {
@@ -127,6 +146,7 @@ function emptyGroup(range: Extract<RepoRange, { ok: true }>): BcGroup {
     hasMore: false,
     loadingMore: false,
     mergedBy: undefined,
+    squash: null,
   };
 }
 
@@ -178,8 +198,12 @@ async function loadGroup(idx: number, s: number): Promise<void> {
       commits = await fetchPage(g, mergedBy, 0);
       if (s !== bcSession) return;
     } while (list !== listSession);
+    // ● rows by containment alone: groupCounts folds a stored squash verdict
+    // in, and a kept group with one would never be checked again.
+    const unmerged = Math.max(0, marks.ahead - marks.equivalent.length) > 0;
     // One patch, so a group refreshed in place never shows new marks over old
     // rows (and a page abandoned by this reload stops showing "Loading…").
+    // A verdict describes ● rows: with none left, it goes too.
     patchGroup(idx, {
       marks,
       mergedBy,
@@ -188,9 +212,27 @@ async function loadGroup(idx: number, s: number): Promise<void> {
       status: "ready",
       error: null,
       loadingMore: false,
+      ...(unmerged ? {} : { squash: null }),
     });
+    if (unmerged) await checkSquash(idx, s);
   } catch (e) {
     if (s === bcSession) patchGroup(idx, { status: "error", error: String(e) });
+  }
+}
+
+/// Ask whether a group's unmerged commits landed as a squash. The group is
+/// already on screen; only its marks and wording change when the answer comes.
+/// A group that has an answer keeps it while the next one is on its way —
+/// refsRefresh fires on every saved file, and ◐ rows must not flicker back to ●.
+async function checkSquash(idx: number, s: number): Promise<void> {
+  const g = appState.bcGroups[idx];
+  if (!g) return;
+  if (g.squash === null) patchGroup(idx, { squash: "checking" });
+  try {
+    const result = await squashCheck(g.path, g.compare, g.base);
+    if (s === bcSession) patchGroup(idx, { squash: result });
+  } catch {
+    if (s === bcSession) patchGroup(idx, { squash: null });
   }
 }
 

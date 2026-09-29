@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// branchContainment.ts drives the runes store, four Tauri bindings, the range
+// branchContainment.ts drives the runes store, five Tauri bindings, the range
 // resolver and compare(); all are stubbed. Specifiers resolve relative to this
 // file (src/lib).
 vi.mock("./store.svelte", () => ({ appState: {} }));
@@ -9,6 +9,7 @@ vi.mock("./git", () => ({
   commitLog: vi.fn(),
   commitLogExcluding: vi.fn(),
   commitContainmentDetail: vi.fn(),
+  squashCheck: vi.fn(),
 }));
 vi.mock("./repoRange", () => ({ resolveRepoRanges: vi.fn() }));
 vi.mock("./compare", () => ({ compare: vi.fn() }));
@@ -24,6 +25,7 @@ import {
   selectBranchCommit,
   setShowMerged,
   showAllChanges,
+  squashLanded,
   summarize,
   type VisibleGroup,
 } from "./branchContainment";
@@ -33,10 +35,11 @@ import {
   commitLog,
   commitLogExcluding,
   containment,
+  squashCheck,
 } from "./git";
 import { resolveRepoRanges } from "./repoRange";
 import { compare } from "./compare";
-import type { BcGroup, Commit, Containment, RepoEntry, RepoRange } from "./types";
+import type { BcGroup, Commit, Containment, RepoEntry, RepoRange, SquashCheck } from "./types";
 
 const commit = (sha: string, parents: string[] = ["p"]): Commit => ({
   sha,
@@ -79,12 +82,13 @@ const group = (g: Partial<BcGroup>): BcGroup => ({
   hasMore: false,
   loadingMore: false,
   mergedBy: undefined,
+  squash: null,
   ...g,
 });
 const names = { base: "main", compare: "feature" };
 
 beforeEach(() => {
-  for (const f of [containment, commitLog, commitLogExcluding, commitContainmentDetail, resolveRepoRanges, compare]) {
+  for (const f of [containment, commitLog, commitLogExcluding, commitContainmentDetail, squashCheck, resolveRepoRanges, compare]) {
     vi.mocked(f).mockReset();
   }
   Object.assign(appState, {
@@ -536,5 +540,151 @@ describe("summarize", () => {
     expect(summarize([vis(0, group({ compare: "main" }))], pair)).toEqual({ kind: "same" });
     expect(summarize([vis(0, group({ status: "loading" }))], pair)).toEqual({ kind: "loading" });
     expect(summarize([vis(0, group({ status: "error" }))], pair)).toEqual({ kind: "error" });
+  });
+});
+
+describe("squash detection", () => {
+  const sq = (verdict: "none" | "no-net-change" | "squash" | "content") => ({
+    verdict,
+    squash_commit: verdict === "squash" ? commit("s1") : null,
+  });
+
+  it("asks only for groups that still have unmerged commits", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([
+      range("/main", "main", "feature"),
+      range("/main/sub", "aaa", "bbb"),
+    ]);
+    vi.mocked(containment).mockImplementation((path) =>
+      Promise.resolve(path === "/main" ? marks({ ahead: 0 }) : marks({ not_in_target: ["c1"], ahead: 1 })),
+    );
+    vi.mocked(commitContainmentDetail).mockResolvedValue({ in_target: true, introduced_by: null });
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    vi.mocked(squashCheck).mockResolvedValue(sq("squash"));
+    await loadBranchContainment();
+    expect(squashCheck).toHaveBeenCalledTimes(1);
+    expect(squashCheck).toHaveBeenCalledWith("/main/sub", "bbb", "aaa");
+    expect(appState.bcGroups[1].squash).toEqual(sq("squash"));
+    expect(appState.bcGroups[0].squash).toBeNull();
+  });
+
+  it("counts squashed commits as in base", () => {
+    const g = group({ marks: marks({ ahead: 3, equivalent: ["e"] }), squash: sq("squash") });
+    expect(squashLanded(g)?.verdict).toBe("squash");
+    expect(groupCounts(g)).toEqual({ out: 0, patch: 3, behind: 0 });
+    expect(rowMark("x", new Set(["x"]), new Set(), true)).toBe("squash");
+    expect(rowMark("x", new Set(["x"]), new Set(), false)).toBe("out");
+    expect(squashLanded(group({ squash: sq("no-net-change") }))).toBeNull();
+    expect(squashLanded(group({ squash: "checking" }))).toBeNull();
+  });
+
+  it("summarizes a squash, a content match and no net change", () => {
+    const pair = { base: "main", compare: "feature" };
+    const one = (g: BcGroup) => summarize([{ idx: 0, group: g, names }], pair);
+    expect(one(group({ marks: marks({ ahead: 2 }), squash: sq("squash") }))).toEqual({
+      kind: "squash",
+      names,
+      commit: commit("s1"),
+    });
+    expect(one(group({ marks: marks({ ahead: 2 }), squash: sq("content") }))).toEqual({ kind: "content", names });
+    expect(one(group({ marks: marks({ ahead: 2 }), squash: sq("no-net-change") }))).toEqual({
+      kind: "no-net-change",
+      names,
+    });
+  });
+
+  it("leaves the rows alone when the check fails", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    vi.mocked(squashCheck).mockRejectedValue("no git");
+    await loadBranchContainment();
+    expect(appState.bcGroups[0].squash).toBeNull();
+    expect(groupCounts(appState.bcGroups[0])).toEqual({ out: 1, patch: 0, behind: 0 });
+  });
+
+  it("shows checking during a group's first check, with its rows still ●", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    let release: (c: SquashCheck) => void = () => {};
+    vi.mocked(squashCheck).mockImplementationOnce(() => new Promise<SquashCheck>((r) => (release = r)));
+    const load = loadBranchContainment();
+    await tick();
+    expect(appState.bcGroups[0].status).toBe("ready");
+    expect(appState.bcGroups[0].squash).toBe("checking");
+    expect(groupCounts(appState.bcGroups[0])).toEqual({ out: 1, patch: 0, behind: 0 });
+    release(sq("squash"));
+    await load;
+    expect(appState.bcGroups[0].squash).toEqual(sq("squash"));
+  });
+
+  it("keeps a refreshed group's verdict while it is checked again", async () => {
+    // Review focus: refsRefresh fires on every saved file. The table must not
+    // flicker ◐ back to ● (or say "checking for squash…") while the new answer
+    // is on its way, and a stored verdict must not stop the re-check: the
+    // commits that just arrived may be exactly what it no longer covers.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment)
+      .mockResolvedValueOnce(marks({ not_in_target: ["c1"], ahead: 1 }))
+      .mockResolvedValueOnce(marks({ not_in_target: ["c2", "c1"], ahead: 2 }));
+    vi.mocked(commitLogExcluding)
+      .mockResolvedValueOnce([commit("c1")])
+      .mockResolvedValueOnce([commit("c2"), commit("c1")]);
+    let release: (c: SquashCheck) => void = () => {};
+    vi.mocked(squashCheck)
+      .mockResolvedValueOnce(sq("squash"))
+      .mockImplementationOnce(() => new Promise<SquashCheck>((r) => (release = r)));
+    await loadBranchContainment();
+    expect(appState.bcGroups[0].squash).toEqual(sq("squash"));
+
+    const reload = loadBranchContainment();
+    await tick();
+    expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c2", "c1"]);
+    expect(squashCheck).toHaveBeenCalledTimes(2);
+    expect(appState.bcGroups[0].squash).toEqual(sq("squash"));
+    expect(groupCounts(appState.bcGroups[0])).toEqual({ out: 0, patch: 2, behind: 0 });
+
+    release(sq("none"));
+    await reload;
+    expect(appState.bcGroups[0].squash).toEqual(sq("none"));
+    expect(groupCounts(appState.bcGroups[0])).toEqual({ out: 2, patch: 0, behind: 0 });
+  });
+
+  it("drops a stored verdict once the fresh marks have no ● left, without checking again", async () => {
+    // The judgment is on the fresh marks' own ● count: groupCounts folds a
+    // stored verdict in, and an old answer must not outlive the commits it
+    // described (it would read as a squash over what is now plain patches).
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment)
+      .mockResolvedValueOnce(marks({ not_in_target: ["c1", "c2"], ahead: 2 }))
+      .mockResolvedValueOnce(marks({ equivalent: ["c1", "c2"], ahead: 2 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1"), commit("c2")]);
+    vi.mocked(squashCheck).mockResolvedValue(sq("squash"));
+    await loadBranchContainment();
+    expect(appState.bcGroups[0].squash).toEqual(sq("squash"));
+
+    await loadBranchContainment();
+    expect(squashCheck).toHaveBeenCalledTimes(1);
+    expect(appState.bcGroups[0].squash).toBeNull();
+    expect(groupCounts(appState.bcGroups[0])).toEqual({ out: 0, patch: 2, behind: 0 });
+  });
+
+  it("drops a verdict that arrives after the inputs moved on", async () => {
+    vi.mocked(resolveRepoRanges)
+      .mockResolvedValueOnce([range("/main", "main", "old")])
+      .mockResolvedValueOnce([range("/main", "main", "new")]);
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1")]);
+    let release: (c: SquashCheck) => void = () => {};
+    vi.mocked(squashCheck)
+      .mockImplementationOnce(() => new Promise<SquashCheck>((r) => (release = r)))
+      .mockResolvedValueOnce(sq("none"));
+    const first = loadBranchContainment();
+    await tick();
+    await loadBranchContainment();
+    release(sq("squash"));
+    await first;
+    expect(appState.bcGroups[0].compare).toBe("new");
+    expect(appState.bcGroups[0].squash).toEqual(sq("none"));
   });
 });

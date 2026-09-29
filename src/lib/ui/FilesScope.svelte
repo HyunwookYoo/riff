@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { isRepoVisible, rowMark, showAllChanges } from "$lib/branchContainment";
+  import { isRepoVisible, rowMark, showAllChanges, squashLanded } from "$lib/branchContainment";
   import { shortRef, sideNames } from "$lib/rangeText";
   import { allChangesText, commitStateText } from "$lib/commitTableText";
 
@@ -19,21 +19,31 @@
       : { base: shortRef(pair.base), compare: shortRef(pair.compare) },
   );
 
+  // One visible group whose squash check put everything in base: say so on the
+  // all-changes line, since the three-dot diff still lists every change.
+  const allLanded = $derived.by(() => {
+    const idx = appState.repoRanges.findIndex((r, i) => r.ok && isRepoVisible(i));
+    const g = visibleOk.length === 1 && idx >= 0 ? appState.bcGroups[idx] : undefined;
+    return g ? squashLanded(g) : null;
+  });
+
   const picked = $derived.by(() => {
     const sel = appState.bcSelected;
     if (!sel) return null;
     const g = appState.bcGroups[sel.repoIdx];
     const range = appState.repoRanges[sel.repoIdx];
     if (!g || !range?.ok) return null;
+    const landed = squashLanded(g);
     const mark = rowMark(
       sel.commit.sha,
       new Set(g.marks?.not_in_target ?? []),
       new Set(g.marks?.equivalent ?? []),
+      !!landed,
     );
     return {
       sha: sel.commit.short_sha,
       repo: appState.repos[sel.repoIdx]?.displayName ?? "",
-      state: commitStateText(mark, sideNames(range, pair), appState.bcSelectedDetail),
+      state: commitStateText(mark, sideNames(range, pair), appState.bcSelectedDetail, landed),
     };
   });
 </script>
@@ -46,7 +56,7 @@
       </span>
       <button type="button" onclick={showAllChanges}>× All changes</button>
     {:else}
-      <span class="what">{allChangesText(allNames)}</span>
+      <span class="what">{allChangesText(allNames, allLanded)}</span>
     {/if}
   </div>
 {/if}

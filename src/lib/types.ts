@@ -392,6 +392,9 @@ export interface BcGroup {
   /// Once nothing is left to merge: the merge that brought compare in, null for
   /// a fast-forward. undefined while unknown or not applicable.
   mergedBy: Commit | null | undefined;
+  /// Squash detection for a group that still has ● rows: "checking" while
+  /// squash_check runs, its answer once back, null when not run or failed.
+  squash: SquashCheck | "checking" | null;
 }
 
 /// Mirrors Rust `SquashVerdict` (serde kebab-case).

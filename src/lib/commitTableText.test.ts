@@ -6,7 +6,7 @@ import {
   statusText,
   summaryText,
 } from "./commitTableText";
-import type { Commit } from "./types";
+import type { Commit, SquashCheck } from "./types";
 
 const names = { base: "main", compare: "feature/x" };
 const merge: Commit = {
@@ -116,5 +116,51 @@ describe("group, row and Files header text", () => {
 
   it("writes the all-changes line", () => {
     expect(allChangesText(names)).toBe("All changes · main ← feature/x");
+  });
+});
+
+const squashed: SquashCheck = {
+  verdict: "squash",
+  squash_commit: { ...merge, sha: "7f3a2c1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", short_sha: "7f3a2c1", parents: ["x"], summary: "Add MCP import (#1677)" },
+};
+const content: SquashCheck = { verdict: "content", squash_commit: null };
+
+describe("squash wording", () => {
+  it("summarizes a squash, a content match and no net change", () => {
+    expect(summaryText({ kind: "squash", names, commit: squashed.squash_commit! })).toMatch(
+      /^✓ All changes on feature\/x are in main — squash-merged as 7f3a2c1 "Add MCP import \(#1677\)" · /,
+    );
+    expect(summaryText({ kind: "content", names })).toBe(
+      "✓ All changes on feature/x are already in main (content matches; no single squash commit found)",
+    );
+    expect(summaryText({ kind: "no-net-change", names })).toBe(
+      "feature/x makes no net change against main",
+    );
+  });
+
+  it("marks a squashed group's header", () => {
+    expect(groupCountsText({ out: 0, patch: 3, behind: 0 }, names, { mergedBy: undefined, landed: squashed })).toBe(
+      "◐ 3 · squash-merged as 7f3a2c1",
+    );
+    expect(groupCountsText({ out: 0, patch: 3, behind: 0 }, names, { mergedBy: undefined, landed: content })).toBe(
+      "◐ 3 · content already in main",
+    );
+    expect(groupCountsText({ out: 5, patch: 0, behind: 0 }, names, { mergedBy: undefined, checking: true })).toBe(
+      "● 5 · checking for squash…",
+    );
+  });
+
+  it("names how a squashed row and a picked squashed commit got in", () => {
+    expect(statusText("squash", names, squashed)).toBe("squashed into 7f3a2c1");
+    expect(statusText("squash", names, content)).toBe("changes already in main");
+    expect(commitStateText("squash", names, null, squashed)).toMatch(/^squashed into main as 7f3a2c1 \(/);
+    expect(commitStateText("squash", names, null, content)).toBe("its changes are already in main");
+  });
+
+  it("says all changes already landed", () => {
+    expect(allChangesText(names, squashed)).toBe(
+      "All changes · main ← feature/x — already in main (squash-merged as 7f3a2c1)",
+    );
+    expect(allChangesText(names, content)).toBe("All changes · main ← feature/x — already in main");
   });
 });

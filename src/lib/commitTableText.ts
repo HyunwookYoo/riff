@@ -1,11 +1,12 @@
 import type { ToolbarPair } from "./rangeText";
-import type { Commit, ContainmentDetail } from "./types";
+import type { Commit, ContainmentDetail, SquashCheck } from "./types";
 
 /// How a range's two sides are named (see rangeText.sideNames).
 export type SideNames = ToolbarPair;
 
-/// A row's mark: ● not in base, ◐ in base as a patch, ✓ in base by ancestry.
-export type RowMark = "out" | "patch" | "in";
+/// A row's mark: ● not in base, ◐ in base as a patch (also for a commit a
+/// squash put in base), ✓ in base by ancestry.
+export type RowMark = "out" | "patch" | "squash" | "in";
 
 /// ● / ◐ / behind counts for a group or a total.
 export interface Counts {
@@ -17,6 +18,10 @@ export interface Counts {
 /// What a group header can add beyond its counts.
 export interface GroupNotes {
   mergedBy: Commit | null | undefined;
+  /// The group's squash answer when it put the ● commits in base.
+  landed?: SquashCheck | null;
+  /// squash_check is still running.
+  checking?: boolean;
 }
 
 /// The summary line's state, decided by branchContainment.summarize().
@@ -36,6 +41,9 @@ export type Summary =
       failed: number;
     }
   | { kind: "patches"; names: SideNames; patch: number }
+  | { kind: "squash"; names: SideNames; commit: Commit }
+  | { kind: "content"; names: SideNames }
+  | { kind: "no-net-change"; names: SideNames }
   // mergedBy: the merge commit, null for a fast-forward, undefined when the
   // lookup failed (says nothing about how it got in).
   | { kind: "merged"; names: SideNames; mergedBy: Commit | null | undefined }
@@ -70,6 +78,12 @@ export function summaryText(s: Summary): string {
     }
     case "patches":
       return `✓ Every commit on ${s.names.compare} is in ${s.names.base}, ${s.patch} of them as ${s.patch === 1 ? "a patch" : "patches"} (rebased, cherry-picked or squash-merged)`;
+    case "squash":
+      return `✓ All changes on ${s.names.compare} are in ${s.names.base} — squash-merged as ${s.commit.short_sha} "${s.commit.summary}" · ${shortDate(s.commit.time)}`;
+    case "content":
+      return `✓ All changes on ${s.names.compare} are already in ${s.names.base} (content matches; no single squash commit found)`;
+    case "no-net-change":
+      return `${s.names.compare} makes no net change against ${s.names.base}`;
     case "merged": {
       const all = `✓ All commits on ${s.names.compare} are in ${s.names.base}`;
       if (s.mergedBy) {
@@ -90,26 +104,41 @@ function failedText(n: number): string {
 
 /// The counts on a group header.
 export function groupCountsText(c: Counts, names: SideNames, n: GroupNotes): string {
-  if (c.out === 0 && c.patch === 0) {
-    return n.mergedBy
+  let text: string;
+  if (n.landed) {
+    text =
+      n.landed.verdict === "squash" && n.landed.squash_commit
+        ? `◐ ${c.patch} · squash-merged as ${n.landed.squash_commit.short_sha}`
+        : `◐ ${c.patch} · content already in ${names.base}`;
+  } else if (c.out === 0 && c.patch === 0) {
+    text = n.mergedBy
       ? `✓ all in ${names.base} · merged by ${n.mergedBy.short_sha}`
       : `✓ all in ${names.base}`;
+  } else {
+    const parts: string[] = [];
+    if (c.out > 0) parts.push(`● ${c.out}`);
+    if (c.patch > 0) parts.push(`◐ ${c.patch}`);
+    text = parts.join(" ");
+    if (c.behind > 0) text += ` · ${names.compare} is ${c.behind} behind`;
   }
-  const parts: string[] = [];
-  if (c.out > 0) parts.push(`● ${c.out}`);
-  if (c.patch > 0) parts.push(`◐ ${c.patch}`);
-  let text = parts.join(" ");
-  if (c.behind > 0) text += ` · ${names.compare} is ${c.behind} behind`;
-  return text;
+  return n.checking ? `${text} · checking for squash…` : text;
 }
 
-/// A row's status column.
-export function statusText(mark: RowMark, names: SideNames): string {
+/// A row's status column. `landed` is the group's squash answer.
+export function statusText(
+  mark: RowMark,
+  names: SideNames,
+  landed: SquashCheck | null = null,
+): string {
   switch (mark) {
     case "out":
       return `not in ${names.base}`;
     case "patch":
       return "applied as patch";
+    case "squash":
+      return landed?.squash_commit
+        ? `squashed into ${landed.squash_commit.short_sha}`
+        : `changes already in ${names.base}`;
     case "in":
       return `in ${names.base}`;
   }
@@ -120,12 +149,19 @@ export function commitStateText(
   mark: RowMark,
   names: SideNames,
   detail: ContainmentDetail | null,
+  landed: SquashCheck | null = null,
 ): string {
   switch (mark) {
     case "out":
       return `not in ${names.base}`;
     case "patch":
       return `applied to ${names.base} as a patch`;
+    case "squash": {
+      const s = landed?.squash_commit;
+      return s
+        ? `squashed into ${names.base} as ${s.short_sha} (${shortDate(s.time)})`
+        : `its changes are already in ${names.base}`;
+    }
     case "in": {
       const m = detail?.introduced_by;
       return m
@@ -135,7 +171,15 @@ export function commitStateText(
   }
 }
 
-/// The Files header while nothing is picked.
-export function allChangesText(names: SideNames): string {
-  return `All changes · ${names.base} ← ${names.compare}`;
+/// The Files header while nothing is picked; says so when a squash (or a
+/// content match) already put every change in base.
+export function allChangesText(
+  names: SideNames,
+  landed: SquashCheck | null = null,
+): string {
+  const line = `All changes · ${names.base} ← ${names.compare}`;
+  if (!landed) return line;
+  return landed.squash_commit
+    ? `${line} — already in ${names.base} (squash-merged as ${landed.squash_commit.short_sha})`
+    : `${line} — already in ${names.base}`;
 }

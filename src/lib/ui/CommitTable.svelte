@@ -10,6 +10,7 @@
     selectBranchCommit,
     setShowMerged,
     showAllChanges,
+    squashLanded,
     summarize,
     type VisibleGroup,
   } from "$lib/branchContainment";
@@ -76,9 +77,10 @@
   });
   function markOf(idx: number, sha: string): RowMark {
     const s = sets.get(idx);
-    return s ? rowMark(sha, s.notIn, s.equiv) : "in";
+    const g = appState.bcGroups[idx];
+    return s ? rowMark(sha, s.notIn, s.equiv, !!g && !!squashLanded(g)) : "in";
   }
-  const glyph: Record<RowMark, string> = { out: "●", patch: "◐", in: "✓" };
+  const glyph: Record<RowMark, string> = { out: "●", patch: "◐", squash: "◐", in: "✓" };
 
   let collapsed = $state(new Set<number>());
   function toggleGroup(idx: number) {
@@ -157,7 +159,11 @@
                 {:else if g.status === "error"}
                   couldn't read commits
                 {:else}
-                  {groupCountsText(groupCounts(g), sideNames(range, pair), { mergedBy: g.mergedBy })}
+                  {groupCountsText(groupCounts(g), sideNames(range, pair), {
+                    mergedBy: g.mergedBy,
+                    landed: squashLanded(g),
+                    checking: g.squash === "checking",
+                  })}
                 {/if}
               </span>
             {/if}
@@ -188,7 +194,7 @@
                 </span>
                 <span class="author">{c.author}</span>
                 <span class="date">{shortDate(c.time)}</span>
-                <span class="status {mark}">{statusText(mark, names)}</span>
+                <span class="status {mark}">{statusText(mark, names, squashLanded(g))}</span>
               </button>
             {/each}
             {#if g.hasMore}
@@ -366,6 +372,10 @@
   }
   .mark.patch,
   .status.patch {
+    color: var(--accent);
+  }
+  .mark.squash,
+  .status.squash {
     color: var(--accent);
   }
   .mark.in,
