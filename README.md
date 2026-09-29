@@ -325,7 +325,7 @@ Blame 팝오버 또는 커밋 패널에서 **View commit →** / **`→`** 를 �
 
 | 위치 | 옵션 | 의미 |
 |---|---|---|
-| InputBar | **3-dot / 2-dot** | merge-base 기준(PR style) ↔ 직접 비교 |
+| InputBar | **since fork (...) / direct (..)** | merge-base 기준(PR style) ↔ 직접 비교 |
 | InputBar | **ws** 체크박스 | `-w` 공백 변화 무시 |
 | InputBar | **Theme** | System(OS 따라감) / Light / Dark |
 | FileList | **Tree / Flat** | 파일 리스트 표시 모드 |
