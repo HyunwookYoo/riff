@@ -111,7 +111,15 @@ describe("group, row and Files header text", () => {
     expect(commitStateText("in", names, { in_target: true, introduced_by: merge })).toMatch(
       /^merged by 3c9e2f1 \(/,
     );
-    expect(commitStateText("in", names, null)).toBe("in main");
+    expect(commitStateText("in", names, { in_target: true, introduced_by: null })).toBe("in main");
+  });
+
+  it("claims a listed commit is in base only once its detail says so", () => {
+    // Review focus (F3): a row outside the ● / ◐ sets is not proof of "in".
+    expect(commitStateText("in", names, { in_target: false, introduced_by: null })).toBe(
+      "not in main",
+    );
+    expect(commitStateText("in", names, null)).toBeNull();
   });
 
   it("writes the all-changes line", () => {

@@ -52,7 +52,7 @@
   <div class="files-scope">
     {#if picked}
       <span class="what">
-        <b>Commit {picked.sha}</b> · {picked.repo} — {picked.state}
+        <b>Commit {picked.sha}</b> · {picked.repo}{#if picked.state} — {picked.state}{/if}
       </span>
       <button type="button" onclick={showAllChanges}>× All changes</button>
     {:else}

@@ -18,8 +18,8 @@ export const PAGE_SIZE = 100;
 /// Git's empty-tree object — the "before" side for a root commit (no parent).
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-// Monotonic guard: every reload bumps it, so the results of an older load or
-// detail fetch can't land on the new groups.
+// Monotonic guard: every reload bumps it, so the results of an older load
+// can't land on the new groups.
 let bcSession = 0;
 
 // Bumped by every "Show merged commits" toggle: a page fetched for the other
@@ -260,6 +260,7 @@ async function loadGroup(idx: number, s: number, tips: Tips): Promise<void> {
       ...tips,
       ...(unmerged ? {} : { squash: null }),
     });
+    settlePick(idx);
     if (unmerged) await checkSquash(idx, s);
   } catch (e) {
     // No tips: a failed group loads again on the next refresh.
@@ -267,6 +268,25 @@ async function loadGroup(idx: number, s: number, tips: Tips): Promise<void> {
       patchGroup(idx, { status: "error", error: String(e), baseTip: null, compareTip: null });
     }
   }
+}
+
+/// Once group `idx` has reloaded: a pick in it that the fresh results no
+/// longer hold — neither a row nor one of its ● / ◐ commits, as when compare
+/// was amended or rebased — is dropped and the files go back to all changes;
+/// a pick they still hold has its detail looked up again, since base may have
+/// moved too.
+function settlePick(idx: number): void {
+  const sel = appState.bcSelected;
+  const g = appState.bcGroups[idx];
+  if (!sel || sel.repoIdx !== idx || !g) return;
+  const sha = sel.commit.sha;
+  if (g.commits.some((c) => c.sha === sha) || g.marks?.not_in_target.includes(sha)) {
+    appState.bcSelectedDetail = null;
+    void loadSelectedDetail(idx, sha);
+    return;
+  }
+  clearPick();
+  void compare({ silent: true });
 }
 
 /// Ask whether a group's unmerged commits landed as a squash. The group is
@@ -449,15 +469,20 @@ export function dropPickOutside(idx: number): boolean {
   return true;
 }
 
+// Bumped by every detail lookup, so only the latest one for a pick lands.
+let detailSeq = 0;
+
 /// How the picked commit reached base (the introducing merge), for the Files
-/// header.
+/// header. Lands only while that commit, in that repo, is still the pick — a
+/// refresh in between does not make it stale.
 async function loadSelectedDetail(repoIdx: number, sha: string): Promise<void> {
   const g = appState.bcGroups[repoIdx];
   if (!g) return;
-  const s = bcSession;
+  const seq = ++detailSeq;
   try {
     const d = await commitContainmentDetail(g.path, sha, g.base);
-    if (s !== bcSession || appState.bcSelected?.commit.sha !== sha) return;
+    const sel = appState.bcSelected;
+    if (seq !== detailSeq || sel?.repoIdx !== repoIdx || sel.commit.sha !== sha) return;
     appState.bcSelectedDetail = d;
   } catch {
     /* the header falls back to the row's own mark */

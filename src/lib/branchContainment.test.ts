@@ -40,7 +40,15 @@ import {
 } from "./git";
 import { resolveRepoRanges } from "./repoRange";
 import { compare } from "./compare";
-import type { BcGroup, Commit, Containment, RepoEntry, RepoRange, SquashCheck } from "./types";
+import type {
+  BcGroup,
+  Commit,
+  Containment,
+  ContainmentDetail,
+  RepoEntry,
+  RepoRange,
+  SquashCheck,
+} from "./types";
 
 const commit = (sha: string, parents: string[] = ["p"]): Commit => ({
   sha,
@@ -459,6 +467,123 @@ describe("refreshes", () => {
     await toggle;
     expect(appState.bcShowMerged).toBe(true);
     expect(appState.bcGroups[0].commits.map((c) => c.sha)).toEqual(["c1", "old"]);
+  });
+});
+
+describe("a pick across refreshes", () => {
+  const tipsAt = (feature: string) =>
+    vi.mocked(commitLog).mockImplementation(async (_path, ref, _all, limit) =>
+      limit === 1 ? [commit(ref === "feature" ? feature : "b1")] : [],
+    );
+  const notIn = { in_target: false, introduced_by: null };
+
+  // One group, main ← feature, whose only row c1 is picked.
+  async function loadAndPick(): Promise<void> {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    tipsAt("f1");
+    vi.mocked(containment).mockResolvedValueOnce(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValueOnce([commit("c1", ["c0"])]);
+    vi.mocked(squashCheck).mockResolvedValue({ verdict: "none", squash_commit: null });
+    vi.mocked(commitContainmentDetail).mockResolvedValue(notIn);
+    await loadBranchContainment();
+    selectBranchCommit(0, appState.bcGroups[0].commits[0]);
+    await tick();
+    vi.mocked(compare).mockClear();
+    vi.mocked(commitContainmentDetail).mockClear();
+  }
+
+  it("drops a pick the reloaded group no longer holds and lists all changes", async () => {
+    // Review focus (F3): amending compare's tip leaves c1 on neither branch;
+    // it must not stay picked and read "in main".
+    await loadAndPick();
+    tipsAt("f2");
+    vi.mocked(containment).mockResolvedValueOnce(marks({ not_in_target: ["c1b"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValueOnce([commit("c1b", ["c0"])]);
+    await loadBranchContainment();
+    expect(appState.bcSelected).toBeNull();
+    expect(appState.bcDiffRange).toBeNull();
+    expect(compare).toHaveBeenCalledWith({ silent: true });
+  });
+
+  it("keeps a pick the reloaded group still holds and looks up its detail again", async () => {
+    // c1 is one of the group's ● commits though not on the first page.
+    await loadAndPick();
+    tipsAt("f2");
+    vi.mocked(containment).mockResolvedValueOnce(marks({ not_in_target: ["c2", "c1"], ahead: 2 }));
+    vi.mocked(commitLogExcluding).mockResolvedValueOnce([commit("c2", ["c1"])]);
+    await loadBranchContainment();
+    await tick();
+    expect(appState.bcSelected?.commit.sha).toBe("c1");
+    expect(appState.bcDiffRange?.target).toBe("c1");
+    expect(commitContainmentDetail).toHaveBeenCalledWith("/main", "c1", "main");
+    expect(appState.bcSelectedDetail).toEqual(notIn);
+    expect(compare).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pick as it is when its group's tips did not move", async () => {
+    await loadAndPick();
+    const detail = appState.bcSelectedDetail;
+    await loadBranchContainment();
+    await tick();
+    expect(appState.bcSelected?.commit.sha).toBe("c1");
+    expect(appState.bcSelectedDetail).toBe(detail);
+    expect(commitContainmentDetail).not.toHaveBeenCalled();
+    expect(compare).not.toHaveBeenCalled();
+  });
+
+  it("applies a pick's detail that lands after a refresh started", async () => {
+    // A refresh starts a new session; the pick itself is what the detail is for.
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    tipsAt("f1");
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1", ["c0"])]);
+    vi.mocked(squashCheck).mockResolvedValue({ verdict: "none", squash_commit: null });
+    let release: (d: ContainmentDetail) => void = () => {};
+    vi.mocked(commitContainmentDetail).mockImplementationOnce(
+      () => new Promise<ContainmentDetail>((r) => (release = r)),
+    );
+    await loadBranchContainment();
+    selectBranchCommit(0, appState.bcGroups[0].commits[0]);
+    await loadBranchContainment();
+    release(notIn);
+    await tick();
+    expect(appState.bcSelectedDetail).toEqual(notIn);
+  });
+
+  it("keeps the newest detail when an older lookup for the same pick lands last", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    tipsAt("f1");
+    vi.mocked(containment).mockResolvedValue(marks({ not_in_target: ["c1"], ahead: 1 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([commit("c1", ["c0"])]);
+    vi.mocked(squashCheck).mockResolvedValue({ verdict: "none", squash_commit: null });
+    let release: (d: ContainmentDetail) => void = () => {};
+    const inBase = { in_target: true, introduced_by: null };
+    vi.mocked(commitContainmentDetail)
+      .mockImplementationOnce(() => new Promise<ContainmentDetail>((r) => (release = r)))
+      .mockResolvedValueOnce(inBase);
+    await loadBranchContainment();
+    selectBranchCommit(0, appState.bcGroups[0].commits[0]);
+    // compare moved but still holds c1: the reload looks its detail up again.
+    tipsAt("f2");
+    await loadBranchContainment();
+    await tick();
+    release(notIn);
+    await tick();
+    expect(appState.bcSelectedDetail).toEqual(inBase);
+  });
+
+  it("drops a detail that lands after the pick moved to another repo", async () => {
+    appState.bcGroups = { 0: group({}), 1: group({ path: "/main/sub" }) };
+    let release: (d: ContainmentDetail) => void = () => {};
+    vi.mocked(commitContainmentDetail)
+      .mockImplementationOnce(() => new Promise<ContainmentDetail>((r) => (release = r)))
+      .mockResolvedValueOnce(notIn);
+    selectBranchCommit(1, commit("c1", ["c0"]));
+    selectBranchCommit(0, commit("c1", ["c0"]));
+    await tick();
+    release({ in_target: true, introduced_by: null });
+    await tick();
+    expect(appState.bcSelectedDetail).toEqual(notIn);
   });
 });
 

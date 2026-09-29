@@ -144,13 +144,15 @@ export function statusText(
   }
 }
 
-/// The Files header's account of the picked commit.
+/// The Files header's account of the picked commit. A ✓ row is only outside
+/// the group's ● / ◐ sets, so how it stands against base comes from its
+/// detail; null (no account) until that is looked up.
 export function commitStateText(
   mark: RowMark,
   names: SideNames,
   detail: ContainmentDetail | null,
   landed: SquashCheck | null = null,
-): string {
+): string | null {
   switch (mark) {
     case "out":
       return `not in ${names.base}`;
@@ -164,9 +166,9 @@ export function commitStateText(
     }
     case "in": {
       const m = detail?.introduced_by;
-      return m
-        ? `merged by ${m.short_sha} (${shortDate(m.time)})`
-        : `in ${names.base}`;
+      if (m) return `merged by ${m.short_sha} (${shortDate(m.time)})`;
+      if (!detail) return null;
+      return detail.in_target ? `in ${names.base}` : `not in ${names.base}`;
     }
   }
 }
