@@ -58,9 +58,9 @@ Working Copy와 Graph는 좌측 사이드바의 **Working Copy / Graph** 네비(
 #### 멀티 루트에서의 비교 의미
 | Repo 종류 | Branch 모드 | Working Copy 모드 |
 |---|---|---|
-| **main** | 사용자가 입력한 start/target 그대로 | `git diff HEAD` |
-| **submodule** | main의 start/target gitlink SHA를 따라 `<oldSha>..<newSha>` 비교 (GitHub PR과 동일 의미) | submodule 자체의 `git diff HEAD` |
-| **manual** | main과 같은 이름의 branch를 자동 매칭. 없으면 빈 결과 | 해당 repo의 `git diff HEAD` |
+| **main** | 툴바의 base ← compare 그대로 | `git diff HEAD` |
+| **submodule** | main의 base / compare가 고정한 gitlink SHA 두 개를 비교 (GitHub PR과 동일 의미). 그룹 헤더에 `pinned by <main>: <sha> ← <sha>` 로 표시 | submodule 자체의 `git diff HEAD` |
+| **manual** | main과 같은 이름의 branch를 자동 매칭 (`same names: …`). 없으면 그 그룹에 오류 표시 | 해당 repo의 `git diff HEAD` |
 
 파일 리스트와 blame 피커는 모두 **repo별 collapsible 그룹 헤더**로 묶여 표시됩니다. 그룹 헤더의:
 - **caret(▾/▸)** 클릭 → 그 그룹만 접고 펴기 (`↑`/`↓` 이동에서 접힌 그룹은 건너뜀)
@@ -72,7 +72,7 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 기본은 위에 설명한 **Unified** 레이아웃(그룹 헤더 + Focus)이지만, Fork/GitKraken 스타일 탭 UI가 익숙하다면 chip 팝오버 하단의 **Layout: Tabs** 를 선택할 수 있습니다.
 
 - 상단에 repo별 탭바가 나타나고, 한 번에 한 repo의 파일만 평면 리스트로 표시됩니다.
-- 탭마다 **refs는 독립** (§13 `override` 활용) — submodule 탭이 active일 때 상단 BranchPicker는 그 repo의 override를 편집합니다.
+- 툴바의 base / compare는 **항상 main의 쌍**입니다. submodule·manual 탭이 active면 툴바 아래 **scope 줄**이 그 repo가 무엇을 따라가는지 보여주고, **Compare own branches…** 로 그 repo만의 base / compare를 고를 수 있습니다.
 - 탭 전환 시 **마지막 보던 파일과 스크롤 위치 복원** — 빠른 컨텍스트 스위치.
 - compareMode(Branch / Working Copy)는 글로벌입니다 — 한 번 정한 모드가 모든 탭에 일관 적용.
 - 탭 키바인드: **`Ctrl+Tab` / `Ctrl+Shift+Tab`** (다음/이전), **`Ctrl+1~9`** (직접 점프).
@@ -87,12 +87,21 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 
 ### 사용 흐름
 1. 좌측 모드 토글에서 **Branch** 선택.
-2. **start** 와 **target** 입력 (브랜치명/태그/커밋 해시 모두 가능, 드롭다운으로 자동완성).
-3. **3-dot (...)** vs **2-dot (..)** 선택:
-    - `3-dot`: GitHub PR과 동일. `git merge-base(start, target)` 부터 `target` 까지의 변경 (= start의 분기점 이후 target의 변화).
-    - `2-dot`: `start..target` 직접 diff (= target에는 있지만 start에는 없는 변경).
+2. **base** (기준, 머지될 쪽 — diff 왼쪽) 와 **compare** (리뷰할 브랜치 — diff 오른쪽) 선택. 브랜치명/태그/커밋 해시 모두 가능. `base ← compare` 는 "compare가 base로 들어간다"는 뜻입니다.
+3. **since fork (...)** vs **direct (..)** 선택:
+    - `since fork`: GitHub PR과 동일. `merge-base(base, compare)` 부터 `compare` 까지의 변경 (= compare가 갈라진 뒤 바꾼 것).
+    - `direct`: `base..compare` 직접 diff.
 4. **`ws`** 체크박스로 공백 무시(`-w`) 토글.
 5. **Compare** 클릭.
+
+툴바의 두 피커는 항상 **super(main) repo의 쌍**입니다. 멀티 루트에서 한 repo에 Focus해도 피커의 의미는 바뀌지 않고, 툴바 아래 scope 줄에 그 repo의 범위가 표시됩니다.
+
+### 커밋 표 (상단)
+- **compare에만 있는 커밋**을 repo별로 묶어 보여줍니다: ● base에 없음 · ◐ 다른 방식으로 들어감 (rebase / cherry-pick / squash) · ✓ 이미 들어감(**Show merged commits** 켰을 때).
+- 맨 위 요약 줄이 답을 한 문장으로 말합니다 (예: `main ← feature/x: ● 8 not merged · ◐ 1 applied as patch`). 전부 들어갔으면 **어떤 머지로 들어왔는지**를 보여줍니다.
+- **squash merge 감지**: squash로 합친 브랜치의 커밋도 `squashed into <sha>` 로 표시합니다. 내용 비교(`merge-tree --write-tree`)는 **git 2.38 이상**에서 동작하고, 그보다 낮으면 patch-id 일치만 찾습니다.
+- 커밋을 클릭하면 아래 파일 목록과 diff가 그 커밋(`parent..commit`)만 보여주고, 파일 목록 위 줄에 그 커밋이 base에 들어갔는지가 나옵니다. 같은 행을 다시 누르거나 **× All changes** 로 전체 변경으로 돌아갑니다.
+- 경계선을 드래그해 높이 조절, `▴` 로 요약 줄만 남기고 접기.
 
 ### 좌측 파일 리스트
 - 파일별 상태 뱃지: `added` / `modified` / `deleted` / `renamed` / `copied` / `typechanged`.
@@ -100,6 +109,7 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 - **`↑` / `↓`** 로 다음/이전 파일 이동.
 
 ### 우측 Diff 패널
+- 헤더에 파일이 속한 **repo와 비교 범위**, 창 위에 **각 창이 무엇인지**(`base · main (merge-base)` / `compare · feature/x`) 표시.
 - **Split** (CodeMirror MergeView 좌우 분할) ↔ **Unified** 토글.
 - 자동 언어 감지 + 드롭다운에서 **수동 override** 가능 (Shiki 200+ 언어).
 - 라인 번호 표시.

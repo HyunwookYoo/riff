@@ -3,6 +3,27 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v2.2.0
+
+**Branch 모드가 "어느 repo의, 어느 두 ref를, 어느 방향으로" 비교하는지 화면에서 바로 읽히게** 바꿨습니다.
+
+### ✨ 하이라이트
+
+- **base ← compare 한 가지 의미** — 툴바 피커가 `base`(기준, diff 왼쪽)와 `compare`(리뷰할 브랜치, diff 오른쪽)로 바뀌었습니다. 예전에는 파일 diff와 커밋 포함 여부 패널이 **같은 두 피커를 반대 역할로** 읽어서, 한쪽을 맞추면 다른 쪽이 거꾸로 나왔습니다. 이제 두 패널 모두 "compare가 base에 대해 무엇을 바꿨나 / compare의 커밋이 base에 들어갔나"를 묻습니다.
+- **툴바는 항상 super repo** — submodule에 Focus해도 툴바 피커의 의미가 바뀌지 않습니다. Focus한 repo는 툴바 아래 **scope 줄**에 무엇을 따라가는지(`following sandbox: main pins 5e1c0aa ← feature/x pins b93f7d2`) 표시되고, **Compare own branches…** 로 그 repo만의 쌍을 고릅니다.
+- **범위와 출처를 모든 곳에** — 그룹 헤더마다 비교 범위(`pinned by sandbox: …`, `own branches: …`, `same names: …`)나 비교할 수 없는 이유(`unchanged: both pin …`)를, diff 헤더에 repo와 범위를, diff 창 위에 각 창이 무엇인지를 표시합니다.
+- **전폭 커밋 표** — 좁은 좌측 칸 대신 파일 목록·diff 위에 넓게 펼쳐집니다. **아직 안 들어간 커밋부터** repo별로 보여주고, 한 줄 요약으로 답합니다. 전부 들어갔으면 들어온 머지를, **Show merged commits** 로 그 머지가 들고 온 커밋들을 보여줍니다. 높이 조절·접기가 됩니다.
+- **squash merge 감지** — squash로 합친 브랜치는 예전엔 영원히 "안 들어감"으로 보였습니다. 이제 `squash-merged as <sha>` 로 표시합니다(내용 비교는 git 2.38 이상).
+
+### 🐛 수정
+
+- **submodule 커밋을 누르면 파일 목록이 비던 문제** — Focus가 submodule일 때 커밋 포함 여부 패널에서 커밋을 클릭하면 아무 파일도 나오지 않았습니다.
+- **패널마다 다른 범위를 보던 문제** — 비교 범위 계산이 세 군데에 복제돼 어긋나 있었습니다(수동 추가 repo는 포함 여부 패널이 비었고, 포인터가 같은 submodule은 diff만 범위를 갖는 식). 이제 한 곳에서 계산합니다.
+
+### 📦 설치 / 업그레이드
+
+- 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+
 ## v2.1.2
 
 **Branch 모드의 커밋 포함 여부(●/✓) 패널이 멀티루트 워크스페이스에서 아무 것도
