@@ -1193,6 +1193,8 @@ describe("summarize", () => {
       behind: null,
       repos: 1,
       failed: 0,
+      // A repo still loading is counted, so its commits aren't read as absent.
+      loading: 1,
     });
   });
 

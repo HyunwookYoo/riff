@@ -39,6 +39,9 @@ export type Summary =
       /// Groups that answered, and how many more could not be read.
       repos: number;
       failed: number;
+      /// Visible groups still loading, when any: their commits aren't in the
+      /// totals yet, which must not read as having none.
+      loading?: number;
     }
   | { kind: "patches"; names: SideNames; patch: number }
   | { kind: "squash"; names: SideNames; commit: Commit }
@@ -74,6 +77,9 @@ export function summaryText(s: Summary): string {
       if (s.patch > 0) parts.push(`◐ ${s.patch} applied as patch`);
       if (s.behind) parts.push(`${s.names.compare} is ${s.behind} behind`);
       if (s.failed > 0) parts.push(failedText(s.failed));
+      if (s.loading) {
+        parts.push(`${s.loading} repo${s.loading === 1 ? "" : "s"} still loading`);
+      }
       return `${head} ${parts.join(" · ")}`;
     }
     case "patches":

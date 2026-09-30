@@ -166,7 +166,7 @@
             {#if g && range.ok}
               <span class="g-counts">
                 {#if g.status === "loading"}
-                  …
+                  loading commits…
                 {:else if g.status === "error"}
                   couldn't read commits
                 {:else}
@@ -185,6 +185,11 @@
           {#if g.status === "error"}
             <div class="ct-note error">Couldn't read commits: {g.error}</div>
           {:else}
+            {#if g.status === "loading" && g.commits.length === 0}
+              <!-- A big repo can take a while on a cold cache; say so rather
+                   than look like it has no commits. -->
+              <div class="ct-note">Loading commits…</div>
+            {/if}
             {#if appState.bcShowMerged && g.mergedBy}
               <div class="ct-sub">brought in by {g.mergedBy.short_sha}</div>
             {/if}

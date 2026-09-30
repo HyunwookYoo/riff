@@ -34,6 +34,15 @@ describe("summaryText", () => {
     );
   });
 
+  it("says how many repos are still loading", () => {
+    expect(summaryText({ kind: "unmerged", names, out: 12, patch: 0, behind: null, repos: 2, failed: 0, loading: 1 })).toBe(
+      "main ← feature/x across 2 repos: ● 12 not merged · 1 repo still loading",
+    );
+    expect(summaryText({ kind: "unmerged", names, out: 3, patch: 0, behind: null, repos: 1, failed: 1, loading: 2 })).toBe(
+      "main ← feature/x: ● 3 not merged · 1 repo couldn't be read · 2 repos still loading",
+    );
+  });
+
   it("says how many repos couldn't be read", () => {
     expect(summaryText({ kind: "unmerged", names, out: 3, patch: 0, behind: null, repos: 1, failed: 1 })).toBe(
       "main ← feature/x: ● 3 not merged · 1 repo couldn't be read",

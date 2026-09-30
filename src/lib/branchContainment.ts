@@ -78,16 +78,16 @@ export interface VisibleGroup {
 
 /// The summary line's state for the groups on screen: one group speaks for
 /// itself; several give totals over the groups that answered (noting how many
-/// could not be read), named by the toolbar pair, and read as all in once none
-/// has ● left and none is still loading.
+/// could not be read or are still loading), named by the toolbar pair, and
+/// read as all in once none has ● left and none is still loading.
 export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
   if (groups.length === 0) return { kind: "no-refs" };
   if (groups.length === 1 && groups[0].group.base === groups[0].group.compare) {
     return { kind: "same" };
   }
   const ready = groups.filter((v) => v.group.status === "ready");
-  const loading = groups.some((v) => v.group.status === "loading");
-  if (ready.length === 0) return loading ? { kind: "loading" } : { kind: "error" };
+  const loading = groups.filter((v) => v.group.status === "loading").length;
+  if (ready.length === 0) return loading > 0 ? { kind: "loading" } : { kind: "error" };
   if (groups.length === 1) {
     const { group: g, names } = groups[0];
     const landed = squashLanded(g);
@@ -132,9 +132,10 @@ export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
       behind: null,
       repos: ready.length,
       failed,
+      ...(loading > 0 ? { loading } : {}),
     };
   }
-  if (loading) return { kind: "loading" };
+  if (loading > 0) return { kind: "loading" };
   return { kind: "all-in", names, repos: ready.length, failed };
 }
 
