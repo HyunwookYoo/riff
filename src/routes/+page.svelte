@@ -512,7 +512,7 @@
     <RepoTabs value={appState.changesRepoIdx} onselect={setChangesRepo} />
   {/if}
   <div class="workarea">
-    {#if appState.sidebarOpen && appState.appMode !== "blame"}
+    {#if appState.sidebarOpen && (appState.appMode === "changes" || appState.appMode === "history")}
       <RefsSidebar />
     {/if}
     <div

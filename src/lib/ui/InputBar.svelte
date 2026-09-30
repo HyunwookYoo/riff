@@ -112,9 +112,10 @@
       Blame
     </button>
   </div>
-  <!-- The branch chip toggles the Branches panel, which is hidden in blame
-       mode — so hide its toggle too rather than leave a dead button. -->
-  {#if appState.appMode !== "blame"}
+  <!-- The branch chip toggles the Branches panel, which only Working Copy and
+       the graph show — so hide its toggle elsewhere rather than leave a dead
+       button. -->
+  {#if appState.appMode === "changes" || appState.appMode === "history"}
     <BranchChip />
   {/if}
   <SyncControls />
