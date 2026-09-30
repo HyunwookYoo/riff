@@ -12,8 +12,9 @@ Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 - **base ← compare 한 가지 의미** — 툴바 피커가 `base`(기준, diff 왼쪽)와 `compare`(리뷰할 브랜치, diff 오른쪽)로 바뀌었습니다. 예전에는 파일 diff와 커밋 포함 여부 패널이 **같은 두 피커를 반대 역할로** 읽어서, 한쪽을 맞추면 다른 쪽이 거꾸로 나왔습니다. 이제 두 패널 모두 "compare가 base에 대해 무엇을 바꿨나 / compare의 커밋이 base에 들어갔나"를 묻습니다.
 - **툴바는 항상 super repo** — submodule에 Focus해도 툴바 피커의 의미가 바뀌지 않습니다. Focus한 repo는 툴바 아래 **scope 줄**에 무엇을 따라가는지(`following sandbox: main pins 5e1c0aa ← feature/x pins b93f7d2`) 표시되고, **Compare own branches…** 로 그 repo만의 쌍을 고릅니다.
 - **범위와 출처를 모든 곳에** — 그룹 헤더마다 비교 범위(`pinned by sandbox: …`, `own branches: …`, `same names: …`)나 비교할 수 없는 이유(`unchanged: both pin …`)를, diff 헤더에 repo와 범위를, diff 창 위에 각 창이 무엇인지를 표시합니다.
-- **전폭 커밋 표** — 좁은 좌측 칸 대신 파일 목록·diff 위에 넓게 펼쳐집니다. **아직 안 들어간 커밋부터** repo별로 보여주고, 한 줄 요약으로 답합니다. 전부 들어갔으면 들어온 머지를, **Show merged commits** 로 그 머지가 들고 온 커밋들을 보여줍니다. 높이 조절·접기가 됩니다.
+- **전폭 커밋 표** — 좁은 좌측 칸 대신 파일 목록·diff 위에 넓게 펼쳐집니다. **아직 안 들어간 커밋부터** repo별로 보여주고, 한 줄 요약으로 답합니다. 전부 들어갔으면 들어온 머지를, **Show merged commits** 로 그 머지가 들고 온 커밋들을 보여줍니다. 높이 조절·접기가 됩니다. 큰 repo를 처음 읽느라 오래 걸리면 그룹에 `loading commits…`, 요약 줄에 `· 1 repo still loading`을 띄워 커밋이 없는 것처럼 보이지 않게 합니다.
 - **squash merge 감지** — squash로 합친 브랜치는 예전엔 영원히 "안 들어감"으로 보였습니다. 이제 `squash-merged as <sha>` 로 표시합니다(내용 비교는 git 2.38 이상).
+- **Branch 모드에서는 Branches 사이드바를 숨김** — 비교할 두 ref는 툴바 피커로 고르므로, 왼쪽 Branches 패널과 브랜치 칩은 Working Copy와 그래프에서만 보입니다.
 
 ### 🐛 수정
 
