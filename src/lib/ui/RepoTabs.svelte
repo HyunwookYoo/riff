@@ -1,12 +1,27 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import { reorderRepo } from "$lib/workspace";
-  import type { RepoEntry } from "$lib/types";
+  import type { RepoEntry, TabMark } from "$lib/types";
 
-  // A repo selector tab strip, shared by History and Changes. The caller owns
-  // the selected index (historyRepoIdx / changesRepoIdx) and the select action.
-  let { value, onselect }: { value: number; onselect: (idx: number) => void } =
-    $props();
+  // A repo selector tab strip, shared by History, Changes and Branch mode. The
+  // caller owns the selected index and the select action. Branch mode adds a
+  // first tab for every repo (`allLabel`, active while `value` is null), a
+  // status mark per repo, and turns reordering off.
+  let {
+    value,
+    onselect,
+    allLabel,
+    onall,
+    mark,
+    reorderable = true,
+  }: {
+    value: number | null;
+    onselect: (idx: number) => void;
+    allLabel?: string;
+    onall?: () => void;
+    mark?: (idx: number) => TabMark | null;
+    reorderable?: boolean;
+  } = $props();
 
   function label(r: RepoEntry, i: number): string {
     return r.displayName || (i === 0 ? "main" : `repo ${i}`);
@@ -29,7 +44,7 @@
     return Number.isInteger(i) ? i : null;
   }
   function onDown(e: PointerEvent, idx: number) {
-    if (e.button !== 0 || idx === 0) return; // main is not draggable
+    if (!reorderable || e.button !== 0 || idx === 0) return; // main is not draggable
     suppressClick = false;
     pending = { idx, x: e.clientX };
   }
@@ -69,7 +84,21 @@
 <svelte:window onpointermove={onMove} onpointerup={onUp} />
 
 <div class="repo-tabs" role="tablist" aria-label="Repository">
+  {#if allLabel}
+    <button
+      type="button"
+      class="tab"
+      class:active={value === null}
+      role="tab"
+      aria-selected={value === null}
+      title="Every repo in the workspace"
+      onclick={() => onall?.()}
+    >
+      <span class="name all">{allLabel}</span>
+    </button>
+  {/if}
   {#each appState.repos as r, idx (r.path)}
+    {@const m = mark?.(idx) ?? null}
     <button
       type="button"
       class="tab"
@@ -79,13 +108,16 @@
       data-tabidx={idx}
       role="tab"
       aria-selected={idx === value}
-      title={idx === 0 ? r.path : `${r.path} · drag to reorder`}
+      title={idx === 0 || !reorderable ? r.path : `${r.path} · drag to reorder`}
       onpointerdown={(e) => onDown(e, idx)}
       onclick={() => onClick(idx)}
     >
       <span class="name">{label(r, idx)}</span>
       {#if r.kind !== "main"}
         <span class="kind" data-kind={r.kind}>{r.kind}</span>
+      {/if}
+      {#if m}
+        <span class="mark" data-tone={m.tone} title={m.title}>{m.text}</span>
       {/if}
     </button>
   {/each}
@@ -153,5 +185,22 @@
     background: var(--accent-soft);
     color: var(--accent);
     border-color: var(--accent);
+  }
+  .tab .name.all {
+    font-family: inherit;
+  }
+  .tab .mark {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    color: var(--muted);
+  }
+  .tab .mark[data-tone="out"] {
+    color: var(--error-fg, #f85149);
+  }
+  .tab .mark[data-tone="in"] {
+    color: var(--ok-fg, #3fb950);
+  }
+  .tab .mark[data-tone="error"] {
+    color: var(--info-fg);
   }
 </style>

@@ -40,7 +40,7 @@
     workingCopyOrder,
   } from "$lib/workingCopy";
   import { popHistory, redoHistory } from "$lib/history";
-  import { exitFocus } from "$lib/focus";
+  import { enterFocus, exitFocus } from "$lib/focus";
   import { cycleTab, selectTab } from "$lib/tabs";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
   import { adjustFontSize, applyFontSize, resetFontSize } from "$lib/font";
@@ -48,6 +48,7 @@
   import { preheatHighlighter } from "$lib/diff/shiki";
   import { checkForUpdate } from "$lib/updater";
   import { diffRangeText } from "$lib/rangeText";
+  import { repoTabMark } from "$lib/branchContainment";
 
   let pendingUpdate: Awaited<ReturnType<typeof checkForUpdate>> = null;
 
@@ -104,6 +105,18 @@
       d && d.repoIdx === idx ? d.target : null,
     );
   });
+
+  // Branch mode's repo tabs (Unified): each repo's mark from the commit
+  // table's data.
+  function branchTabMark(idx: number) {
+    return repoTabMark(
+      appState.repoRanges[idx],
+      appState.bcGroups[idx],
+      appState.repos[idx]?.displayName ?? "",
+      appState.repos[0]?.displayName ?? "",
+      { base: appState.startBranch, compare: appState.targetBranch },
+    );
+  }
 
   // Graph mode: drag the boundary between the graph (top) and the commit-detail
   // panel (bottom). Adjusts the panel's height; session-only. Dragging upward
@@ -502,6 +515,19 @@
   <Timelapse />
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />
+  {/if}
+  {#if appState.appMode === "compare" && appState.workspaceLayout === "unified" && appState.repos.length > 1}
+    <!-- Unified's way into one repo: the strip Working Copy and History use,
+         plus All repos. Reordering is off: Branch mode keys its per-repo state
+         by index. -->
+    <RepoTabs
+      value={appState.activeRepoIdx}
+      onselect={enterFocus}
+      allLabel="All repos"
+      onall={exitFocus}
+      mark={branchTabMark}
+      reorderable={false}
+    />
   {/if}
   {#if appState.appMode === "compare"}
     <ScopeBar />
