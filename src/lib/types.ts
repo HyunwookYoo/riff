@@ -411,3 +411,10 @@ export interface SquashCheck {
   verdict: SquashVerdict;
   squash_commit: Commit | null;
 }
+
+/// A Branch-mode repo tab's status mark (see branchContainment.repoTabMark).
+export interface TabMark {
+  text: string;
+  tone: "out" | "in" | "muted" | "error";
+  title?: string;
+}

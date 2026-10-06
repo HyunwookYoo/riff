@@ -8,9 +8,9 @@ import {
 } from "./git";
 import { compare, forgetListedRanges, listedRanges } from "./compare";
 import { resolveRepoRanges } from "./repoRange";
-import { shortRef, type ToolbarPair } from "./rangeText";
+import { scopeLine, shortRef, type ToolbarPair } from "./rangeText";
 import type { Counts, RowMark, SideNames, Summary } from "./commitTableText";
-import type { BcGroup, Commit, Containment, RepoRange, SquashCheck } from "./types";
+import type { BcGroup, Commit, Containment, RepoRange, SquashCheck, TabMark } from "./types";
 
 /// Rows fetched per page of a commit-table group.
 export const PAGE_SIZE = 100;
@@ -137,6 +137,30 @@ export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
   }
   if (loading > 0) return { kind: "loading" };
   return { kind: "all-in", names, repos: ready.length, failed };
+}
+
+/// A Branch-mode repo tab's mark: what the commit table knows about the repo,
+/// in one glyph. `repoName`, `superName` and `pair` word a gap's tooltip.
+export function repoTabMark(
+  range: RepoRange | undefined,
+  group: BcGroup | undefined,
+  repoName: string,
+  superName: string,
+  pair: ToolbarPair,
+): TabMark | null {
+  if (!range) return null;
+  if (!range.ok) {
+    const line = scopeLine(range, repoName, superName, pair);
+    return { text: "—", tone: "muted", title: line.kind === "note" ? line.text : undefined };
+  }
+  if (!group || group.status === "loading") {
+    return { text: "…", tone: "muted", title: "reading commits…" };
+  }
+  if (group.status === "error") {
+    return { text: "!", tone: "error", title: `couldn't read commits: ${group.error ?? "unknown error"}` };
+  }
+  const out = groupCounts(group).out;
+  return out > 0 ? { text: `● ${out}`, tone: "out" } : { text: "✓", tone: "in" };
 }
 
 type OkRange = Extract<RepoRange, { ok: true }>;

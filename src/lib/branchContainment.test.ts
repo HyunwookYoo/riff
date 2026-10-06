@@ -26,6 +26,7 @@ import {
   isRepoVisible,
   loadBranchContainment,
   loadMoreGroup,
+  repoTabMark,
   rowMark,
   selectBranchCommit,
   setShowMerged,
@@ -1086,6 +1087,73 @@ describe("pure helpers", () => {
     expect([0, 1].map(isRepoVisible)).toEqual([true, true]);
     Object.assign(appState, { activeRepoIdx: 0 });
     expect([0, 1].map(isRepoVisible)).toEqual([true, false]);
+  });
+});
+
+describe("repoTabMark", () => {
+  const pair = { base: "main", compare: "feature" };
+  const ok = range("/main/sub", "a1", "b2");
+  const mark = (r: RepoRange | undefined, g: BcGroup | undefined) =>
+    repoTabMark(r, g, "sub", "sandbox", pair);
+  const waiting = { text: "…", tone: "muted", title: "reading commits…" };
+
+  it("has no mark before the repo's range resolves", () => {
+    expect(mark(undefined, undefined)).toBeNull();
+  });
+
+  it("marks a repo with nothing to compare and says why", () => {
+    expect(mark({ ok: false, reason: "unchanged", pin: "1a2b3c4d5e6f7a8b9c0d" }, undefined)).toEqual({
+      text: "—",
+      tone: "muted",
+      title: "unchanged: sandbox's main and feature point to the same commit 1a2b3c4",
+    });
+    expect(mark({ ok: false, reason: "no-refs" }, undefined)).toEqual({
+      text: "—",
+      tone: "muted",
+      title: "pick base and compare first",
+    });
+  });
+
+  it("waits while the group loads, or before it exists", () => {
+    expect(mark(ok, undefined)).toEqual(waiting);
+    expect(mark(ok, group({ status: "loading", marks: null }))).toEqual(waiting);
+  });
+
+  it("flags a group that couldn't be read", () => {
+    expect(mark(ok, group({ status: "error", error: "boom", marks: null }))).toEqual({
+      text: "!",
+      tone: "error",
+      title: "couldn't read commits: boom",
+    });
+    // Review focus: a failure without a message must not print "null".
+    expect(mark(ok, group({ status: "error", error: null, marks: null }))).toEqual({
+      text: "!",
+      tone: "error",
+      title: "couldn't read commits: unknown error",
+    });
+  });
+
+  it("counts the commits not in base", () => {
+    expect(mark(ok, group({ marks: marks({ ahead: 5, equivalent: ["x", "y"] }) }))).toEqual({
+      text: "● 3",
+      tone: "out",
+    });
+  });
+
+  it("shows ✓ once nothing is left to merge, a squash included", () => {
+    expect(mark(ok, group({ marks: marks({ ahead: 2, equivalent: ["x", "y"] }) }))).toEqual({
+      text: "✓",
+      tone: "in",
+    });
+    expect(
+      mark(ok, group({ marks: marks({ ahead: 3 }), squash: { verdict: "squash", squash_commit: commit("s1") } })),
+    ).toEqual({ text: "✓", tone: "in" });
+  });
+
+  it("keeps the ● count of a branch with no net change, as its group header does", () => {
+    expect(
+      mark(ok, group({ marks: marks({ ahead: 2 }), squash: { verdict: "no-net-change", squash_commit: null } })),
+    ).toEqual({ text: "● 2", tone: "out" });
   });
 });
 
