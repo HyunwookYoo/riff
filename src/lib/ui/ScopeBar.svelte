@@ -1,21 +1,18 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { exitFocus } from "$lib/focus";
   import {
     clearRepoOverride,
     loadBranchesFor,
     setRepoOverride,
   } from "$lib/workspace";
-  import { scopeText } from "$lib/rangeText";
+  import { possessive, scopeLine } from "$lib/rangeText";
   import BranchPicker from "./BranchPicker.svelte";
 
   // The repo the view is narrowed to: Focus in Unified, the active tab in Tabs.
-  // Main's tab needs no bar — the toolbar already is main's pair.
-  const isTabs = $derived(appState.workspaceLayout === "tabs");
+  // The super repo needs no bar in either — the toolbar already is its pair.
   const idx = $derived.by(() => {
     const i = appState.activeRepoIdx;
-    if (i === null || appState.repos.length < 2) return null;
-    if (isTabs && i === 0) return null;
+    if (i === null || i === 0 || appState.repos.length < 2) return null;
     return i;
   });
   const repo = $derived(idx === null ? null : (appState.repos[idx] ?? null));
@@ -25,6 +22,9 @@
     base: appState.startBranch,
     compare: appState.targetBranch,
   });
+  const line = $derived(
+    repo && range ? scopeLine(range, repo.displayName, superName, pair) : null,
+  );
   const branches = $derived(
     idx === null ? [] : (appState.branchesByRepoIdx[idx] ?? []),
   );
@@ -71,41 +71,43 @@
 {#if repo}
   <div class="scope" role="group" aria-label="Scope">
     <span class="name">{repo.displayName}</span>
-    <span class="kind" data-kind={repo.kind}>
-      {repo.kind === "main" ? "super" : repo.kind}
-    </span>
-    {#if repo.kind !== "main"}
-      {#if repo.override}
-        <span class="what">own branches:</span>
-        <BranchPicker
-          label="base"
-          value={repo.override.startBranch}
-          options={branches}
-          placeholder="pick a ref"
-          onchange={(v) => setOwn("base", v)}
-          title="This repo's own base"
-        />
+    <span class="kind" data-kind={repo.kind}>{repo.kind}</span>
+    {#if repo.override}
+      <BranchPicker
+        label="base"
+        value={repo.override.startBranch}
+        options={branches}
+        placeholder="pick a ref"
+        onchange={(v) => setOwn("base", v)}
+        title="This repo's own base"
+      />
+      <span class="sep">←</span>
+      <BranchPicker
+        label="compare"
+        value={repo.override.targetBranch}
+        options={branches}
+        placeholder="pick a ref"
+        onchange={(v) => setOwn("compare", v)}
+        title="This repo's own compare"
+      />
+      <span class="why">{possessive(repo.displayName)} own branches</span>
+      <button type="button" onclick={followDefault}>
+        {repo.kind === "submodule"
+          ? `Back to ${possessive(superName)} commits`
+          : "Back to same names"}
+      </button>
+    {:else}
+      {#if line && line.kind === "sides"}
+        <span class="side">base <code>{line.base}</code></span>
         <span class="sep">←</span>
-        <BranchPicker
-          label="compare"
-          value={repo.override.targetBranch}
-          options={branches}
-          placeholder="pick a ref"
-          onchange={(v) => setOwn("compare", v)}
-          title="This repo's own compare"
-        />
-        <button type="button" onclick={followDefault}>
-          {repo.kind === "submodule" ? `Follow ${superName}` : "Use same names"}
-        </button>
+        <span class="side">compare <code>{line.compare}</code></span>
+        <span class="why">{line.why}</span>
       {:else}
-        <span class="what">{range ? scopeText(range, superName, pair) : "…"}</span>
-        <button type="button" onclick={compareOwnBranches}>
-          Compare own branches…
-        </button>
+        <span class="why">{line && line.kind === "note" ? line.text : "…"}</span>
       {/if}
-    {/if}
-    {#if !isTabs}
-      <button type="button" class="exit" onclick={exitFocus}>× All repos</button>
+      <button type="button" onclick={compareOwnBranches}>
+        Pick its own branches…
+      </button>
     {/if}
   </div>
 {/if}
@@ -138,8 +140,14 @@
     color: var(--accent);
     border-color: var(--accent);
   }
-  .what {
+  .side {
+    color: var(--muted);
+  }
+  .side code {
     font-family: var(--mono);
+    color: var(--fg);
+  }
+  .why {
     color: var(--muted);
   }
   .sep {
@@ -157,8 +165,5 @@
   button:hover {
     border-color: var(--accent);
     color: var(--accent);
-  }
-  .exit {
-    margin-left: auto;
   }
 </style>

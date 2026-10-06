@@ -5,9 +5,10 @@ import {
   diffRangeText,
   pairLabel,
   paneLabels,
+  possessive,
   rangeLabel,
   rangeTooltip,
-  scopeText,
+  scopeLine,
   shortRef,
   sideNames,
 } from "./rangeText";
@@ -70,22 +71,83 @@ describe("rangeLabel", () => {
   });
 });
 
-describe("rangeTooltip / scopeText", () => {
+describe("rangeTooltip", () => {
   it("explains which ref pins which commit", () => {
     expect(rangeTooltip(gitlink, pair)).toBe("main pins 5e1c0aa · feature/x pins b93f7d2");
     expect(rangeTooltip(toolbar, pair)).toBeUndefined();
   });
+});
 
-  it("says what a focused repo follows", () => {
-    expect(scopeText(gitlink, "sandbox", pair)).toBe(
-      "following sandbox: main pins 5e1c0aa ← feature/x pins b93f7d2",
-    );
-    expect(scopeText(sameName, "sandbox", pair)).toBe(
-      "same branch names as sandbox: main ← feature/x",
-    );
-    expect(scopeText({ ok: false, reason: "unchanged", pin: SHA_A }, "sandbox", pair)).toBe(
-      "unchanged: both pin 5e1c0aa",
-    );
+describe("possessive / scopeLine", () => {
+  it("adds 's, or a bare apostrophe after an s", () => {
+    expect(possessive("sandbox")).toBe("sandbox's");
+    expect(possessive("Plugins")).toBe("Plugins'");
+    expect(possessive("ASSETS")).toBe("ASSETS'");
+  });
+
+  it("names a repo's two sides and where they come from", () => {
+    expect(scopeLine(gitlink, "Plugins", "sandbox", pair)).toEqual({
+      kind: "sides",
+      base: "5e1c0aa",
+      compare: "b93f7d2",
+      why: "the commits sandbox's main and feature/x point to",
+    });
+    expect(scopeLine(sameName, "tools", "sandbox", pair)).toEqual({
+      kind: "sides",
+      base: "main",
+      compare: "feature/x",
+      why: "same branch names as sandbox",
+    });
+    expect(scopeLine(override, "Plugins", "sandbox", pair)).toEqual({
+      kind: "sides",
+      base: "develop",
+      compare: "feature/y",
+      why: "Plugins' own branches",
+    });
+    expect(scopeLine(override, "engine", "sandbox", pair)).toMatchObject({
+      why: "engine's own branches",
+    });
+    expect(scopeLine(toolbar, "sandbox", "sandbox", pair)).toMatchObject({
+      why: "the toolbar's base and compare",
+    });
+  });
+
+  it("says why a repo has nothing to compare", () => {
+    const note = (reason: string, extra: object = {}) =>
+      scopeLine({ ok: false, reason, ...extra } as RepoRange, "Plugins", "sandbox", pair);
+    // Review focus: the same sentence is the tooltip of a repo whose own
+    // branches miss a side, so it must not point at the toolbar.
+    expect(note("no-refs")).toEqual({ kind: "note", text: "pick base and compare first" });
+    expect(note("unchanged", { pin: SHA_A })).toEqual({
+      kind: "note",
+      text: "unchanged: sandbox's main and feature/x point to the same commit 5e1c0aa",
+    });
+    expect(note("added", { pin: SHA_B })).toEqual({
+      kind: "note",
+      text: "only in feature/x: sandbox's main doesn't have Plugins",
+    });
+    expect(note("removed", { pin: SHA_A })).toEqual({
+      kind: "note",
+      text: "removed in feature/x: only sandbox's main has Plugins",
+    });
+    expect(note("absent")).toEqual({ kind: "note", text: "not in sandbox's main or feature/x" });
+    expect(note("error", { message: "boom" })).toEqual({ kind: "note", text: "couldn't resolve: boom" });
+    expect(note("error")).toEqual({ kind: "note", text: "couldn't resolve: unknown error" });
+  });
+
+  it("applies the possessive rule to the super repo's name", () => {
+    // Review focus: a super repo named like "assets".
+    expect(scopeLine(gitlink, "Plugins", "assets", pair)).toMatchObject({
+      why: "the commits assets' main and feature/x point to",
+    });
+  });
+
+  it("shortens the toolbar refs it explains", () => {
+    // Review focus: a history drill-in puts full SHAs (with a ^) in the toolbar.
+    const drilled = { base: `${SHA_A}^`, compare: SHA_A };
+    expect(scopeLine(gitlink, "Plugins", "sandbox", drilled)).toMatchObject({
+      why: "the commits sandbox's 5e1c0aa^ and 5e1c0aa point to",
+    });
   });
 });
 

@@ -82,20 +82,58 @@ export function rangeTooltip(
   return `${shortRef(pair.base)} pins ${shortRef(range.base)} · ${shortRef(pair.compare)} pins ${shortRef(range.compare)}`;
 }
 
-/// What the scope bar says about a focused repo that is not on its own
-/// branches: where its range comes from, or why it has none.
-export function scopeText(
+/// `name's`, or `name'` for a name ending in s.
+export function possessive(name: string): string {
+  return /s$/i.test(name) ? `${name}'` : `${name}'s`;
+}
+
+/// What the scope bar says about the repo on screen: its two sides and where
+/// they come from, or why it has none.
+export type ScopeLine =
+  | { kind: "sides"; base: string; compare: string; why: string }
+  | { kind: "note"; text: string };
+
+/// The scope bar's line for `range`, the range of the repo named `repoName`.
+/// A gap's sentence is also that repo's tab tooltip.
+export function scopeLine(
   range: RepoRange,
+  repoName: string,
   superName: string,
   pair: ToolbarPair,
-): string {
-  if (range.ok && range.source === "gitlink") {
-    return `following ${superName}: ${shortRef(pair.base)} pins ${shortRef(range.base)} ← ${shortRef(pair.compare)} pins ${shortRef(range.compare)}`;
+): ScopeLine {
+  const base = shortRef(pair.base);
+  const compare = shortRef(pair.compare);
+  const sup = possessive(superName);
+  if (range.ok) {
+    const sides = { base: shortRef(range.base), compare: shortRef(range.compare) };
+    switch (range.source) {
+      case "gitlink":
+        return { kind: "sides", ...sides, why: `the commits ${sup} ${base} and ${compare} point to` };
+      case "same-name":
+        return { kind: "sides", ...sides, why: `same branch names as ${superName}` };
+      case "override":
+        return { kind: "sides", ...sides, why: `${possessive(repoName)} own branches` };
+      case "toolbar":
+        return { kind: "sides", ...sides, why: "the toolbar's base and compare" };
+    }
   }
-  if (range.ok && range.source === "same-name") {
-    return `same branch names as ${superName}: ${pairLabel(range.base, range.compare)}`;
+  switch (range.reason) {
+    case "no-refs":
+      return { kind: "note", text: "pick base and compare first" };
+    case "unchanged":
+      return {
+        kind: "note",
+        text: `unchanged: ${sup} ${base} and ${compare} point to the same commit ${shortRef(range.pin ?? "")}`,
+      };
+    case "added":
+      return { kind: "note", text: `only in ${compare}: ${sup} ${base} doesn't have ${repoName}` };
+    case "removed":
+      return { kind: "note", text: `removed in ${compare}: only ${sup} ${base} has ${repoName}` };
+    case "absent":
+      return { kind: "note", text: `not in ${sup} ${base} or ${compare}` };
+    case "error":
+      return { kind: "note", text: `couldn't resolve: ${range.message ?? "unknown error"}` };
   }
-  return rangeLabel(range, superName, pair);
 }
 
 /// The diff-mode select's option text.
