@@ -64,7 +64,7 @@ Working Copy와 Graph는 좌측 사이드바의 **Working Copy / Graph** 네비(
 
 파일 리스트와 blame 피커는 모두 **repo별 collapsible 그룹 헤더**로 묶여 표시됩니다. 그룹 헤더의:
 - **caret(▾/▸)이나 이름** 클릭 → 그 그룹만 접고 펴기 (`↑`/`↓` 이동에서 접힌 그룹은 건너뜀)
-- 오른쪽 끝 **`→`** 클릭 → **Focus 모드** 진입. 그 repo만 보이게 되고, 같은 자리의 `←` 또는 `Esc`로 해제.
+- (파일 리스트만) 오른쪽 끝 **`→`** 클릭 → **Focus 모드** 진입. 그 repo만 보이게 되고, 같은 자리의 `←` 또는 `Esc`로 해제.
 
 Branch 모드에서는 툴바 아래 **repo 탭 줄**이 같은 일을 합니다. 맨 앞 **All repos** 탭이 전체 보기이고, repo 탭을 누르면 그 repo에 Focus합니다. 탭마다 커밋 표의 상태가 붙습니다: `● N` base에 없는 커밋 N개 · `✓` 전부 들어감 · `…` 읽는 중 · `—` 비교할 범위 없음(툴팁에 이유) · `!` 읽지 못함. 이 탭은 드래그로 순서를 바꿀 수 없습니다.
 
@@ -74,7 +74,7 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 기본은 위에 설명한 **Unified** 레이아웃(그룹 헤더 + Focus)이지만, Fork/GitKraken 스타일 탭 UI가 익숙하다면 chip 팝오버 하단의 **Layout: Tabs** 를 선택할 수 있습니다.
 
 - 상단에 repo별 탭바가 나타나고, 한 번에 한 repo의 파일만 평면 리스트로 표시됩니다.
-- 툴바의 base / compare는 **항상 main의 쌍**입니다. submodule·manual 탭이 active면 툴바 아래 **scope 줄**이 그 repo의 `base … ← compare …`와 그 두 값이 어디서 왔는지 보여주고, **Pick its own branches…** 로 그 repo만의 base / compare를 고를 수 있습니다 (**Back to <main>'s commits** 로 복귀).
+- 툴바의 base / compare는 **항상 main의 쌍**입니다. submodule·manual 탭이 active면 툴바 아래 **scope 줄**이 그 repo의 `base … ← compare …`와 그 두 값이 어디서 왔는지 보여주고, **Pick its own branches…** 로 그 repo만의 base / compare를 고를 수 있습니다 (submodule은 **Back to `<main>`'s commits**, manual repo는 **Back to same names** 로 복귀).
 - 탭 전환 시 **마지막 보던 파일과 스크롤 위치 복원** — 빠른 컨텍스트 스위치.
 - compareMode(Branch / Working Copy)는 글로벌입니다 — 한 번 정한 모드가 모든 탭에 일관 적용.
 - 탭 키바인드: **`Ctrl+Tab` / `Ctrl+Shift+Tab`** (다음/이전), **`Ctrl+1~9`** (직접 점프).
@@ -96,7 +96,7 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 4. **`ws`** 체크박스로 공백 무시(`-w`) 토글.
 5. **Compare** 클릭.
 
-툴바의 두 피커는 항상 **super(main) repo의 쌍**입니다. 멀티 루트에서는 툴바 아래 **repo 탭 줄**로 한 repo에 들어가고 **All repos** 탭으로 전체 보기로 돌아옵니다. 들어가도 피커의 의미는 바뀌지 않습니다. submodule이나 manual repo에 들어가면 탭 줄 아래 scope 줄이 그 repo의 `base … ← compare …`와 출처(예: `the commits sandbox's master and feature/x point to`)를 보여줍니다.
+툴바의 두 피커는 항상 **super(main) repo의 쌍**입니다. 멀티 루트에서는 툴바 아래 **repo 탭 줄**로 한 repo에 들어가고, Unified 레이아웃이면 **All repos** 탭으로 전체 보기로 돌아옵니다 (Tabs 레이아웃은 항상 한 repo씩 봅니다). 들어가도 피커의 의미는 바뀌지 않습니다. submodule이나 manual repo에 들어가면 탭 줄 아래 scope 줄이 그 repo의 `base … ← compare …`와 출처(예: `the commits sandbox's master and feature/x point to`)를 보여줍니다.
 
 ### 커밋 표 (상단)
 - **compare에만 있는 커밋**을 repo별로 묶어 보여줍니다: ● base에 없음 · ◐ 다른 방식으로 들어감 (rebase / cherry-pick / squash) · ✓ 이미 들어감(**Show merged commits** 켰을 때).

@@ -201,6 +201,6 @@
     color: var(--ok-fg, #3fb950);
   }
   .tab .mark[data-tone="error"] {
-    color: var(--info-fg);
+    color: var(--error-fg, #f85149);
   }
 </style>

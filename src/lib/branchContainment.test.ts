@@ -1114,6 +1114,27 @@ describe("repoTabMark", () => {
     });
   });
 
+  it("words every other gap the way the scope bar does", () => {
+    const gap = (reason: string, extra: object = {}) =>
+      mark({ ok: false, reason, ...extra } as RepoRange, undefined);
+    expect(gap("added", { pin: "b93f7d2c1d2e3f40" })).toEqual({
+      text: "—",
+      tone: "muted",
+      title: "only in feature: sandbox's main doesn't have sub",
+    });
+    expect(gap("removed", { pin: "5e1c0aa7b2c3d4e5" })).toEqual({
+      text: "—",
+      tone: "muted",
+      title: "removed in feature: only sandbox's main has sub",
+    });
+    expect(gap("absent")).toEqual({ text: "—", tone: "muted", title: "not in sandbox's main or feature" });
+    expect(gap("error", { message: "boom" })).toEqual({
+      text: "—",
+      tone: "muted",
+      title: "couldn't resolve: boom",
+    });
+  });
+
   it("waits while the group loads, or before it exists", () => {
     expect(mark(ok, undefined)).toEqual(waiting);
     expect(mark(ok, group({ status: "loading", marks: null }))).toEqual(waiting);
