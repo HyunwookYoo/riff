@@ -114,7 +114,7 @@ from, then one button.
 | `added` | `only in feature/x: sandbox's master doesn't have Plugins` · **Pick its own branches…** |
 | `removed` | `removed in feature/x: only sandbox's master has Plugins` · **Pick its own branches…** |
 | `absent` | `not in sandbox's master or feature/x` · **Pick its own branches…** |
-| `no-refs` | `pick base and compare in the toolbar first` · **Pick its own branches…** |
+| `no-refs` | `pick base and compare first` · **Pick its own branches…** (not "in the toolbar": the same sentence is the tab tooltip of a repo whose own branches miss a side) |
 | `error` | `couldn't resolve: <message>` · **Pick its own branches…** |
 | Range not resolved yet | `…` · **Pick its own branches…** |
 
