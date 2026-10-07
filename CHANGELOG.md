@@ -3,6 +3,25 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v2.3.0
+
+**Branch 모드에서 submodule로 들어가고 나오는 길이 눈에 보이게** 바꿨습니다.
+
+### ✨ 하이라이트
+
+- **repo 탭 줄** — Unified 레이아웃의 Branch 모드에도 Working Copy·History와 같은 탭 줄이 툴바 아래에 생겼습니다. 맨 앞 **All repos** 탭이 전체 보기이고, repo 탭을 누르면 그 repo만 봅니다. 예전에는 Files 그룹 헤더 끝의 작은 `→` 버튼이 유일한 입구였습니다.
+- **탭마다 커밋 상태** — `● N` base에 없는 커밋 N개 · `✓` 전부 들어감 · `…` 읽는 중 · `—` 비교할 범위 없음(툴팁에 이유) · `!` 읽지 못함. 들어가기 전에 어느 repo에 볼 게 있는지 보입니다.
+- **툴바처럼 읽히는 위치 줄** — submodule에 들어가면 `base 5e1c0aa ← compare b93f7d2`와 그 두 커밋이 어디서 왔는지(`the commits sandbox's master and feature/x point to`)를 보여줍니다. 버튼도 **Pick its own branches…** / **Back to sandbox's commits** 처럼 하는 일을 말하고, 나가기는 All repos 탭 하나로 정리했습니다.
+
+### 🐛 수정
+
+- **다른 worktree에서 만든 submodule 커밋을 비교하면 아무것도 안 나오던 문제** — git은 worktree마다 submodule 저장소를 따로 둡니다. submodule이 고정한 커밋이나 고른 브랜치가 지금 연 체크아웃의 저장소에 없으면 파일 목록은 비고 커밋 표에는 git 원문 오류만 떴습니다. 이제 그 repo는 비교하지 않고 `not in this clone: <sha>`, 탭 `!`, 그리고 원인과 해결 방법(fetch하거나 그 worktree를 열기)을 보여주며, super repo 파일 목록에는 그 submodule의 포인터 변경이 남습니다.
+- **비교할 수 없는 submodule의 포인터 변경이 파일 목록에서 사라지던 문제** — 한쪽에만 있는(추가·제거된) submodule도 이제 super repo 목록에 포인터 변경으로 보입니다.
+
+### 📦 설치 / 업그레이드
+
+- 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+
 ## v2.2.0
 
 **Branch 모드가 "어느 repo의, 어느 두 ref를, 어느 방향으로" 비교하는지 화면에서 바로 읽히게** 바꿨습니다.
