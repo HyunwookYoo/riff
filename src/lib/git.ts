@@ -520,6 +520,14 @@ export function submoduleShaAt(
   });
 }
 
+/**
+ * Whether `rev` names a commit in the repo at `path`. False for one this
+ * clone lacks, such as a pin made in another worktree's submodule store.
+ */
+export function hasCommit(path: string, rev: string): Promise<boolean> {
+  return invoke("has_commit", { path, rev });
+}
+
 export function addManualRepo(
   mainRepo: string,
   repo: string,

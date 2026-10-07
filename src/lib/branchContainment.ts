@@ -140,7 +140,8 @@ export function summarize(groups: VisibleGroup[], pair: ToolbarPair): Summary {
 }
 
 /// A Branch-mode repo tab's mark: what the commit table knows about the repo,
-/// in one glyph. `repoName`, `superName` and `pair` word a gap's tooltip.
+/// in one glyph. `repoName`, `superName` and `pair` word a gap's tooltip. A gap
+/// is `—`, except a repo whose clone lacks a ref, which is `!`.
 export function repoTabMark(
   range: RepoRange | undefined,
   group: BcGroup | undefined,
@@ -151,7 +152,10 @@ export function repoTabMark(
   if (!range) return null;
   if (!range.ok) {
     const line = scopeLine(range, repoName, superName, pair);
-    return { text: "—", tone: "muted", title: line.kind === "note" ? line.text : undefined };
+    const title = line.kind === "note" ? line.text : undefined;
+    return range.reason === "missing"
+      ? { text: "!", tone: "error", title }
+      : { text: "—", tone: "muted", title };
   }
   if (!group || group.status === "loading") {
     return { text: "…", tone: "muted", title: "reading commits…" };

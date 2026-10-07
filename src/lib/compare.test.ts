@@ -131,6 +131,47 @@ describe("compare", () => {
     ]);
   });
 
+  describe("the super repo's pointer row for a submodule", () => {
+    // main reports the submodule's pointer bump as a changed `sub` file; every
+    // other repo reports one real file.
+    beforeEach(() => {
+      vi.mocked(diffFiles).mockImplementation(async (...args) => {
+        const [path, , , , , onFile] = args;
+        onFile({
+          path: path === "/main" ? "sub" : "x.cpp",
+          old_path: null,
+          status: "modified",
+          repoIdx: 0,
+        } as ChangedFile);
+      });
+    });
+    const listed = () => appState.files.map((f) => [f.repoIdx, f.path]);
+
+    it("is dropped once the submodule's own files are listed", async () => {
+      vi.mocked(resolveRepoRanges).mockResolvedValue(allOk);
+      await compare();
+      expect(listed()).toEqual([
+        [1, "x.cpp"],
+        [2, "x.cpp"],
+      ]);
+    });
+
+    it("stays while the submodule can't be compared", async () => {
+      // The submodule has no group of its own then, so the pointer row is the
+      // only place its change shows.
+      vi.mocked(resolveRepoRanges).mockResolvedValue([
+        ok("/main", "main", "feature"),
+        { ok: false, reason: "missing", missing: { compare: "bbb", source: "gitlink" } },
+        ok("/manual", "main", "feature"),
+      ]);
+      await compare();
+      expect(listed()).toEqual([
+        [0, "sub"],
+        [2, "x.cpp"],
+      ]);
+    });
+  });
+
   it("remembers the ranges it listed, and none while it lists a picked commit", async () => {
     // loadBranchContainment re-lists when the ranges on screen differ (F7).
     vi.mocked(resolveRepoRanges).mockResolvedValue(allOk);

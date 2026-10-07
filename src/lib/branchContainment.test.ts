@@ -1135,6 +1135,16 @@ describe("repoTabMark", () => {
     });
   });
 
+  it("flags a repo whose clone lacks a commit, and says how to get it", () => {
+    expect(
+      mark({ ok: false, reason: "missing", missing: { compare: "b93f7d2c1d2e3f40", source: "gitlink" } }, undefined),
+    ).toEqual({
+      text: "!",
+      tone: "error",
+      title: "b93f7d2 (feature's pin) isn't in this clone of sub — fetch it, or it may only exist in another worktree",
+    });
+  });
+
   it("waits while the group loads, or before it exists", () => {
     expect(mark(ok, undefined)).toEqual(waiting);
     expect(mark(ok, group({ status: "loading", marks: null }))).toEqual(waiting);

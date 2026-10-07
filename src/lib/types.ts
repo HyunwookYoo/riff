@@ -324,6 +324,7 @@ export type RangeGap =
   | "added"
   | "removed"
   | "absent"
+  | "missing"
   | "error";
 
 /// One repo's base/compare pair, or the reason it has none. For a `gitlink`
@@ -338,7 +339,15 @@ export type RepoRange =
       compare: string;
       source: RangeSource;
     }
-  | { ok: false; reason: RangeGap; pin?: string; message?: string };
+  | {
+      ok: false;
+      reason: RangeGap;
+      pin?: string;
+      message?: string;
+      /// "missing": the refs this repo's clone lacks, by side, and where the
+      /// range came from (wording differs for pins, own branches, same names).
+      missing?: { base?: string; compare?: string; source: RangeSource };
+    };
 
 export interface BlameCommit {
   sha: string;

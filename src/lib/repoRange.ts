@@ -1,6 +1,45 @@
 import { appState } from "./store.svelte";
-import { submoduleShaAt } from "./git";
-import type { RepoEntry, RepoRange } from "./types";
+import { hasCommit, submoduleShaAt } from "./git";
+import type { RangeSource, RepoEntry, RepoRange } from "./types";
+
+/// Git's empty tree (SHA-1): the "before" side of a root commit's diff. Every
+/// repo can diff from it, though it is no commit for `hasCommit` to find.
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+function inClone(path: string, ref: string): Promise<boolean> {
+  return ref === EMPTY_TREE ? Promise.resolve(true) : hasCommit(path, ref);
+}
+
+/// The ok range for a non-main repo's two refs once both exist in the repo's
+/// own clone; otherwise a `missing` gap naming those that don't (a branch made
+/// in another git worktree can pin a commit only that worktree's store has).
+async function rangeIfPresent(
+  path: string,
+  base: string,
+  compare: string,
+  source: RangeSource,
+): Promise<RepoRange> {
+  let baseHere: boolean;
+  let compareHere: boolean;
+  try {
+    [baseHere, compareHere] = await Promise.all([
+      inClone(path, base),
+      inClone(path, compare),
+    ]);
+  } catch (e) {
+    return { ok: false, reason: "error", message: String(e) };
+  }
+  if (baseHere && compareHere) return { ok: true, path, base, compare, source };
+  return {
+    ok: false,
+    reason: "missing",
+    missing: {
+      ...(baseHere ? {} : { base }),
+      ...(compareHere ? {} : { compare }),
+      source,
+    },
+  };
+}
 
 /// Resolve which two refs `repo` compares, and why. `base` / `compare` are the
 /// toolbar pair (the super repo's), `mainPath` the super repo whose gitlinks
@@ -19,17 +58,11 @@ export async function resolveRepoRange(
   if (repo.override) {
     const { startBranch, targetBranch } = repo.override;
     if (!startBranch || !targetBranch) return { ok: false, reason: "no-refs" };
-    return {
-      ok: true,
-      path: repo.path,
-      base: startBranch,
-      compare: targetBranch,
-      source: "override",
-    };
+    return rangeIfPresent(repo.path, startBranch, targetBranch, "override");
   }
   if (!base || !compare) return { ok: false, reason: "no-refs" };
   if (repo.kind === "manual") {
-    return { ok: true, path: repo.path, base, compare, source: "same-name" };
+    return rangeIfPresent(repo.path, base, compare, "same-name");
   }
   if (!repo.parentGitlinkPath) return { ok: false, reason: "absent" };
   let basePin: string | null;
@@ -48,13 +81,7 @@ export async function resolveRepoRange(
   if (basePin === comparePin) {
     return { ok: false, reason: "unchanged", pin: basePin };
   }
-  return {
-    ok: true,
-    path: repo.path,
-    base: basePin,
-    compare: comparePin,
-    source: "gitlink",
-  };
+  return rangeIfPresent(repo.path, basePin, comparePin, "gitlink");
 }
 
 /// The repos a resolution covers: the workspace, or main alone before the

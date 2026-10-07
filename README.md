@@ -60,13 +60,15 @@ Working Copy와 Graph는 좌측 사이드바의 **Working Copy / Graph** 네비(
 |---|---|---|
 | **main** | 툴바의 base ← compare 그대로 | `git diff HEAD` |
 | **submodule** | main의 base / compare가 고정한 gitlink SHA 두 개를 비교 (GitHub PR과 동일 의미). 그룹 헤더에 `pinned by <main>: <sha> ← <sha>` 로 표시 | submodule 자체의 `git diff HEAD` |
-| **manual** | main과 같은 이름의 branch를 자동 매칭 (`same names: …`). 없으면 그 그룹에 오류 표시 | 해당 repo의 `git diff HEAD` |
+| **manual** | main과 같은 이름의 branch를 자동 매칭 (`same names: …`). 없으면 그룹 헤더에 `not in this clone: …`, 탭에 `!` 가 뜨고 툴팁이 이유를 알려줍니다 | 해당 repo의 `git diff HEAD` |
 
 파일 리스트와 blame 피커는 모두 **repo별 collapsible 그룹 헤더**로 묶여 표시됩니다. 그룹 헤더의:
 - **caret(▾/▸)이나 이름** 클릭 → 그 그룹만 접고 펴기 (`↑`/`↓` 이동에서 접힌 그룹은 건너뜀)
 - (파일 리스트만) 오른쪽 끝 **`→`** 클릭 → **Focus 모드** 진입. 그 repo만 보이게 되고, 같은 자리의 `←` 또는 `Esc`로 해제.
 
 Branch 모드에서는 툴바 아래 **repo 탭 줄**이 같은 일을 합니다. 맨 앞 **All repos** 탭이 전체 보기이고, repo 탭을 누르면 그 repo에 Focus합니다. 탭마다 커밋 표의 상태가 붙습니다: `● N` base에 없는 커밋 N개 · `✓` 전부 들어감 · `…` 읽는 중 · `—` 비교할 범위 없음(툴팁에 이유) · `!` 읽지 못함. 이 탭은 드래그로 순서를 바꿀 수 없습니다.
+
+submodule이 고정한 커밋이나 고른 브랜치가 이 체크아웃의 저장소에 없으면(예: 다른 git worktree에서 만든 커밋) 그 repo는 비교하지 않고, 그룹 헤더에 `not in this clone: <sha>`, 탭에 `!`를 띄웁니다. 위치 줄과 탭 툴팁이 원인과 해결 방법(fetch하거나, 그 worktree를 열기)을 알려주고, super repo의 파일 목록에는 그 submodule의 포인터 변경(`Subproject commit …`)이 남습니다.
 
 Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일이 속한 repo에서 blame이 수행되고, drill-in으로 들어간 커밋도 자동으로 해당 repo로 Focus됩니다 (`Esc` 로 원래 멀티 루트 뷰 복원).
 

@@ -96,16 +96,12 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
   // submodule mods as `M\t<path>` in name-status output). Drop it ONLY when the
   // submodule's own group is also rendered this pass — that group shows the real
   // change set, so the gitlink row would be a broken duplicate. When the
-  // submodule is focused-out (e.g. the graph's per-commit view on main), keep
-  // the gitlink so the bump still shows as "Subproject commit a→b" instead of
-  // vanishing — file_diff renders that pointer move and never reads the dir.
-  const submoduleGitlinkPaths = new Set(
-    appState.repos
-      .filter(
-        (r, i) => r.kind === "submodule" && r.parentGitlinkPath && willScan(i),
-      )
-      .map((r) => r.parentGitlinkPath!),
-  );
+  // submodule is focused-out (e.g. the graph's per-commit view on main), or has
+  // no range to compare (missing, added, removed, error), keep the gitlink so
+  // the bump still shows as "Subproject commit a→b" instead of vanishing —
+  // file_diff renders that pointer move and never reads the dir. Filled once
+  // the ranges resolve, before the first file arrives.
+  let submoduleGitlinkPaths = new Set<string>();
 
   // C: batch file arrivals. Per-file `appState.files.push(...)` triggers
   // Svelte 5 reactivity for each push — with 100+ files that's 100+ reactive
@@ -176,6 +172,19 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
     if (session === compareSession) {
       listedKey = drill ? null : JSON.stringify(ranges);
     }
+    // A picked commit is diffed on its own, whatever the ranges say; otherwise
+    // the submodule's group is rendered only when its range is ok.
+    submoduleGitlinkPaths = new Set(
+      repos
+        .filter(
+          (r, i) =>
+            r.kind === "submodule" &&
+            r.parentGitlinkPath &&
+            willScan(i) &&
+            (drill || ranges[i]?.ok),
+        )
+        .map((r) => r.parentGitlinkPath!),
+    );
     // Sequential per-repo. The Rust `GitCli` keeps a single
     // `Mutex<Option<Session>>` slot so parallel calls with different
     // paths would thrash and drop each others' children mid-stream.

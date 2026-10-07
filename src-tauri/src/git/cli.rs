@@ -2077,6 +2077,11 @@ impl GitLayer for GitCli {
         parse_gitlink_sha(&stdout)
     }
 
+    fn has_commit(&self, path: &Path, rev: &str) -> Result<bool, GitError> {
+        validate_ref(rev)?;
+        Ok(gitlink_sha(path, &format!("{rev}^{{commit}}")).is_some())
+    }
+
     fn containment(
         &self,
         path: &Path,
@@ -3604,6 +3609,24 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
             }
             other => panic!("expected a text diff, got {other:?}"),
         }
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn has_commit_tells_a_commit_here_from_one_this_clone_lacks() {
+        // A gitlink may pin a commit that only another worktree's submodule
+        // store has, and a full SHA parses whether or not its object exists —
+        // so the check has to read the object, not just resolve the name.
+        let repo = temp_repo("has-commit");
+        let cli = GitCli::new();
+        let seed = rev_parse(&repo, "HEAD");
+
+        assert!(cli.has_commit(&repo, &seed).unwrap());
+        assert!(!cli
+            .has_commit(&repo, "0123456789abcdef0123456789abcdef01234567")
+            .unwrap());
+        assert!(!cli.has_commit(&repo, "no-such-branch").unwrap());
 
         let _ = fs::remove_dir_all(&repo);
     }

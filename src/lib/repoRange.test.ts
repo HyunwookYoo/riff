@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// repoRange.ts reads the runes store and calls one Tauri binding; both are
+// repoRange.ts reads the runes store and calls two Tauri bindings; all are
 // stubbed. Specifiers resolve relative to this file (src/lib).
 vi.mock("./store.svelte", () => ({
   appState: {
@@ -12,7 +12,7 @@ vi.mock("./store.svelte", () => ({
     repoRanges: [],
   },
 }));
-vi.mock("./git", () => ({ submoduleShaAt: vi.fn() }));
+vi.mock("./git", () => ({ submoduleShaAt: vi.fn(), hasCommit: vi.fn() }));
 
 import {
   resetRepoRanges,
@@ -20,7 +20,7 @@ import {
   resolveRepoRanges,
 } from "./repoRange";
 import { appState } from "./store.svelte";
-import { submoduleShaAt } from "./git";
+import { hasCommit, submoduleShaAt } from "./git";
 import type { RepoEntry } from "./types";
 
 const main: RepoEntry = { path: "/main", kind: "main", displayName: "main" };
@@ -38,6 +38,9 @@ const manual: RepoEntry = {
 
 beforeEach(() => {
   vi.mocked(submoduleShaAt).mockReset();
+  // Every ref exists in its clone unless a test says otherwise.
+  vi.mocked(hasCommit).mockReset();
+  vi.mocked(hasCommit).mockResolvedValue(true);
   resetRepoRanges();
   appState.repos = [];
   appState.repoPath = "";
@@ -172,6 +175,105 @@ describe("resolveRepoRange", () => {
     expect(await resolveRepoRange(manual, "/main", "", "feature")).toEqual({
       ok: false,
       reason: "no-refs",
+    });
+  });
+
+  it("reports missing when the clone lacks a commit the super repo pins", async () => {
+    // A branch made in another git worktree pins a commit that only that
+    // worktree's submodule store has.
+    vi.mocked(submoduleShaAt)
+      .mockResolvedValueOnce("aaa")
+      .mockResolvedValueOnce("bbb");
+    vi.mocked(hasCommit).mockImplementation(async (_path, rev) => rev !== "bbb");
+    expect(await resolveRepoRange(sub, "/main", "main", "feature")).toEqual({
+      ok: false,
+      reason: "missing",
+      missing: { compare: "bbb", source: "gitlink" },
+    });
+    expect(hasCommit).toHaveBeenCalledWith("/main/sub", "aaa");
+    expect(hasCommit).toHaveBeenCalledWith("/main/sub", "bbb");
+  });
+
+  it("names both pins when the clone lacks both", async () => {
+    vi.mocked(submoduleShaAt)
+      .mockResolvedValueOnce("aaa")
+      .mockResolvedValueOnce("bbb");
+    vi.mocked(hasCommit).mockResolvedValue(false);
+    expect(await resolveRepoRange(sub, "/main", "main", "feature")).toEqual({
+      ok: false,
+      reason: "missing",
+      missing: { base: "aaa", compare: "bbb", source: "gitlink" },
+    });
+  });
+
+  it("reports missing when a repo's own compare branch isn't in its clone", async () => {
+    const r: RepoEntry = {
+      ...sub,
+      override: { startBranch: "develop", targetBranch: "feature/y" },
+    };
+    vi.mocked(hasCommit).mockImplementation(async (_path, rev) => rev !== "feature/y");
+    expect(await resolveRepoRange(r, "/main", "main", "feature")).toEqual({
+      ok: false,
+      reason: "missing",
+      missing: { compare: "feature/y", source: "override" },
+    });
+    expect(hasCommit).toHaveBeenCalledWith("/main/sub", "develop");
+    expect(hasCommit).toHaveBeenCalledWith("/main/sub", "feature/y");
+  });
+
+  it("reports missing when a manual repo lacks the toolbar's base", async () => {
+    vi.mocked(hasCommit).mockImplementation(async (_path, rev) => rev !== "main");
+    expect(await resolveRepoRange(manual, "/main", "main", "feature")).toEqual({
+      ok: false,
+      reason: "missing",
+      missing: { base: "main", source: "same-name" },
+    });
+  });
+
+  it("accepts git's empty tree as a root commit's base, though it is no commit", async () => {
+    // The graph diffs a root commit from the empty tree, as git itself does.
+    const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    const r: RepoEntry = {
+      ...sub,
+      override: { startBranch: emptyTree, targetBranch: "c0ffee1" },
+    };
+    vi.mocked(hasCommit).mockImplementation(async (_path, rev) => rev !== emptyTree);
+    expect(await resolveRepoRange(r, "/main", "main", "feature")).toEqual({
+      ok: true,
+      path: "/main/sub",
+      base: emptyTree,
+      compare: "c0ffee1",
+      source: "override",
+    });
+  });
+
+  it("never checks the main repo's refs", async () => {
+    await resolveRepoRange(main, "/main", "main", "feature");
+    expect(hasCommit).not.toHaveBeenCalled();
+  });
+
+  it("checks no refs for a repo whose gap is decided before they are known", async () => {
+    await resolveRepoRange(manual, "/main", "", "feature");
+    for (const [basePin, comparePin] of [
+      ["aaa", "aaa"],
+      [null, "bbb"],
+      ["aaa", null],
+      [null, null],
+    ]) {
+      vi.mocked(submoduleShaAt)
+        .mockResolvedValueOnce(basePin)
+        .mockResolvedValueOnce(comparePin);
+      expect((await resolveRepoRange(sub, "/main", "main", "feature")).ok).toBe(false);
+    }
+    expect(hasCommit).not.toHaveBeenCalled();
+  });
+
+  it("reports an error with its message when the existence check throws", async () => {
+    vi.mocked(hasCommit).mockRejectedValue("bad rev");
+    expect(await resolveRepoRange(manual, "/main", "main", "feature")).toEqual({
+      ok: false,
+      reason: "error",
+      message: "bad rev",
     });
   });
 });

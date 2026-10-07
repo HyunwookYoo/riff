@@ -35,6 +35,19 @@ export function sideNames(
   return { base: shortRef(range.base), compare: shortRef(range.compare) };
 }
 
+/// The sides of a "missing" gap, base first: each ref the repo's clone lacks,
+/// shortened, with the toolbar ref (shortened) that picked that side.
+function missingSides(
+  range: Extract<RepoRange, { ok: false }>,
+  pair: ToolbarPair,
+): { ref: string; picked: string }[] {
+  const { base, compare } = range.missing ?? {};
+  const sides = [];
+  if (base) sides.push({ ref: shortRef(base), picked: shortRef(pair.base) });
+  if (compare) sides.push({ ref: shortRef(compare), picked: shortRef(pair.compare) });
+  return sides;
+}
+
 /// The range line of a repo's group header, shared by the commit table and
 /// the file list. `superName` is the super repo's display name.
 export function rangeLabel(
@@ -68,6 +81,8 @@ export function rangeLabel(
       return `not in ${compare} (removed)`;
     case "absent":
       return `not in ${base} or ${compare}`;
+    case "missing":
+      return `not in this clone: ${missingSides(range, pair).map((s) => s.ref).join(" and ")}`;
     case "error":
       return `couldn't resolve: ${range.message ?? "unknown error"}`;
   }
@@ -131,6 +146,26 @@ export function scopeLine(
       return { kind: "note", text: `removed in ${compare}: only ${sup} ${base} has ${repoName}` };
     case "absent":
       return { kind: "note", text: `not in ${sup} ${base} or ${compare}` };
+    case "missing": {
+      const source = range.missing?.source;
+      const sides = missingSides(range, pair);
+      if (source === "same-name") {
+        const refs = sides.map((s) => s.ref).join(" or ");
+        return { kind: "note", text: `${repoName} has no ${refs} — pick its own branches` };
+      }
+      // A pin is a bare SHA: name it after the super ref that set it.
+      const names = sides.map((s) =>
+        source === "gitlink" ? `${s.ref} (${possessive(s.picked)} pin)` : s.ref,
+      );
+      const [verb, advice] =
+        names.length === 1
+          ? ["isn't", "fetch it, or it may"]
+          : ["aren't", "fetch them, or they may"];
+      return {
+        kind: "note",
+        text: `${names.join(" and ")} ${verb} in this clone of ${repoName} — ${advice} only exist in another worktree`,
+      };
+    }
     case "error":
       return { kind: "note", text: `couldn't resolve: ${range.message ?? "unknown error"}` };
   }

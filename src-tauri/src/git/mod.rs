@@ -575,4 +575,6 @@ pub trait GitLayer {
         tree_ish: &str,
         submodule_path: &str,
     ) -> Result<Option<String>, GitError>;
+    /// Whether `rev` names a commit in the repo at `path`.
+    fn has_commit(&self, path: &Path, rev: &str) -> Result<bool, GitError>;
 }
