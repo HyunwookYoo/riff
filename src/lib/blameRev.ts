@@ -76,17 +76,22 @@ export function blameRevFor(rev: BlameRev | null, target: RepoFile | null): Blam
 /// MergeView's own default scan limit.
 const DIFF_LIMITS = { scanLimit: 500, timeout: 200 };
 
+/// Bumped by each `blameBefore`; only the latest one in flight goes through.
+let beforeSeq = 0;
+
 /// "Blame before this": push the current view and re-blame the file at
 /// `commit`'s parent, scrolled to where line `lineInCommit` (its number in the
 /// commit's version) sat before the commit. Does nothing for a commit that
 /// added the file. When either version can't be read the line falls back to
-/// the commit's own number; the view clamps it.
+/// the commit's own number; the view clamps it. A step overtaken by another,
+/// or by leaving Blame or its file, during the reads does nothing.
 export async function blameBefore(commit: BlameCommit, lineInCommit: number): Promise<void> {
   const prev = commit.previous;
   const target = appState.blameTarget;
   if (!prev || !target) return;
   const repoPath = appState.repos[target.repoIdx]?.path;
   if (!repoPath) return;
+  const mine = ++beforeSeq;
   let line = lineInCommit;
   try {
     const [oldText, newText] = await Promise.all([
@@ -96,6 +101,15 @@ export async function blameBefore(commit: BlameCommit, lineInCommit: number): Pr
     line = mapLineBack(oldText, newText, diff(oldText, newText, DIFF_LIMITS), lineInCommit);
   } catch {
     // Keep the commit's own number.
+  }
+  const now = appState.blameTarget;
+  if (
+    mine !== beforeSeq ||
+    appState.appMode !== "blame" ||
+    now?.repoIdx !== target.repoIdx ||
+    now.path !== target.path
+  ) {
+    return;
   }
   appState.history.push(snapshot());
   appState.forwardHistory = [];

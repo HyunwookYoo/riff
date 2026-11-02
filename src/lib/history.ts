@@ -50,6 +50,9 @@ function restoreOverrides(
   if (mutated) appState.repos = next;
 }
 
+/** Bumped by each drill; only the latest one in flight goes through. */
+let drillSeq = 0;
+
 /**
  * Push the current context and open one commit from Blame mode as the commit
  * view: a two-dot Branch compare of `parent..commit` that the Branch screen
@@ -63,7 +66,8 @@ function restoreOverrides(
  * `from` is the blamed file at that commit and the blamed line's number
  * there; the drill selects that file and DiffView scrolls to the line.
  *
- * When the commit can't be read nothing is pushed and Blame stays.
+ * When the commit can't be read nothing is pushed and Blame stays. A drill
+ * overtaken by another, or by leaving Blame, during the read does nothing.
  */
 export async function pushAndDrillToCommit(
   sha: string,
@@ -75,6 +79,7 @@ export async function pushAndDrillToCommit(
       ? repoIdx
       : 0;
   const repoPath = appState.repos[idx]?.path ?? appState.repoPath;
+  const mine = ++drillSeq;
   let commit: Commit | undefined;
   try {
     [commit] = await commitLog(repoPath, sha, false, 1, 0);
@@ -82,6 +87,7 @@ export async function pushAndDrillToCommit(
     appState.error = `couldn't open commit ${sha}: ${String(e)}`;
     return;
   }
+  if (mine !== drillSeq || appState.appMode !== "blame") return;
   if (!commit) {
     appState.error = `couldn't open commit ${sha}: not found`;
     return;

@@ -82,6 +82,7 @@ describe("blameBefore", () => {
   beforeEach(() => {
     Object.assign(appState, {
       repos: [{ path: "/main", kind: "main", displayName: "main" }],
+      appMode: "blame",
       blameTarget: target,
       blameRev: null,
       history: [],
@@ -130,6 +131,30 @@ describe("blameBefore", () => {
     expect(Number.isInteger(line)).toBe(true);
     expect(line).toBeGreaterThanOrEqual(1);
     expect(line).toBeLessThanOrEqual(n);
+  });
+
+  it("pushes one frame when activated twice during the reads", async () => {
+    vi.mocked(readFileAt).mockResolvedValue("a\n");
+    await Promise.all([blameBefore(commit, 1), blameBefore(commit, 1)]);
+    expect(appState.history).toEqual([{ tag: "snap" }]);
+  });
+
+  it("pushes nothing when Blame is left during the reads", async () => {
+    vi.mocked(readFileAt).mockResolvedValue("a\n");
+    const step = blameBefore(commit, 1);
+    appState.appMode = "compare";
+    await step;
+    expect(appState.history).toEqual([]);
+    expect(appState.blameRev).toBeNull();
+  });
+
+  it("pushes nothing when another file is blamed during the reads", async () => {
+    vi.mocked(readFileAt).mockResolvedValue("a\n");
+    const step = blameBefore(commit, 1);
+    appState.blameTarget = { repoIdx: 0, path: "other.md" };
+    await step;
+    expect(appState.history).toEqual([]);
+    expect(appState.blameRev).toBeNull();
   });
 
   it("does nothing for a commit that added the file", async () => {

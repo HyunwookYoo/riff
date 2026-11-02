@@ -183,6 +183,29 @@ describe("the Blame drill-in", () => {
     expect(commitViewActive()).toBe(false);
   });
 
+  it("pushes one frame when activated twice during the read", async () => {
+    await Promise.all([
+      pushAndDrillToCommit("a1", 0, null),
+      pushAndDrillToCommit("b1", 0, null),
+    ]);
+    expect(appState.history).toHaveLength(1);
+    expect(appState.history[0].appMode).toBe("blame");
+    expect(appState.targetBranch).toBe("b1-full");
+    expect(compare).toHaveBeenCalledTimes(1);
+  });
+
+  it("pushes nothing when Blame is left during the read", async () => {
+    let finish!: (c: Commit[]) => void;
+    vi.mocked(commitLog).mockReturnValue(new Promise((r) => (finish = r)));
+    const drill = pushAndDrillToCommit("a1", 0, null);
+    appState.appMode = "compare";
+    finish([commit("a1-full", ["p0-full"])]);
+    await drill;
+    expect(appState.history).toHaveLength(0);
+    expect(appState.commitView).toBeNull();
+    expect(compare).not.toHaveBeenCalled();
+  });
+
   it("drops the commit view when another repo tab is picked", async () => {
     await pushAndDrillToCommit("s1", 1, null);
     expect(commitViewActive()).toBe(true);
@@ -191,6 +214,7 @@ describe("the Blame drill-in", () => {
     appState.activeRepoIdx = 1;
     expect(commitViewActive()).toBe(true);
 
+    popHistory();
     await pushAndDrillToCommit("a0339e32", 0, null);
     expect(appState.activeRepoIdx).toBe(0);
     expect(commitViewActive()).toBe(true);
