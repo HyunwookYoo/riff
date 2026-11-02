@@ -20,8 +20,11 @@
     expanded = false;
   });
 
+  // `YYYY-MM-DD HH:MM`, local time.
   function fullDate(unixSec: number): string {
-    return new Date(unixSec * 1000).toLocaleString();
+    const d = new Date(unixSec * 1000);
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 </script>
 
