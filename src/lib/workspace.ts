@@ -242,6 +242,9 @@ export async function loadMainRepo(
   appState.blameTarget = null;
   appState.blameRev = null;
   appState.commitView = null;
+  // Back/Forward frames restore the old repo's blame and commit view.
+  appState.history = [];
+  appState.forwardHistory = [];
   // History browser's commit log belongs to the old repo — drop it.
   resetHistory();
   resetWorkingCopy();

@@ -7,11 +7,11 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 vi.mock("./store.svelte", () => ({
   appState: { repos: [], startBranch: "", targetBranch: "" },
 }));
-vi.mock("./git", () => ({}));
+vi.mock("./git", () => ({ validateRepo: vi.fn().mockRejectedValue("not a repo") }));
 vi.mock("./compare", () => ({}));
-vi.mock("./blameCache", () => ({}));
+vi.mock("./blameCache", () => ({ clearBlameCache: vi.fn() }));
 
-import { repoPathFor } from "./workspace";
+import { loadMainRepo, repoPathFor } from "./workspace";
 import { appState } from "./store.svelte";
 
 beforeEach(() => {
@@ -36,5 +36,19 @@ describe("repoPathFor", () => {
   it("returns null when the repoIdx no longer exists", () => {
     appState.repos = [];
     expect(repoPathFor({ repoIdx: 3, path: "x.rs" })).toBeNull();
+  });
+});
+
+describe("loadMainRepo", () => {
+  it("drops the previous repo's Back and Forward stacks", async () => {
+    // The frames restore the old repo's blame and commit view.
+    appState.history = [{ appMode: "blame" } as never];
+    appState.forwardHistory = [{ appMode: "compare" } as never];
+    // The open itself fails (validateRepo rejects); the reset before it is
+    // what this checks.
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await loadMainRepo("/other", { silent: true });
+    expect(appState.history).toEqual([]);
+    expect(appState.forwardHistory).toEqual([]);
   });
 });
