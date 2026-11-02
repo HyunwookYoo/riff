@@ -466,7 +466,12 @@
     return a.repoIdx === b.repoIdx && a.path === b.path;
   }
 
+  // Bumped by each load; a load that is no longer the latest stops — a theme
+  // change reloads the same target and revision, so those can't tell.
+  let loadSeq = 0;
+
   async function load(target: RepoFile, rev: BlameRev | null) {
+    const mine = ++loadSeq;
     teardownEditor();
     fileText = null;
     loadError = null;
@@ -479,6 +484,7 @@
     const revKey = rev?.rev ?? "HEAD";
     const filePath = rev?.path ?? target.path;
     const current = () =>
+      mine === loadSeq &&
       sameTarget(appState.blameTarget, target) &&
       blameRevFor(appState.blameRev, appState.blameTarget) === rev;
 
@@ -490,7 +496,8 @@
       blameData = cached.blame;
       blameLoading = false;
       await tick();
-      await mountEditor(filePath, cached.fileText);
+      await mountEditor(filePath, cached.fileText, current);
+      if (!current()) return;
       revealRevLine(rev);
       return;
     }
@@ -530,7 +537,8 @@
     blameLoading = false;
     setBlameCache(target.repoIdx, filePath, revKey, { fileText: text, blame });
     await tick();
-    await mountEditor(filePath, text);
+    await mountEditor(filePath, text, current);
+    if (!current()) return;
     revealRevLine(rev);
   }
 
@@ -545,10 +553,13 @@
     });
   }
 
-  async function mountEditor(path: string, text: string) {
+  // `current` is the calling load's staleness check: a load superseded while
+  // shiki was loading must not mount a second editor beside the newer one.
+  async function mountEditor(path: string, text: string, current: () => boolean) {
     if (!host) return;
     const dark = isDarkMode();
     const syntax = await shikiExtension(text, detectLanguage(path), dark);
+    if (!current()) return;
     const exts: Extension[] = [
       // readOnly (not just editable=false) hides the Replace fields in the
       // Ctrl+F search panel — this app is a viewer, replace is dead weight.
