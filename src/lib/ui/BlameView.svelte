@@ -37,6 +37,8 @@
   } from "./pathTree";
   import PathTreeNode from "./PathTreeNode.svelte";
   import Dropdown from "./Dropdown.svelte";
+  import { relativeDate } from "./relativeDate";
+  import { showToast } from "./toast";
 
   let host: HTMLDivElement;
   let searchInput: HTMLInputElement;
@@ -620,29 +622,6 @@
     const hue = parseInt(sha.slice(0, 6), 16) % 360;
     const dark = appState.effectiveTheme === "dark";
     return dark ? `hsl(${hue}, 55%, 55%)` : `hsl(${hue}, 65%, 50%)`;
-  }
-
-  function relativeDate(unixSec: number): string {
-    const diff = Date.now() / 1000 - unixSec;
-    if (diff < 60) return "just now";
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
-    if (diff < 2592000) return `${Math.floor(diff / 604800)}w ago`;
-    if (diff < 31536000) return `${Math.floor(diff / 2592000)}mo ago`;
-    return `${Math.floor(diff / 31536000)}y ago`;
-  }
-
-  function showToast(msg: string) {
-    const t = document.createElement("div");
-    t.className = "blame-toast";
-    t.textContent = msg;
-    document.body.appendChild(t);
-    requestAnimationFrame(() => t.classList.add("show"));
-    setTimeout(() => {
-      t.classList.remove("show");
-      setTimeout(() => t.remove(), 250);
-    }, 1500);
   }
 
   // ---- CodeMirror extensions (closures over component-local state) ----

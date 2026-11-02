@@ -4,6 +4,7 @@
   import { appState } from "$lib/store.svelte";
   import { compare } from "$lib/compare";
   import { clearPick } from "$lib/branchContainment";
+  import { commitViewActive } from "$lib/history";
   import {
     enterGraphView,
     restoreCompareContext,
@@ -30,6 +31,7 @@
   }
   import { loadMainRepo } from "$lib/workspace";
   import BranchModeFields from "./BranchModeFields.svelte";
+  import CommitViewFields from "./CommitViewFields.svelte";
   import BranchPicker from "./BranchPicker.svelte";
   import Dropdown from "./Dropdown.svelte";
   import RepoChip from "./RepoChip.svelte";
@@ -163,7 +165,11 @@
   {/if}
 
   {#if appState.appMode === "compare"}
-    <BranchModeFields />
+    {#if commitViewActive()}
+      <CommitViewFields />
+    {:else}
+      <BranchModeFields />
+    {/if}
   {/if}
 
   {#if appState.appMode === "history"}
@@ -214,7 +220,7 @@
 
   <UnrealSettings />
 
-  {#if appState.appMode === "compare"}
+  {#if appState.appMode === "compare" && !commitViewActive()}
     <button
       class="primary"
       onclick={() => {

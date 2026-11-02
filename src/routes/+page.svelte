@@ -6,6 +6,7 @@
   import FileList from "$lib/ui/FileList.svelte";
   import CommitList from "$lib/ui/CommitList.svelte";
   import CommitDetail from "$lib/ui/CommitDetail.svelte";
+  import CommitCard from "$lib/ui/CommitCard.svelte";
   import CommitTable from "$lib/ui/CommitTable.svelte";
   import FilesScope from "$lib/ui/FilesScope.svelte";
   import WorkingCopyList from "$lib/ui/WorkingCopyList.svelte";
@@ -39,7 +40,7 @@
     setChangesRepo,
     workingCopyOrder,
   } from "$lib/workingCopy";
-  import { popHistory, redoHistory } from "$lib/history";
+  import { commitViewActive, popHistory, redoHistory } from "$lib/history";
   import { enterFocus, exitFocus } from "$lib/focus";
   import { cycleTab, selectTab } from "$lib/tabs";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
@@ -98,6 +99,8 @@
   const headerRange = $derived.by(() => {
     const f = appState.selectedFile;
     if (appState.appMode !== "compare" || !f) return null;
+    // The commit view names its commit once, in the toolbar.
+    if (commitViewActive()) return null;
     const idx = f.repoIdx ?? 0;
     const d = appState.bcDiffRange;
     return diffRangeText(
@@ -516,7 +519,7 @@
   {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
     <TabBar />
   {/if}
-  {#if appState.appMode === "compare" && appState.workspaceLayout === "unified" && appState.repos.length > 1}
+  {#if appState.appMode === "compare" && appState.workspaceLayout === "unified" && appState.repos.length > 1 && !commitViewActive()}
     <!-- Unified's way into one repo: the strip Working Copy and History use,
          plus All repos. Reordering is off: Branch mode keys its per-repo state
          by index. -->
@@ -529,7 +532,7 @@
       reorderable={false}
     />
   {/if}
-  {#if appState.appMode === "compare"}
+  {#if appState.appMode === "compare" && !commitViewActive()}
     <ScopeBar />
   {/if}
   {#if appState.repos.length > 1 && appState.appMode === "history"}
@@ -685,12 +688,18 @@
     {:else}
       <div
         class="branch-col"
-        class:collapsed={appState.commitTableCollapsed}
+        class:collapsed={appState.commitTableCollapsed && !commitViewActive()}
         bind:this={branchColEl}
         style="--ct-h: {appState.commitTableHeight}px;"
       >
-        <div class="ct-pane"><CommitTable /></div>
-        {#if !appState.commitTableCollapsed}
+        <div class="ct-pane">
+          {#if commitViewActive()}
+            <CommitCard />
+          {:else}
+            <CommitTable />
+          {/if}
+        </div>
+        {#if !appState.commitTableCollapsed || commitViewActive()}
           <div
             class="ct-resizer"
             role="separator"

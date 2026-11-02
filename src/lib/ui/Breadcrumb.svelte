@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { popHistory } from "$lib/history";
+  import { commitViewActive, popHistory } from "$lib/history";
   import { diffModeName, pairLabel } from "$lib/rangeText";
   import type { DiffMode } from "$lib/types";
 
@@ -14,11 +14,14 @@
 
   function previousLabel(): string | null {
     const prev = appState.history[appState.history.length - 1];
-    return prev ? ctxLabel(prev.startBranch, prev.targetBranch, prev.mode) : null;
+    // A frame with no pair (e.g. Blame before any compare) has nothing to name.
+    return prev && prev.startBranch && prev.targetBranch
+      ? ctxLabel(prev.startBranch, prev.targetBranch, prev.mode)
+      : null;
   }
 </script>
 
-{#if appState.history.length > 0}
+{#if appState.history.length > 0 && appState.appMode === "compare" && !commitViewActive()}
   <div class="breadcrumb">
     <button type="button" class="back" onclick={popHistory} title="Back (Esc)">
       ← Back

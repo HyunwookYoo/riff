@@ -5,6 +5,7 @@
   import { MergeView, unifiedMergeView, Change } from "@codemirror/merge";
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
+  import { commitViewActive } from "$lib/history";
   import { changesFileDiff, fileDiff, setUeVersionForRepo } from "$lib/git";
   import { resolveRepoRanges } from "$lib/repoRange";
   import { paneLabels } from "$lib/rangeText";
@@ -106,6 +107,7 @@
   const labels = $derived.by(() => {
     const f = appState.selectedFile;
     if (appState.appMode !== "compare" || !f) return null;
+    if (commitViewActive()) return { left: "before", right: "after" };
     const idx = f.repoIdx ?? 0;
     const d = appState.bcDiffRange;
     const drill =
@@ -371,13 +373,25 @@
       setActiveDiffView(unifiedView);
     }
 
-    // §14.2 Step 7: restore the scroll position saved when the user last
-    // left this file's tab. Only applies when this file matches the tab's
-    // remembered file — switching to a different file resets to top.
-    const mem = appState.tabMemory.get(file.repoIdx ?? 0);
-    if (mem?.filePath === file.path && typeof mem.scrollPos === "number") {
-      const view = mergeView?.b ?? unifiedView;
+    // A Blame drill-in names the line it came from: scroll the after side to
+    // it once (it is a line the commit changed, so never in a collapsed run).
+    // Otherwise §14.2 Step 7: restore the scroll position saved when the user
+    // last left this file's tab. Only applies when this file matches the
+    // tab's remembered file — switching to a different file resets to top.
+    const reveal = appState.revealLine;
+    const view = mergeView?.b ?? unifiedView;
+    if (reveal && reveal.path === file.path && reveal.repoIdx === (file.repoIdx ?? 0)) {
+      appState.revealLine = null;
       if (view) {
+        const n = Math.min(Math.max(1, reveal.line), view.state.doc.lines);
+        const pos = view.state.doc.line(n).from;
+        requestAnimationFrame(() => {
+          view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "center" }) });
+        });
+      }
+    } else {
+      const mem = appState.tabMemory.get(file.repoIdx ?? 0);
+      if (mem?.filePath === file.path && typeof mem.scrollPos === "number" && view) {
         const top = mem.scrollPos;
         requestAnimationFrame(() => {
           view.scrollDOM.scrollTop = top;
