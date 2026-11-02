@@ -415,6 +415,16 @@ async fn has_commit(
 }
 
 #[tauri::command]
+async fn read_file_at(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    rev: String,
+    file_path: String,
+) -> Result<String, GitError> {
+    state.read_file_at(Path::new(&path), &rev, &file_path)
+}
+
+#[tauri::command]
 async fn containment(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -611,6 +621,7 @@ pub fn run() {
             list_submodules,
             submodule_sha_at,
             has_commit,
+            read_file_at,
             containment,
             commit_log_excluding,
             commit_containment_detail,

@@ -8,7 +8,7 @@ mod write;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-pub use blame::{Blame, BlameCommit};
+pub use blame::{Blame, BlameCommit, BlamePrevious};
 pub use cli::GitCli;
 pub use diff::Change;
 pub use error::GitError;
@@ -577,4 +577,8 @@ pub trait GitLayer {
     ) -> Result<Option<String>, GitError>;
     /// Whether `rev` names a commit in the repo at `path`.
     fn has_commit(&self, path: &Path, rev: &str) -> Result<bool, GitError>;
+    /// The content of `file_path` at `rev` (`git cat-file blob <rev>:<path>`),
+    /// lossy UTF-8, capped like the working-copy read the blame view uses.
+    /// Backs "Blame before this", which blames a parent revision.
+    fn read_file_at(&self, path: &Path, rev: &str, file_path: &str) -> Result<String, GitError>;
 }

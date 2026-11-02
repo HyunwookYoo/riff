@@ -460,6 +460,11 @@ export function readRepoFile(path: string, filePath: string): Promise<string> {
   return invoke("read_repo_file", { path, filePath });
 }
 
+/** `filePath`'s content at `rev` — the parent revision "Blame before this" loads. */
+export function readFileAt(path: string, rev: string, filePath: string): Promise<string> {
+  return invoke("read_file_at", { path, rev, filePath });
+}
+
 export function blameFile(
   path: string,
   filePath: string,

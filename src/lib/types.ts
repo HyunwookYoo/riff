@@ -349,17 +349,30 @@ export type RepoRange =
       missing?: { base?: string; compare?: string; source: RangeSource };
     };
 
+/// Porcelain's `previous <sha> <path>`: the parent commit (full SHA) and the
+/// file's path there. Mirrors Rust `BlamePrevious`.
+export interface BlamePrevious {
+  sha: string;
+  path: string;
+}
+
 export interface BlameCommit {
   sha: string;
   author: string;
   author_time: number;
   summary: string;
+  /** The file's path at this commit. */
+  filename: string;
+  /** The parent version of the file; null when this commit added it. */
+  previous: BlamePrevious | null;
 }
 
 export interface Blame {
   commits: BlameCommit[];
   /** `line_commit[i]` is the index into `commits` for (1-based) line `i+1`. */
   line_commit: number[];
+  /** `line_orig[i]` is line `i+1`'s 1-based number in its commit's version. */
+  line_orig: number[];
 }
 
 /** Snapshot of a workspace context, pushed onto the history stack on drill-in.

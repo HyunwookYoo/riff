@@ -4,23 +4,41 @@ use serde::{Deserialize, Serialize};
 
 use super::GitError;
 
-/// One commit referenced by the blame result. The SHA is the 8-char short form
-/// the frontend displays; the full SHA is not preserved because nothing else in
-/// the app uses it (drill-in builds `<short>^..<short>`, which git resolves).
+/// One commit referenced by the blame result. `sha` is the 8-char short form
+/// the frontend displays; the drill-in reads the commit (`commit_log`) for its
+/// full SHA and parents.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlameCommit {
     pub sha: String,
     pub author: String,
     pub author_time: i64,
     pub summary: String,
+    /// The file's path at this commit (differs from the blamed path when the
+    /// file was renamed later).
+    pub filename: String,
+    /// The parent version of the file this commit changed; `None` when this
+    /// commit added the file (including a root commit).
+    pub previous: Option<BlamePrevious>,
+}
+
+/// Porcelain's `previous <sha> <path>`: the parent commit and the file's path
+/// there. Drives "Blame before this".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlamePrevious {
+    /// Full SHA.
+    pub sha: String,
+    pub path: String,
 }
 
 /// Result of `blame_file`. `commits` is deduplicated; `line_commit[i]` is the
-/// index into `commits` for the (1-based) line `i+1` of the blamed file.
+/// index into `commits` for the (1-based) line `i+1` of the blamed file, and
+/// `line_orig[i]` is that line's 1-based number in its commit's version of the
+/// file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Blame {
     pub commits: Vec<BlameCommit>,
     pub line_commit: Vec<usize>,
+    pub line_orig: Vec<usize>,
 }
 
 /// The zero SHA git emits for working-copy lines that have no commit yet.
@@ -59,12 +77,16 @@ pub fn parse_porcelain(input: &[u8]) -> Result<Blame, GitError> {
     let mut commits: Vec<BlameCommit> = Vec::new();
     let mut sha_to_idx: HashMap<String, usize> = HashMap::new();
     let mut line_commit: Vec<usize> = Vec::new();
+    let mut line_orig: Vec<usize> = Vec::new();
 
     let mut cur_sha: Option<String> = None;
     let mut cur_final_line: Option<usize> = None;
     let mut cur_author: Option<String> = None;
     let mut cur_author_time: Option<i64> = None;
     let mut cur_summary: Option<String> = None;
+    let mut cur_orig_line: Option<usize> = None;
+    let mut cur_filename: Option<String> = None;
+    let mut cur_previous: Option<BlamePrevious> = None;
 
     for line in text.split('\n') {
         if line.is_empty() {
@@ -79,6 +101,7 @@ pub fn parse_porcelain(input: &[u8]) -> Result<Blame, GitError> {
             let final_line = cur_final_line
                 .take()
                 .ok_or_else(|| GitError::Parse("blame: content line with no final-line".into()))?;
+            let orig_line = cur_orig_line.take().unwrap_or(final_line);
 
             let idx = if let Some(&existing) = sha_to_idx.get(&sha) {
                 existing
@@ -93,6 +116,8 @@ pub fn parse_porcelain(input: &[u8]) -> Result<Blame, GitError> {
                     author: cur_author.take().unwrap_or_default(),
                     author_time: cur_author_time.take().unwrap_or(0),
                     summary: cur_summary.take().unwrap_or_default(),
+                    filename: cur_filename.take().unwrap_or_default(),
+                    previous: cur_previous.take(),
                 };
                 commits.push(commit);
                 let i = commits.len() - 1;
@@ -106,28 +131,35 @@ pub fn parse_porcelain(input: &[u8]) -> Result<Blame, GitError> {
             let arr_idx = final_line - 1;
             if line_commit.len() <= arr_idx {
                 line_commit.resize(arr_idx + 1, 0);
+                line_orig.resize(arr_idx + 1, 0);
             }
             line_commit[arr_idx] = idx;
+            line_orig[arr_idx] = orig_line;
 
             cur_author = None;
             cur_author_time = None;
             cur_summary = None;
+            cur_filename = None;
+            cur_previous = None;
             continue;
         }
 
         if is_header_line(line) {
             let mut parts = line.splitn(4, ' ');
             let sha = parts.next().unwrap_or("").to_string();
-            let _orig = parts.next();
+            let orig_line: Option<usize> = parts.next().and_then(|s| s.parse().ok());
             let final_line: usize = parts
                 .next()
                 .and_then(|s| s.parse().ok())
                 .ok_or_else(|| GitError::Parse(format!("blame: bad header: {line}")))?;
             cur_sha = Some(sha);
             cur_final_line = Some(final_line);
+            cur_orig_line = orig_line;
             cur_author = None;
             cur_author_time = None;
             cur_summary = None;
+            cur_filename = None;
+            cur_previous = None;
             continue;
         }
 
@@ -137,10 +169,19 @@ pub fn parse_porcelain(input: &[u8]) -> Result<Blame, GitError> {
             cur_author_time = rest.parse().ok();
         } else if let Some(rest) = line.strip_prefix("summary ") {
             cur_summary = Some(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix("filename ") {
+            cur_filename = Some(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix("previous ") {
+            if let Some((sha, path)) = rest.split_once(' ') {
+                cur_previous = Some(BlamePrevious {
+                    sha: sha.to_string(),
+                    path: path.to_string(),
+                });
+            }
         }
     }
 
-    Ok(Blame { commits, line_commit })
+    Ok(Blame { commits, line_commit, line_orig })
 }
 
 /// True if `line` starts with a 40-char hex SHA followed by a space — i.e.,
@@ -165,6 +206,7 @@ mod tests {
         let b = parse_porcelain(b"").unwrap();
         assert!(b.commits.is_empty());
         assert!(b.line_commit.is_empty());
+        assert!(b.line_orig.is_empty());
     }
 
     #[test]
@@ -189,6 +231,7 @@ filename src/main.rs
         assert_eq!(b.commits[0].author_time, 1700000000);
         assert_eq!(b.commits[0].summary, "initial commit");
         assert_eq!(b.line_commit, vec![0]);
+        assert_eq!(b.line_orig, vec![1]);
     }
 
     #[test]
@@ -278,7 +321,7 @@ filename f.rs
     }
 
     #[test]
-    fn parse_ignores_previous_filename_committer_fields() {
+    fn parse_keeps_previous_and_filename() {
         let input = b"abcdef0123456789abcdef0123456789abcdef01 1 1 1
 author Alice
 author-mail <a@x>
@@ -289,7 +332,7 @@ committer-mail <b@x>
 committer-time 200
 committer-tz +0000
 summary moved file
-previous deadbeef00000000000000000000000000000000 old.rs
+previous deadbeef00000000000000000000000000000000 old dir/old name.rs
 filename new.rs
 \tcontent
 ";
@@ -297,6 +340,74 @@ filename new.rs
         assert_eq!(b.commits.len(), 1);
         assert_eq!(b.commits[0].author, "Alice");
         assert_eq!(b.commits[0].summary, "moved file");
+        assert_eq!(b.commits[0].filename, "new.rs");
+        assert_eq!(
+            b.commits[0].previous,
+            Some(BlamePrevious {
+                sha: "deadbeef00000000000000000000000000000000".into(),
+                path: "old dir/old name.rs".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_no_previous_means_the_commit_added_the_file() {
+        let input = b"abcdef0123456789abcdef0123456789abcdef01 1 1 1
+author Alice
+author-mail <a@x>
+author-time 100
+author-tz +0000
+committer Alice
+committer-mail <a@x>
+committer-time 100
+committer-tz +0000
+summary add f
+filename f.rs
+\tcontent
+";
+        let b = parse_porcelain(input).unwrap();
+        assert_eq!(b.commits[0].previous, None);
+        assert_eq!(b.commits[0].filename, "f.rs");
+    }
+
+    #[test]
+    fn parse_keeps_each_lines_number_in_its_commit() {
+        // Line 1 came from A's line 5, line 2 from B's line 1, line 3 from A's
+        // line 6. A's metadata (and filename) stays from its first group.
+        let input = b"aaaa111122223333444455556666777788889999 5 1 1
+author Alice
+author-mail <a@x>
+author-time 100
+author-tz +0000
+committer Alice
+committer-mail <a@x>
+committer-time 100
+committer-tz +0000
+summary A
+filename a.rs
+\tline 1
+bbbb222233334444555566667777888899990000 1 2 1
+author Bob
+author-mail <b@x>
+author-time 200
+author-tz +0000
+committer Bob
+committer-mail <b@x>
+committer-time 200
+committer-tz +0000
+summary B
+previous cccc222233334444555566667777888899990000 f.rs
+filename f.rs
+\tline 2
+aaaa111122223333444455556666777788889999 6 3 1
+filename a.rs
+\tline 3
+";
+        let b = parse_porcelain(input).unwrap();
+        assert_eq!(b.line_commit, vec![0, 1, 0]);
+        assert_eq!(b.line_orig, vec![5, 1, 6]);
+        assert_eq!(b.commits[0].filename, "a.rs");
+        assert_eq!(b.commits[1].previous.as_ref().unwrap().path, "f.rs");
     }
 
     #[test]

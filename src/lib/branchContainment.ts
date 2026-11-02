@@ -8,15 +8,13 @@ import {
 } from "./git";
 import { compare, forgetListedRanges, listedRanges } from "./compare";
 import { resolveRepoRanges } from "./repoRange";
+import { EMPTY_TREE } from "./emptyTree";
 import { scopeLine, shortRef, type ToolbarPair } from "./rangeText";
 import type { Counts, RowMark, SideNames, Summary } from "./commitTableText";
 import type { BcGroup, Commit, Containment, RepoRange, SquashCheck, TabMark } from "./types";
 
 /// Rows fetched per page of a commit-table group.
 export const PAGE_SIZE = 100;
-
-/// Git's empty-tree object — the "before" side for a root commit (no parent).
-const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 // Monotonic guard, bumped by every load (and by clearBranchContainment). A
 // load that another has taken over — a call for a different pair, repo or

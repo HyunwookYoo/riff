@@ -2082,6 +2082,22 @@ impl GitLayer for GitCli {
         Ok(gitlink_sha(path, &format!("{rev}^{{commit}}")).is_some())
     }
 
+    fn read_file_at(&self, path: &Path, rev: &str, file_path: &str) -> Result<String, GitError> {
+        let rev = validate_ref(rev)?;
+        validate_path(file_path)?;
+        // Same cap as `read_repo_file` (lib.rs): a stray binary or huge log
+        // can't lock up the editor.
+        const BLAME_READ_CAP: usize = 2_000_000;
+        let bytes = self.run(path, &["cat-file", "blob", &format!("{rev}:{file_path}")])?;
+        if bytes.len() > BLAME_READ_CAP {
+            return Err(GitError::CommandFailed(format!(
+                "file too large for blame view ({} bytes)",
+                bytes.len()
+            )));
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     fn containment(
         &self,
         path: &Path,
@@ -3627,6 +3643,29 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
             .has_commit(&repo, "0123456789abcdef0123456789abcdef01234567")
             .unwrap());
         assert!(!cli.has_commit(&repo, "no-such-branch").unwrap());
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn read_file_at_reads_an_older_revision() {
+        let repo = temp_repo("read-file-at");
+        let cli = GitCli::new();
+        commit_file(&repo, "notes.md", "one
+", "add notes");
+        let first = rev_parse(&repo, "HEAD");
+        commit_file(&repo, "notes.md", "two
+", "edit notes");
+
+        assert_eq!(cli.read_file_at(&repo, &first, "notes.md").unwrap(), "one
+");
+        assert_eq!(cli.read_file_at(&repo, "HEAD", "notes.md").unwrap(), "two
+");
+        // The file did not exist at the seed commit.
+        assert!(cli.read_file_at(&repo, "HEAD~2", "notes.md").is_err());
+        // Malformed arguments never reach git.
+        assert!(cli.read_file_at(&repo, "-x", "notes.md").is_err());
+        assert!(cli.read_file_at(&repo, "HEAD", "-notes.md").is_err());
 
         let _ = fs::remove_dir_all(&repo);
     }

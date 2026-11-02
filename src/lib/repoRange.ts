@@ -1,10 +1,7 @@
 import { appState } from "./store.svelte";
 import { hasCommit, submoduleShaAt } from "./git";
+import { EMPTY_TREE } from "./emptyTree";
 import type { RangeSource, RepoEntry, RepoRange } from "./types";
-
-/// Git's empty tree (SHA-1): the "before" side of a root commit's diff. Every
-/// repo can diff from it, though it is no commit for `hasCommit` to find.
-const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 function inClone(path: string, ref: string): Promise<boolean> {
   return ref === EMPTY_TREE ? Promise.resolve(true) : hasCommit(path, ref);

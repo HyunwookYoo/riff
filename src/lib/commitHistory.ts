@@ -2,15 +2,12 @@ import { appState } from "./store.svelte";
 import { commitLog, status } from "./git";
 import { compare } from "./compare";
 import { clearPick } from "./branchContainment";
+import { EMPTY_TREE } from "./emptyTree";
 import { loadCurrentBranch, loadPendingOp, mergeDuplicatePaths } from "./workingCopy";
 import type { Branch, Commit } from "./types";
 
 /// Commits fetched per page; "load more" appends another page.
 const PAGE_SIZE = 100;
-
-/// Git's well-known empty tree object (SHA-1). Used as the "before" side when a
-/// root commit (no parents) is selected, so its diff is the full initial state.
-const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 // Monotonic guard so a slow log fetch from a previous repo/ref can't overwrite
 // a newer one's results.
