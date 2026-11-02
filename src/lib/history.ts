@@ -218,3 +218,11 @@ export function backToHead(): void {
     popHistory();
   }
 }
+
+/// The commit view's "N files" count: only the drilled repo's files (the Tabs
+/// layout scans every repo into `appState.files`), or "…" while they load.
+export function commitViewFileCount(): string {
+  const v = appState.commitView;
+  if (!v || appState.loadingFiles) return "…";
+  return String(appState.files.filter((f) => (f.repoIdx ?? 0) === v.repoIdx).length);
+}

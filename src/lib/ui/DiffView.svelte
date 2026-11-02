@@ -380,7 +380,7 @@
     // tab's remembered file — switching to a different file resets to top.
     const reveal = appState.revealLine;
     const view = mergeView?.b ?? unifiedView;
-    if (reveal && reveal.path === file.path && reveal.repoIdx === (file.repoIdx ?? 0)) {
+    if (commitViewActive() && reveal && reveal.path === file.path && reveal.repoIdx === (file.repoIdx ?? 0)) {
       appState.revealLine = null;
       if (view) {
         const n = Math.min(Math.max(1, reveal.line), view.state.doc.lines);

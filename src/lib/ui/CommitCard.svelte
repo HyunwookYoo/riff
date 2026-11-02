@@ -1,5 +1,6 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
+  import { commitViewFileCount } from "$lib/history";
   import { relativeDate } from "./relativeDate";
 
   // The commit view's card, in the commit table's pane: the commit a Blame
@@ -11,9 +12,7 @@
   const folds = $derived(
     !!commit?.body && commit.body.split("\n").length > BODY_FOLD_LINES,
   );
-  const fileCount = $derived(
-    appState.loadingFiles ? "…" : String(appState.files.length),
-  );
+  const fileCount = $derived(commitViewFileCount());
 
   // Another commit starts folded.
   $effect(() => {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { commitViewActive } from "$lib/history";
+  import { commitViewActive, commitViewFileCount } from "$lib/history";
   import { isRepoVisible, rowMark, showAllChanges, squashLanded } from "$lib/branchContainment";
   import { shortRef, sideNames } from "$lib/rangeText";
   import { allChangesText, commitStateText } from "$lib/commitTableText";
@@ -52,9 +52,7 @@
 {#if commitViewActive() && appState.commitView}
   <div class="files-scope">
     <span class="what">
-      <b>Commit {appState.commitView.target.slice(0, 8)}</b> · {appState.loadingFiles
-        ? "…"
-        : appState.files.length} files
+      <b>Commit {appState.commitView.target.slice(0, 8)}</b> · {commitViewFileCount()} files
     </span>
   </div>
 {:else if visibleOk.length > 0}
