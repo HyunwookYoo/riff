@@ -466,8 +466,8 @@
     return a.repoIdx === b.repoIdx && a.path === b.path;
   }
 
-  // Bumped by each load; a load that is no longer the latest stops — a theme
-  // change reloads the same target and revision, so those can't tell.
+  // Bumped by each load so a superseded one stops. Comparing the target and
+  // revision alone can't tell: a theme change reloads the same pair.
   let loadSeq = 0;
 
   async function load(target: RepoFile, rev: BlameRev | null) {
