@@ -170,18 +170,66 @@ pub fn parse_porcelain(input: &[u8]) -> Result<Blame, GitError> {
         } else if let Some(rest) = line.strip_prefix("summary ") {
             cur_summary = Some(rest.to_string());
         } else if let Some(rest) = line.strip_prefix("filename ") {
-            cur_filename = Some(rest.to_string());
+            cur_filename = Some(unquote_c_path(rest));
         } else if let Some(rest) = line.strip_prefix("previous ") {
             if let Some((sha, path)) = rest.split_once(' ') {
                 cur_previous = Some(BlamePrevious {
                     sha: sha.to_string(),
-                    path: path.to_string(),
+                    path: unquote_c_path(path),
                 });
             }
         }
     }
 
     Ok(Blame { commits, line_commit, line_orig })
+}
+
+/// Undo git's C-quoting of a path. Under `core.quotePath` (the default) git
+/// wraps a path holding non-ASCII bytes, `"` or `\` in quotes and escapes it:
+/// `\ooo` octal for each such byte, plus `\" \\ \a \b \t \n \v \f \r`. A path
+/// that doesn't start with `"` is returned as is.
+fn unquote_c_path(s: &str) -> String {
+    let Some(inner) = s.strip_prefix('"').and_then(|t| t.strip_suffix('"')) else {
+        return s.to_string();
+    };
+    let bytes = inner.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        i += 1;
+        if b != b'\\' || i == bytes.len() {
+            out.push(b);
+            continue;
+        }
+        let e = bytes[i];
+        i += 1;
+        out.push(match e {
+            b'0'..=b'7' => {
+                let mut v = (e - b'0') as u32;
+                for _ in 0..2 {
+                    match bytes.get(i) {
+                        Some(&d @ b'0'..=b'7') => {
+                            v = v * 8 + (d - b'0') as u32;
+                            i += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                v as u8
+            }
+            b'a' => 0x07,
+            b'b' => 0x08,
+            b't' => b'\t',
+            b'n' => b'\n',
+            b'v' => 0x0b,
+            b'f' => 0x0c,
+            b'r' => b'\r',
+            // `\"`, `\\`, and anything unknown: the character itself.
+            other => other,
+        });
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// True if `line` starts with a 40-char hex SHA followed by a space — i.e.,
@@ -408,6 +456,50 @@ filename a.rs
         assert_eq!(b.line_orig, vec![5, 1, 6]);
         assert_eq!(b.commits[0].filename, "a.rs");
         assert_eq!(b.commits[1].previous.as_ref().unwrap().path, "f.rs");
+    }
+
+    /// One porcelain group whose `previous` and `filename` lines carry the
+    /// given (possibly C-quoted) paths.
+    fn group_with_paths(previous: &str, filename: &str) -> String {
+        format!(
+            "abcdef0123456789abcdef0123456789abcdef01 1 1 1
+author Alice
+author-time 100
+summary s
+previous deadbeef00000000000000000000000000000000 {previous}
+filename {filename}
+\tcontent
+"
+        )
+    }
+
+    #[test]
+    fn parse_unquotes_a_non_ascii_path() {
+        // "새 노트.md" and "옛 노트.md" as core.quotePath writes them: UTF-8
+        // bytes in octal.
+        let input = group_with_paths(
+            r#""\354\230\233 \353\205\270\355\212\270.md""#,
+            r#""\354\203\210 \353\205\270\355\212\270.md""#,
+        );
+        let b = parse_porcelain(input.as_bytes()).unwrap();
+        assert_eq!(b.commits[0].filename, "새 노트.md");
+        assert_eq!(b.commits[0].previous.as_ref().unwrap().path, "옛 노트.md");
+    }
+
+    #[test]
+    fn parse_unquotes_quotes_and_backslashes() {
+        let input = group_with_paths(r#""old \"q\".md""#, r#""dir\\say \"hi\"\t.md""#);
+        let b = parse_porcelain(input.as_bytes()).unwrap();
+        assert_eq!(b.commits[0].filename, "dir\\say \"hi\"\t.md");
+        assert_eq!(b.commits[0].previous.as_ref().unwrap().path, "old \"q\".md");
+    }
+
+    #[test]
+    fn parse_keeps_a_plain_path() {
+        let input = group_with_paths("old dir/a.rs", "new dir/b.rs");
+        let b = parse_porcelain(input.as_bytes()).unwrap();
+        assert_eq!(b.commits[0].filename, "new dir/b.rs");
+        assert_eq!(b.commits[0].previous.as_ref().unwrap().path, "old dir/a.rs");
     }
 
     #[test]
