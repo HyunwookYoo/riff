@@ -180,12 +180,14 @@ function applyCtx(ctx: CompareCtx): void {
   // Fall back to {} for ctx values saved before the field existed.
   restoreOverrides(ctx.overrides ?? {});
   appState.commitView = ctx.commitView ?? null;
-  // A Blame ctx brings back the file and revision it showed. Fall back to the
-  // current file for ctx values saved before the field existed.
-  if (ctx.appMode === "blame") {
-    if (ctx.blameTarget !== undefined) appState.blameTarget = ctx.blameTarget;
-    appState.blameRev = ctx.blameRev ?? null;
+  // A Blame ctx brings back the file it showed. Fall back to the current file
+  // for ctx values saved before the field existed.
+  if (ctx.appMode === "blame" && ctx.blameTarget !== undefined) {
+    appState.blameTarget = ctx.blameTarget;
   }
+  // Every ctx sets the revision: a Blame one brings back the one it showed,
+  // and a compare one (the drill clears it) makes a later Blame start at HEAD.
+  appState.blameRev = ctx.blameRev ?? null;
   // Compare-side rehydration: reload the file list. Blame-side state is
   // restored above.
   if (ctx.appMode === "compare") {

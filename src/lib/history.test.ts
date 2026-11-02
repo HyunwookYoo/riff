@@ -242,6 +242,16 @@ describe("the Blame drill-in", () => {
     expect(appState.commitView).toBeNull();
   });
 
+  it("Forward to the commit view leaves the older blame behind", async () => {
+    appState.blameRev = rev("p1");
+    await pushAndDrillToCommit("a0339e32", 0, null);
+    popHistory();
+    expect(appState.blameRev).toEqual(rev("p1"));
+    redoHistory();
+    expect(appState.commitView?.target).toBe("a0339e32-full");
+    expect(appState.blameRev).toBeNull();
+  });
+
   it("Back reopens the file in the repo it was in", () => {
     Object.assign(appState, {
       appMode: "compare",
