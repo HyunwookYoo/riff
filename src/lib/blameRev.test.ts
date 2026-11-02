@@ -114,6 +114,24 @@ describe("blameBefore", () => {
     expect(appState.blameRev?.line).toBe(5);
   });
 
+  it("maps a line in a large, heavily rewritten file quickly", async () => {
+    // 20,000 lines with every 3rd one changed: an unbounded character diff
+    // takes over a minute on this.
+    const n = 20_000;
+    const oldLines = Array.from({ length: n }, (_, i) => `line ${i} of the old text`);
+    const newLines = oldLines.map((l, i) => (i % 3 === 0 ? `changed ${i} in the new text` : l));
+    vi.mocked(readFileAt).mockImplementation(async (_repo, r) =>
+      (r === commit.sha ? newLines : oldLines).join("\n") + "\n",
+    );
+    const started = performance.now();
+    await blameBefore(commit, 10_000);
+    expect(performance.now() - started).toBeLessThan(3000);
+    const line = appState.blameRev!.line;
+    expect(Number.isInteger(line)).toBe(true);
+    expect(line).toBeGreaterThanOrEqual(1);
+    expect(line).toBeLessThanOrEqual(n);
+  });
+
   it("does nothing for a commit that added the file", async () => {
     await blameBefore({ ...commit, previous: null }, 3);
     expect(appState.history).toEqual([]);

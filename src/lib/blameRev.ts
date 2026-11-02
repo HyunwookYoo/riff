@@ -70,6 +70,12 @@ export function blameRevFor(rev: BlameRev | null, target: RepoFile | null): Blam
     : null;
 }
 
+/// Bounds on the character diff, which runs on the main thread: unbounded it
+/// takes over a minute on a large, heavily rewritten file. A bounded diff is
+/// coarser, and a line inside a coarse hunk maps to the hunk's start. 500 is
+/// MergeView's own default scan limit.
+const DIFF_LIMITS = { scanLimit: 500, timeout: 200 };
+
 /// "Blame before this": push the current view and re-blame the file at
 /// `commit`'s parent, scrolled to where line `lineInCommit` (its number in the
 /// commit's version) sat before the commit. Does nothing for a commit that
@@ -87,7 +93,7 @@ export async function blameBefore(commit: BlameCommit, lineInCommit: number): Pr
       readFileAt(repoPath, prev.sha, prev.path),
       readFileAt(repoPath, commit.sha, commit.filename),
     ]);
-    line = mapLineBack(oldText, newText, diff(oldText, newText), lineInCommit);
+    line = mapLineBack(oldText, newText, diff(oldText, newText, DIFF_LIMITS), lineInCommit);
   } catch {
     // Keep the commit's own number.
   }
