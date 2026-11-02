@@ -516,7 +516,7 @@
   <ReflogOverlay />
   <RebaseTodoOverlay />
   <Timelapse />
-  {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0}
+  {#if appState.appMode === "compare" && appState.workspaceLayout === "tabs" && appState.repos.length > 0 && !commitViewActive()}
     <TabBar />
   {/if}
   {#if appState.appMode === "compare" && appState.workspaceLayout === "unified" && appState.repos.length > 1 && !commitViewActive()}

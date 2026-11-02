@@ -125,14 +125,17 @@ export async function pushAndDrillToCommit(
 /// The Branch screen renders as the commit view while a Blame drill-in's range
 /// is still on screen: Branch mode, and the drilled repo's range exactly
 /// base..target (its override for a non-main repo, else the toolbar pair).
-/// Moving the range anywhere drops back to the ordinary Branch screen.
+/// Moving the range anywhere drops back to the ordinary Branch screen, and so
+/// does picking another repo tab (the drill makes the drilled repo active).
 export function commitViewActive(): boolean {
   const v = appState.commitView;
   if (!v || appState.appMode !== "compare" || appState.compareMode !== "branch") {
     return false;
   }
+  const multiRoot = appState.repos.length > 1;
+  if (multiRoot && (appState.activeRepoIdx ?? 0) !== v.repoIdx) return false;
   const repo = appState.repos[v.repoIdx];
-  if (appState.repos.length > 1 && repo && repo.kind !== "main") {
+  if (multiRoot && repo && repo.kind !== "main") {
     return (
       repo.override?.startBranch === v.base && repo.override?.targetBranch === v.target
     );

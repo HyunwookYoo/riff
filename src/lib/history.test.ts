@@ -183,6 +183,28 @@ describe("the Blame drill-in", () => {
     expect(commitViewActive()).toBe(false);
   });
 
+  it("drops the commit view when another repo tab is picked", async () => {
+    await pushAndDrillToCommit("s1", 1, null);
+    expect(commitViewActive()).toBe(true);
+    appState.activeRepoIdx = 0;
+    expect(commitViewActive()).toBe(false);
+    appState.activeRepoIdx = 1;
+    expect(commitViewActive()).toBe(true);
+
+    await pushAndDrillToCommit("a0339e32", 0, null);
+    expect(appState.activeRepoIdx).toBe(0);
+    expect(commitViewActive()).toBe(true);
+    appState.activeRepoIdx = 1;
+    expect(commitViewActive()).toBe(false);
+  });
+
+  it("keeps the commit view in a single repo, where no tab is picked", async () => {
+    appState.repos = [repos[0]];
+    await pushAndDrillToCommit("a0339e32", 0, null);
+    expect(appState.activeRepoIdx).toBeNull();
+    expect(commitViewActive()).toBe(true);
+  });
+
   it("Back returns to the older blame the drill left", async () => {
     appState.blameRev = rev("p1");
     await pushAndDrillToCommit("a0339e32", 0, null);
