@@ -1,7 +1,9 @@
 import { appState } from "./store.svelte";
 import { compare } from "./compare";
+import { commitLog } from "./git";
+import { EMPTY_TREE } from "./emptyTree";
 import { clearPick } from "./branchContainment";
-import type { CompareCtx } from "./types";
+import type { Commit, CompareCtx } from "./types";
 
 /** Capture overrides currently set on non-main repos. Round-tripped via
  * CompareCtx so back/forward navigation preserves them across drill-in. */
@@ -49,75 +51,96 @@ function restoreOverrides(
 }
 
 /**
- * Push the current compare context onto the history stack and drill into a
- * single commit. Implemented as a `<sha>^..<sha>` two-dot branch compare so
- * the existing FileList/DiffView pipeline renders the change set unchanged.
+ * Push the current context and open one commit from Blame mode as the commit
+ * view: a two-dot Branch compare of `parent..commit` that the Branch screen
+ * renders as a commit (see `commitViewActive`). The commit is read first: the
+ * commit card shows its message, and its first parent (the empty tree for a
+ * root commit) is the base, so a root commit never asks for `<sha>^`.
  *
- * For multi-root drill-in (§13.8): pass the originating file's `repoIdx` so
- * the drilled view is automatically focused on that repo. When that repo is
- * a non-main one, the drill sets that repo's per-repo override (rather than
- * mutating main's refs) — gitlink-follow would otherwise try to resolve the
- * submodule's SHA inside main's history and fail.
+ * `repoIdx` is the blamed file's repo. A non-main repo gets the range as its
+ * per-repo override (rather than mutating main's refs) — gitlink-follow
+ * would otherwise try to resolve the submodule's SHA inside main's history.
+ * `from` is the blamed file at that commit and the blamed line's number
+ * there; the drill selects that file and DiffView scrolls to the line.
+ *
+ * When the commit can't be read nothing is pushed and Blame stays.
  */
-export function pushAndDrillToCommit(sha: string, repoIdx?: number): void {
-  const ctx: CompareCtx = {
-    appMode: appState.appMode,
-    compareMode: appState.compareMode,
-    mode: appState.mode,
-    startBranch: appState.startBranch,
-    targetBranch: appState.targetBranch,
-    selectedFilePath: appState.selectedFile?.path ?? null,
-    activeRepoIdx: appState.activeRepoIdx,
-    overrides: captureOverrides(),
-  };
-  appState.history.push(ctx);
+export async function pushAndDrillToCommit(
+  sha: string,
+  repoIdx: number | undefined,
+  from: { path: string; line: number } | null,
+): Promise<void> {
+  const idx =
+    repoIdx !== undefined && repoIdx >= 0 && repoIdx < appState.repos.length
+      ? repoIdx
+      : 0;
+  const repoPath = appState.repos[idx]?.path ?? appState.repoPath;
+  let commit: Commit | undefined;
+  try {
+    [commit] = await commitLog(repoPath, sha, false, 1, 0);
+  } catch (e) {
+    appState.error = `couldn't open commit ${sha}: ${String(e)}`;
+    return;
+  }
+  if (!commit) {
+    appState.error = `couldn't open commit ${sha}: not found`;
+    return;
+  }
+  const base = commit.parents[0] ?? EMPTY_TREE;
+  const target = commit.sha;
+
+  appState.history.push(snapshot());
   // Fresh drill invalidates any forward stack — matches browser back/forward
   // semantics (a new navigation from a back-tracked state drops the redo).
   appState.forwardHistory = [];
-  // Drill always renders in compare mode — blame mode has no concept of a
-  // single-commit diff view.
   appState.appMode = "compare";
   appState.compareMode = "branch";
   appState.mode = "two-dot";
   appState.selectedFile = null;
+  // The drill leaves Blame; the older blame is in the frame just pushed, and
+  // a later trip to Blame starts at HEAD.
+  appState.blameRev = null;
 
-  const isMultiRootIdx =
-    repoIdx !== undefined &&
-    repoIdx >= 0 &&
-    repoIdx < appState.repos.length &&
-    appState.repos.length > 1;
-  const targetRepo = isMultiRootIdx ? appState.repos[repoIdx!] : null;
-  const isNonMainDrill = targetRepo !== null && targetRepo.kind !== "main";
-
-  if (isNonMainDrill) {
-    // Set the override on the target repo so resolveRepoRange takes its
-    // override rule (a direct `git diff <sha>^ <sha>` inside that repo).
-    // Without this, submodules would fall through to gitlink-follow which
-    // tries to resolve the SHA in main's history and gets null.
+  const multiRoot = appState.repos.length > 1;
+  const targetRepo = appState.repos[idx];
+  if (multiRoot && targetRepo && targetRepo.kind !== "main") {
     const next = [...appState.repos];
-    next[repoIdx!] = {
-      ...targetRepo!,
-      override: { startBranch: `${sha}^`, targetBranch: sha },
-    };
+    next[idx] = { ...targetRepo, override: { startBranch: base, targetBranch: target } };
     appState.repos = next;
-    appState.activeRepoIdx = repoIdx!;
-    // Main refs stay untouched — they're irrelevant for a focused non-main
-    // drill (focusedHasOwnRefs check uses repo.override).
+    appState.activeRepoIdx = idx;
   } else {
-    appState.startBranch = `${sha}^`;
-    appState.targetBranch = sha;
-    if (isMultiRootIdx) {
-      appState.activeRepoIdx = repoIdx!;
-    }
+    appState.startBranch = base;
+    appState.targetBranch = target;
+    if (multiRoot) appState.activeRepoIdx = idx;
   }
+  appState.commitView = { repoIdx: idx, base, target, commit, from };
+  appState.revealLine = from ? { repoIdx: idx, path: from.path, line: from.line } : null;
   // A commit picked in the commit table outranks everything in compare(); a
   // drill (above all one into a submodule, which leaves the toolbar pair
   // alone) is a fresh view, so the pick goes first.
   clearPick();
-  void compare();
+  void compare({ preservePath: from?.path ?? null, preserveRepoIdx: idx });
 }
 
-/** Snapshot the current workspace context for the forward (redo) stack. */
+/// The Branch screen renders as the commit view while a Blame drill-in's range
+/// is still on screen: Branch mode, and the drilled repo's range exactly
+/// base..target (its override for a non-main repo, else the toolbar pair).
+/// Moving the range anywhere drops back to the ordinary Branch screen.
+export function commitViewActive(): boolean {
+  const v = appState.commitView;
+  if (!v || appState.appMode !== "compare" || appState.compareMode !== "branch") {
+    return false;
+  }
+  const repo = appState.repos[v.repoIdx];
+  if (appState.repos.length > 1 && repo && repo.kind !== "main") {
+    return (
+      repo.override?.startBranch === v.base && repo.override?.targetBranch === v.target
+    );
+  }
+  return appState.startBranch === v.base && appState.targetBranch === v.target;
+}
+
+/** Snapshot the current workspace context for the history stacks. */
 export function snapshot(): CompareCtx {
   return {
     appMode: appState.appMode,
@@ -126,8 +149,12 @@ export function snapshot(): CompareCtx {
     startBranch: appState.startBranch,
     targetBranch: appState.targetBranch,
     selectedFilePath: appState.selectedFile?.path ?? null,
+    selectedFileRepoIdx: appState.selectedFile?.repoIdx ?? null,
     activeRepoIdx: appState.activeRepoIdx,
     overrides: captureOverrides(),
+    commitView: appState.commitView,
+    blameTarget: appState.blameTarget,
+    blameRev: appState.blameRev,
   };
 }
 
@@ -143,12 +170,22 @@ function applyCtx(ctx: CompareCtx): void {
   // override gets cleared on Back; Forward to a drilled ctx re-applies it.
   // Fall back to {} for ctx values saved before the field existed.
   restoreOverrides(ctx.overrides ?? {});
-  // Compare-side rehydration: reload the file list. Blame-side state lives
-  // in `appState.blameTarget` and survives the drill round-trip on its own.
+  appState.commitView = ctx.commitView ?? null;
+  // A Blame ctx brings back the file and revision it showed. Fall back to the
+  // current file for ctx values saved before the field existed.
+  if (ctx.appMode === "blame") {
+    if (ctx.blameTarget !== undefined) appState.blameTarget = ctx.blameTarget;
+    appState.blameRev = ctx.blameRev ?? null;
+  }
+  // Compare-side rehydration: reload the file list. Blame-side state is
+  // restored above.
   if (ctx.appMode === "compare") {
     // The restored view is not the one a commit was picked in.
     clearPick();
-    void compare({ preservePath: ctx.selectedFilePath });
+    void compare({
+      preservePath: ctx.selectedFilePath,
+      preserveRepoIdx: ctx.selectedFileRepoIdx,
+    });
   }
 }
 
@@ -168,4 +205,16 @@ export function redoHistory(): void {
   if (!ctx) return;
   appState.history.push(snapshot());
   applyCtx(ctx);
+}
+
+/** Leave every "Blame before this" step at once: pop while Blame shows an
+ * older revision. Each popped frame goes onto the forward stack. */
+export function backToHead(): void {
+  while (
+    appState.appMode === "blame" &&
+    appState.blameRev &&
+    appState.history.length > 0
+  ) {
+    popHistory();
+  }
 }

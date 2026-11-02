@@ -908,7 +908,7 @@
       viewBtn.title = "Open this commit's changes";
       viewBtn.addEventListener("click", () => {
         // §13.8: drill into the commit in the same repo the blame was run on.
-        pushAndDrillToCommit(commit.sha, appState.blameTarget?.repoIdx);
+        void pushAndDrillToCommit(commit.sha, appState.blameTarget?.repoIdx, null);
       });
       actions.appendChild(viewBtn);
       dom.appendChild(actions);
@@ -1218,7 +1218,7 @@
                 class="drill"
                 title="View this commit's changes"
                 onclick={() =>
-                  pushAndDrillToCommit(c.sha, appState.blameTarget?.repoIdx)}
+                  void pushAndDrillToCommit(c.sha, appState.blameTarget?.repoIdx, null)}
               >
                 →
               </button>

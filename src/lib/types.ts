@@ -375,6 +375,43 @@ export interface Blame {
   line_orig: number[];
 }
 
+/// The commit a Blame drill-in opened. The Branch screen renders as the commit
+/// view while `commitViewActive()` (history.ts) holds. See
+/// docs/superpowers/specs/2026-10-14-blame-commit-view-design.md.
+export interface CommitView {
+  /** The repo the commit belongs to. */
+  repoIdx: number;
+  /** `commit.parents[0]`, or the empty tree for a root commit. */
+  base: string;
+  /** Full SHA. */
+  target: string;
+  commit: Commit;
+  /** The blamed file at that commit, and the blamed line's number there. */
+  from: { path: string; line: number } | null;
+}
+
+/// Blame at a parent revision ("Blame before this"). Only active while
+/// `target` is still the file being blamed.
+export interface BlameRev {
+  /** The HEAD file this revision belongs to (`appState.blameTarget`). */
+  target: RepoFile;
+  /** Full SHA of the parent. */
+  rev: string;
+  /** The file's path at `rev`. */
+  path: string;
+  /** The commit stepped past (Blame's 8-char SHA). */
+  before: { sha: string; summary: string };
+  /** Line to scroll to once loaded. */
+  line: number | null;
+}
+
+/// A line DiffView scrolls to once, when it mounts that file.
+export interface RevealLine {
+  repoIdx: number;
+  path: string;
+  line: number;
+}
+
 /** Snapshot of a workspace context, pushed onto the history stack on drill-in.
  * `appMode` lets us return to blame mode if that's where the drill started.
  * `activeRepoIdx` carries the Focus state (§13.3 #18,#19): null = multi-root
@@ -392,6 +429,13 @@ export interface CompareCtx {
   /// preserve overrides correctly when drilling into a submodule commit
   /// sets a temporary override on that repo.
   overrides: Record<number, { startBranch: string; targetBranch: string }>;
+  /// Repo of `selectedFilePath`, so Back reopens the file in the right repo.
+  selectedFileRepoIdx?: number | null;
+  /// The commit view on screen at this ctx (Blame drill-in).
+  commitView?: CommitView | null;
+  /// Blame's file and revision at this ctx, restored when it is a Blame ctx.
+  blameTarget?: RepoFile | null;
+  blameRev?: BlameRev | null;
 }
 
 /// One repo's group in the Branch-mode commit table: compare's commits the

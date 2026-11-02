@@ -42,6 +42,11 @@ interface CompareOptions {
    * force "select first file".
    */
   preservePath?: string | null;
+  /**
+   * The repo `preservePath` belongs to. Defaults to the selected file's repo;
+   * callers that clear the selection first (drill-in, Back) pass it.
+   */
+  preserveRepoIdx?: number | null;
 }
 
 export async function compare(opts: CompareOptions = {}): Promise<void> {
@@ -74,7 +79,10 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
   // preserve a path (drill-in Back). The previous repoIdx matters too in
   // multi-root — same path in two repos shouldn't false-match.
   const previousPath = opts.preservePath ?? null;
-  const previousRepoIdx = appState.selectedFile?.repoIdx ?? null;
+  const previousRepoIdx =
+    opts.preserveRepoIdx !== undefined
+      ? opts.preserveRepoIdx
+      : (appState.selectedFile?.repoIdx ?? null);
 
   appState.loadingFiles = true;
   appState.error = null;

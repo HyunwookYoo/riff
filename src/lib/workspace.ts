@@ -240,6 +240,8 @@ export async function loadMainRepo(
   // Blame-mode caches/file pin from the previous repo are also stale.
   appState.repoFiles = [];
   appState.blameTarget = null;
+  appState.blameRev = null;
+  appState.commitView = null;
   // History browser's commit log belongs to the old repo — drop it.
   resetHistory();
   resetWorkingCopy();

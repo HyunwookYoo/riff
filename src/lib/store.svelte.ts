@@ -1,9 +1,11 @@
 import type {
   AppMode,
   BcGroup,
+  BlameRev,
   Branch,
   ChangedFile,
   Commit,
+  CommitView,
   ContainmentDetail,
   CompareCtx,
   CompareMode,
@@ -14,6 +16,7 @@ import type {
   RepoFile,
   RepoRange,
   RepoStatus,
+  RevealLine,
   ThemeChoice,
   ViewMode,
   WorkspaceLayout,
@@ -70,6 +73,14 @@ class AppState {
   // drill-in/back so returning to blame mode lands you on the same file.
   // Session-only.
   blameTarget = $state<RepoFile | null>(null);
+  // Blame at a parent revision ("Blame before this"); null = HEAD with
+  // working-copy edits. Session-only.
+  blameRev = $state<BlameRev | null>(null);
+  // The commit a Blame drill-in opened; the Branch screen renders as the
+  // commit view while its range is still on screen (commitViewActive).
+  commitView = $state<CommitView | null>(null);
+  // A line DiffView scrolls to once, when it mounts that file.
+  revealLine = $state<RevealLine | null>(null);
   // File timelapse overlay (launched from the blame toolbar). `timelapseTarget`
   // is the repo-qualified file being played back. Session-only.
   timelapseOpen = $state(false);

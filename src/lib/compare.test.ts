@@ -86,6 +86,15 @@ beforeEach(() => {
 });
 
 describe("compare", () => {
+  it("reselects a remembered path in the repo the caller names", async () => {
+    // Drill-in and Back clear the selection before comparing, so the repo
+    // can't come from the old selection.
+    vi.mocked(resolveRepoRanges).mockResolvedValue(allOk);
+    await compare({ preservePath: "x.cpp", preserveRepoIdx: 2 });
+    expect(appState.selectedFile?.path).toBe("x.cpp");
+    expect(appState.selectedFile?.repoIdx).toBe(2);
+  });
+
   it("diffs a picked submodule commit inside that submodule", async () => {
     // The drill bug: with Focus on the submodule, picking one of its commits
     // used to scan nothing and leave the file list empty.
