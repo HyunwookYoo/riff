@@ -1,7 +1,7 @@
 import type { Blame } from "./types";
 
 /**
- * Tiny LRU cache for blame results keyed by (repoIdx, path). Lives at module
+ * Tiny LRU cache for blame results keyed by (repoIdx, path, revision). Lives at module
  * scope so the BlameView component's unmount/remount cycle (e.g. drill-in
  * round-trip) doesn't drop the loaded data. Cleared on main-repo switch.
  */
@@ -13,12 +13,16 @@ interface Entry {
 const CAPACITY = 10;
 const cache = new Map<string, Entry>();
 
-function makeKey(repoIdx: number, path: string): string {
-  return `${repoIdx}:${path}`;
+function makeKey(repoIdx: number, path: string, rev: string): string {
+  return `${repoIdx}:${rev}:${path}`;
 }
 
-export function getBlameCache(repoIdx: number, path: string): Entry | null {
-  const k = makeKey(repoIdx, path);
+export function getBlameCache(
+  repoIdx: number,
+  path: string,
+  rev: string,
+): Entry | null {
+  const k = makeKey(repoIdx, path, rev);
   const v = cache.get(k);
   if (!v) return null;
   // LRU bump: re-insert moves the key to the end of the iteration order.
@@ -30,9 +34,10 @@ export function getBlameCache(repoIdx: number, path: string): Entry | null {
 export function setBlameCache(
   repoIdx: number,
   path: string,
+  rev: string,
   entry: Entry,
 ): void {
-  const k = makeKey(repoIdx, path);
+  const k = makeKey(repoIdx, path, rev);
   if (cache.has(k)) cache.delete(k);
   cache.set(k, entry);
   while (cache.size > CAPACITY) {

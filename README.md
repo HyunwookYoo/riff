@@ -250,6 +250,7 @@ Blame 모드는 독립된 3-pane 워크스페이스입니다:
 - **라인 호버 시 팝오버**: 작성자, 상대 날짜, 커밋 제목, short SHA, `View commit →` 액션.
     - SHA 클릭 → 클립보드 복사 + 토스트.
     - `View commit →` 클릭 → 그 커밋의 변경 전체로 **drill-in** (`<sha>^..<sha>` 비교 화면으로 전환).
+    - `↶ Blame before this` 클릭 → 그 커밋의 **부모 시점**으로 같은 파일을 다시 blame (그 커밋이 바꾸기 전 줄로 스크롤). 파일 이름이 바뀐 커밋도 옛 경로로 따라갑니다. 파일을 만든 커밋은 비활성.
 - **같은 커밋의 동료 라인 자동 하이라이트**: 한 줄에 호버하면 같은 커밋의 모든 라인이 부드럽게 강조.
 - **라인 클릭** → 우측 커밋 패널에서 해당 커밋을 선택(sticky 하이라이트로 고정).
 
@@ -262,7 +263,8 @@ Blame 모드는 독립된 3-pane 워크스페이스입니다:
     - **By first line** — 파일 내 첫 등장 라인 순
     - **Most lines** — 기여 라인 수 내림차순
 - **클릭** → 에디터에서 해당 커밋의 첫 라인으로 스크롤 + 모든 해당 라인을 진하게 하이라이트(sticky).
-- **`→` 버튼** (호버 시 노출) → 그 커밋으로 drill-in.
+- **`↶` / `→` 버튼** (호버 시 노출) → 그 커밋 이전 시점으로 blame / 그 커밋으로 drill-in.
+- 이전 시점 blame 중에는 에디터 위 띠에 `Blame at <sha> — before <sha> <제목>` 과 **← Back** · **Back to HEAD** 가 표시되고, 커밋 패널 제목이 `Commits · at <sha>` 로 바뀝니다. `Esc` 도 한 단계씩 되돌아갑니다.
 
 ### 미커밋 라인 처리
 Worktree 편집은 `git blame --contents <fs_path> HEAD` 로 처리되어 `00000000` SHA로 표기됩니다 → 팝오버에 `Not Committed Yet (uncommitted edits — not yet in HEAD)` 표시.
@@ -279,14 +281,15 @@ Worktree 편집은 `git blame --contents <fs_path> HEAD` 로 처리되어 `00000
 
 ## 5. Commit Drill-in & 히스토리
 
-Blame 팝오버 또는 커밋 패널에서 **View commit →** / **`→`** 를 클릭하면 메인 화면이 그 커밋의 변경 전체(`<sha>^..<sha>`)로 일시 전환됩니다.
+Blame 팝오버 또는 커밋 패널에서 **View commit →** / **`→`** 를 클릭하면 메인 화면이 그 커밋의 **커밋 보기**로 일시 전환됩니다 (첫 부모 대비 diff, 첫 커밋은 빈 트리 대비).
 
-- 상단에 **breadcrumb** 가 표시되어 이전 컨텍스트를 알려줍니다.
+- 툴바 두 번째 줄: **← Back** · `Commit <sha> ⧉` (클릭 시 전체 SHA 복사) · submodule이면 repo 이름 · `from blame of <파일>`.
+- 커밋 표 자리에 **커밋 카드**: 제목, 작성자·날짜·부모·파일 수, 본문 (6줄 넘으면 `Show full message ▾` 로 접힘). merge 커밋은 `merge · N parents · diff against the first parent`.
+- Files 헤더는 `Commit <sha> · N files`, diff 라벨은 `before` / `after`.
+- blame하던 파일이 그 커밋 시점 경로로 선택되고, 보던 줄로 스크롤됩니다.
+- 커밋 보기 안에서 다른 범위로 옮기면 평소 Branch 화면으로 돌아갑니다.
 - **무한 깊이**: drill-in 안에서 또 blame을 켜서 또 drill 가능 (history stack 누적).
-- **돌아가기**:
-    - **`Esc`** 키
-    - breadcrumb의 **← Back** 버튼
-- 돌아가면 직전에 보던 파일까지 자동 복원됩니다 (`CompareCtx` 스냅샷에 selectedFilePath 포함).
+- **돌아가기**: **`Esc`** 키 또는 툴바의 **← Back**. 직전에 보던 파일까지 그 repo에서 복원됩니다.
 - 히스토리는 **세션 한정** — 앱 재시작 시 비워집니다.
 
 ---

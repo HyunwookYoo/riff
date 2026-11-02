@@ -19,13 +19,15 @@
   import {
     blameFile,
     listRepoFiles,
+    readFileAt,
     readRepoFile,
     setBlamePickerWidth,
   } from "$lib/git";
   import { getBlameCache, setBlameCache } from "$lib/blameCache";
-  import { pushAndDrillToCommit } from "$lib/history";
+  import { backToHead, popHistory, pushAndDrillToCommit } from "$lib/history";
+  import { blameBefore, blameRevFor } from "$lib/blameRev";
   import { repoPathFor } from "$lib/workspace";
-  import type { Blame, BlameCommit, RepoFile } from "$lib/types";
+  import type { Blame, BlameCommit, BlameRev, RepoFile } from "$lib/types";
   import { detectLanguage } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
   import { setActiveDiffView } from "$lib/diff/activeView";
@@ -52,6 +54,10 @@
   let blameLoading = $state(false);
   let blameError = $state<string | null>(null);
   let selectedCommitSha = $state<string | null>(null);
+  // The revision on screen (null = HEAD), and the line "Blame before this"
+  // scrolled to, marked until the next click in the editor.
+  const activeRev = $derived(blameRevFor(appState.blameRev, appState.blameTarget));
+  let focusLine = $state<number | null>(null);
   type SortMode = "time-desc" | "first-line" | "line-count";
   let sortMode = $state<SortMode>("time-desc");
   let repoFilesError = $state<string | null>(null);
@@ -452,7 +458,7 @@
       blameLoading = false;
       return;
     }
-    void load(target);
+    void load(target, activeRev);
   });
 
   function sameTarget(a: RepoFile | null, b: RepoFile | null): boolean {
@@ -460,23 +466,32 @@
     return a.repoIdx === b.repoIdx && a.path === b.path;
   }
 
-  async function load(target: RepoFile) {
+  async function load(target: RepoFile, rev: BlameRev | null) {
     teardownEditor();
     fileText = null;
     loadError = null;
     blameData = null;
     blameError = null;
     selectedCommitSha = null;
+    focusLine = null;
+
+    // At a revision the file may sit under its older path.
+    const revKey = rev?.rev ?? "HEAD";
+    const filePath = rev?.path ?? target.path;
+    const current = () =>
+      sameTarget(appState.blameTarget, target) &&
+      blameRevFor(appState.blameRev, appState.blameTarget) === rev;
 
     // LRU cache: drill-in round-trips and short blame-mode tab navigation
-    // shouldn't pay the readRepoFile + blameFile cost twice for the same file.
-    const cached = getBlameCache(target.repoIdx, target.path);
+    // shouldn't pay the file read + blameFile cost twice for the same file.
+    const cached = getBlameCache(target.repoIdx, filePath, revKey);
     if (cached) {
       fileText = cached.fileText;
       blameData = cached.blame;
       blameLoading = false;
       await tick();
-      await mountEditor(target.path, cached.fileText);
+      await mountEditor(filePath, cached.fileText);
+      revealRevLine(rev);
       return;
     }
 
@@ -489,28 +504,45 @@
       return;
     }
 
+    // HEAD blames the working copy (uncommitted lines included); an older
+    // revision blames that commit's content.
+    const textP = rev
+      ? readFileAt(repoPath, rev.rev, rev.path)
+      : readRepoFile(repoPath, target.path);
+    const blameP = rev
+      ? blameFile(repoPath, rev.path, rev.rev, false)
+      : blameFile(repoPath, target.path, "HEAD", true);
     let text: string;
     let blame: Blame;
     try {
-      [text, blame] = await Promise.all([
-        readRepoFile(repoPath, target.path),
-        blameFile(repoPath, target.path, "HEAD", true),
-      ]);
+      [text, blame] = await Promise.all([textP, blameP]);
     } catch (e) {
-      if (!sameTarget(appState.blameTarget, target)) return;
+      if (!current()) return;
       loadError = String(e);
       blameLoading = false;
       return;
     }
 
-    // Race: user picked a different file while we were loading.
-    if (!sameTarget(appState.blameTarget, target)) return;
+    // Race: user picked a different file or revision while we were loading.
+    if (!current()) return;
     fileText = text;
     blameData = blame;
     blameLoading = false;
-    setBlameCache(target.repoIdx, target.path, { fileText: text, blame });
+    setBlameCache(target.repoIdx, filePath, revKey, { fileText: text, blame });
     await tick();
-    await mountEditor(target.path, text);
+    await mountEditor(filePath, text);
+    revealRevLine(rev);
+  }
+
+  // After "Blame before this": centre the line the stepped-past commit
+  // changed, as it read before, and mark it.
+  function revealRevLine(rev: BlameRev | null) {
+    if (!rev?.line || !view) return;
+    const n = Math.min(Math.max(1, rev.line), view.state.doc.lines);
+    focusLine = n;
+    view.dispatch({
+      effects: EditorView.scrollIntoView(view.state.doc.line(n).from, { y: "center" }),
+    });
   }
 
   async function mountEditor(path: string, text: string) {
@@ -561,8 +593,14 @@
   // ---- selection handlers ----
 
   function selectFile(target: RepoFile) {
-    if (sameTarget(appState.blameTarget, target)) return;
+    if (sameTarget(appState.blameTarget, target) && !activeRev) return;
+    appState.blameRev = null;
     appState.blameTarget = target;
+  }
+
+  /// Line `lineNum`'s number in its commit's version of the file.
+  function origLine(lineNum: number): number {
+    return blameData?.line_orig[lineNum - 1] ?? lineNum;
   }
 
   function selectCommit(sha: string, firstLine: number) {
@@ -751,11 +789,15 @@
           const idx = blameData.line_commit[i];
           const commit = blameData.commits[idx];
           if (!commit) continue;
-          const cls =
+          const lineNum = i + 1;
+          const cls = [
             selectedCommitSha !== null && commit.sha === selectedCommitSha
               ? "blame-selected"
-              : null;
-          const lineNum = i + 1;
+              : null,
+            lineNum === focusLine ? "blame-focus" : null,
+          ]
+            .filter(Boolean)
+            .join(" ");
           const line = view.state.doc.line(lineNum);
           ranges.push(
             Decoration.line({
@@ -779,6 +821,7 @@
   $effect(() => {
     void selectedCommitSha;
     void blameData;
+    void focusLine;
     pingEditor();
   });
 
@@ -820,6 +863,7 @@
   // toggle on repeat-click here because clicking text shouldn't read as
   // "deselect" — that's a sidepanel-only affordance.
   function onHostClick(e: MouseEvent) {
+    focusLine = null;
     if (!blameData) return;
     const target = e.target as HTMLElement | null;
     const line = target?.closest(".cm-line[data-blame-sha]");
@@ -847,7 +891,7 @@
   let activeTooltipDom: HTMLElement | null = null;
   let activeTooltipLine = 0;
 
-  function renderPopover(dom: HTMLElement, commit: BlameCommit) {
+  function renderPopover(dom: HTMLElement, commit: BlameCommit, lineNum: number) {
     dom.innerHTML = "";
     const isUncommitted = commit.sha === "00000000";
 
@@ -886,10 +930,29 @@
       viewBtn.textContent = "View commit →";
       viewBtn.title = "Open this commit's changes";
       viewBtn.addEventListener("click", () => {
-        // §13.8: drill into the commit in the same repo the blame was run on.
-        void pushAndDrillToCommit(commit.sha, appState.blameTarget?.repoIdx, null);
+        // §13.8: drill into the commit in the same repo the blame was run on,
+        // opening this file (under its path then) at this line.
+        void pushAndDrillToCommit(commit.sha, appState.blameTarget?.repoIdx, {
+          path: commit.filename,
+          line: origLine(lineNum),
+        });
       });
       actions.appendChild(viewBtn);
+
+      const beforeBtn = document.createElement("button");
+      beforeBtn.type = "button";
+      beforeBtn.className = "blame-before";
+      beforeBtn.textContent = "↶ Blame before this";
+      if (commit.previous) {
+        beforeBtn.title = "Blame this file as it was before this commit";
+        beforeBtn.addEventListener("click", () => {
+          void blameBefore(commit, origLine(lineNum));
+        });
+      } else {
+        beforeBtn.disabled = true;
+        beforeBtn.title = "this commit added the file";
+      }
+      actions.appendChild(beforeBtn);
       dom.appendChild(actions);
     }
   }
@@ -914,7 +977,7 @@
         dom.innerHTML = "";
         dom.textContent = "No blame info for this line";
       } else {
-        renderPopover(dom, blameData.commits[idx]);
+        renderPopover(dom, blameData.commits[idx], lineNum);
       }
     }
   }
@@ -1130,6 +1193,20 @@
         />
       </div>
     </header>
+    {#if activeRev}
+      <div class="rev-bar">
+        <button type="button" onclick={popHistory} title="Back (Esc)">← Back</button>
+        <span class="rev-what">
+          Blame at <code>{activeRev.rev.slice(0, 8)}</code> — before
+          <code>{activeRev.before.sha}</code>
+          <span class="rev-subject">{activeRev.before.summary}</span>
+          {#if activeRev.path !== activeRev.target.path}
+            <span class="rev-as">as <code>{activeRev.path}</code></span>
+          {/if}
+        </span>
+        <button type="button" onclick={backToHead}>Back to HEAD</button>
+      </div>
+    {/if}
     {#if !appState.blameTarget}
       <div class="placeholder">
         Pick a file on the left to view its blame.
@@ -1144,7 +1221,7 @@
 
   <aside class="commit-panel">
     <header class="panel-header">
-      <span>Commits</span>
+      <span>Commits{#if activeRev} · at {activeRev.rev.slice(0, 8)}{/if}</span>
       <span class="count">{commitsView.length}</span>
     </header>
     <div class="commit-list">
@@ -1195,9 +1272,23 @@
               <button
                 type="button"
                 class="drill"
+                disabled={!c.previous}
+                title={c.previous
+                  ? "Blame this file as it was before this commit"
+                  : "this commit added the file"}
+                onclick={() => void blameBefore(c, origLine(c.firstLine))}
+              >
+                ↶
+              </button>
+              <button
+                type="button"
+                class="drill"
                 title="View this commit's changes"
                 onclick={() =>
-                  void pushAndDrillToCommit(c.sha, appState.blameTarget?.repoIdx, null)}
+                  void pushAndDrillToCommit(c.sha, appState.blameTarget?.repoIdx, {
+                    path: c.filename,
+                    line: origLine(c.firstLine),
+                  })}
               >
                 →
               </button>
@@ -1624,6 +1715,47 @@
   .drill:hover {
     background: var(--hover);
   }
+  .drill:disabled {
+    color: var(--muted);
+    cursor: default;
+  }
+  .rev-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--accent) 8%, var(--bar-bg));
+    font-size: 0.82em;
+    min-width: 0;
+  }
+  .rev-bar button {
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: inherit;
+    cursor: pointer;
+    padding: 1px 8px;
+    font: inherit;
+  }
+  .rev-bar button:hover {
+    background: var(--hover);
+  }
+  .rev-what {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rev-what code {
+    font-family: var(--mono);
+  }
+  .rev-subject,
+  .rev-as {
+    color: var(--muted);
+  }
 
   /* Editor decorations and floating UI are injected globally because
      CodeMirror lifts the tooltip/gutter DOM out of this component's scope. */
@@ -1692,6 +1824,21 @@
   }
   :global(.blame-popover .blame-view:hover) {
     text-decoration: underline;
+  }
+  :global(.blame-popover .blame-before) {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-size: 11px;
+    padding: 2px 4px;
+    cursor: pointer;
+  }
+  :global(.blame-popover .blame-before:hover:not(:disabled)) {
+    text-decoration: underline;
+  }
+  :global(.blame-popover .blame-before:disabled) {
+    color: var(--muted);
+    cursor: default;
   }
   :global(.blame-toast) {
     position: fixed;
@@ -1775,5 +1922,9 @@
   }
   :global(.cm-line.blame-selected) {
     background-color: rgba(127, 127, 200, 0.22);
+  }
+  :global(.cm-line.blame-focus) {
+    box-shadow: inset 3px 0 0 var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
   }
 </style>
