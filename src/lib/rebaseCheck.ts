@@ -11,7 +11,9 @@ export type CheckState =
   | Exclude<RebaseCheck, { kind: "cancelled" }>;
 export type ConflictCheck = Extract<RebaseCheck, { kind: "conflict" }>;
 
-let nextId = 1;
+// Random start: the backend's cancelled set outlives a webview reload, so ids
+// must not restart at a value a previous page already used.
+let nextId = crypto.getRandomValues(new Uint32Array(1))[0] >>> 1;
 
 /// Starts a check; onUpdate gets {checking,0,0} at once, progress, then the
 /// result. Returns cancel(): tells the backend to stop and guarantees no
@@ -70,6 +72,8 @@ export function checkBadge(s: CheckState): string {
       return "✓";
     case "conflict":
       return `⚠ conflict at ${s.commit.short_sha}`;
+    case "cant_check":
+      return "can't check";
     default:
       return checkText(s);
   }

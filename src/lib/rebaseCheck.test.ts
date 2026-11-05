@@ -161,7 +161,7 @@ describe("checkText / checkBadge", () => {
     [
       { kind: "cant_check", reason: "boom" },
       "can't check (boom)",
-      "can't check (boom)",
+      "can't check",
     ],
   ];
   it.each(cases)("%j", (s, text, badge) => {

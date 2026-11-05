@@ -234,8 +234,9 @@ export interface RebaseStep {
   sha: string;
 }
 
-/// A path that conflicts in a simulated rebase step. `kind` is "binary" for a
-/// file that can't be merged line by line, else null. Mirrors Rust `ConflictFile`.
+/// A path that conflicts in a simulated rebase step. `kind` is the conflict
+/// type merge-tree names (binary, submodule, modify/delete, …), null for a
+/// plain content conflict. Mirrors Rust `ConflictFile`.
 export interface ConflictFile {
   path: string;
   kind: string | null;

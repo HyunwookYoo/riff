@@ -7,6 +7,7 @@
 
   let check = $state<CheckState | null>(null);
   let dialogEl = $state<HTMLDivElement>();
+  let startBtn = $state<HTMLButtonElement>();
 
   // One check per open overlay; the teardown cancels it on close or re-open so
   // a stale result can never land.
@@ -16,7 +17,8 @@
       check = null;
       return;
     }
-    queueMicrotask(() => dialogEl?.focus());
+    // Enter confirms, Esc cancels (the dialog's onkeydown still sees Esc).
+    queueMicrotask(() => (startBtn ?? dialogEl)?.focus());
     return startRebaseCheck(c.repoPath, c.upstream, c.branch, null, (s) => (check = s));
   });
 
@@ -72,7 +74,11 @@
       <div class="rb-foot">
         <span class="rb-note"></span>
         <button type="button" class="rb-cancel" onclick={close}>Cancel</button>
-        <button type="button" class="rb-start" onclick={() => void confirmRebase()}>
+        <button
+          type="button"
+          class="rb-start"
+          bind:this={startBtn}
+          onclick={() => void confirmRebase()}>
           Rebase
         </button>
       </div>

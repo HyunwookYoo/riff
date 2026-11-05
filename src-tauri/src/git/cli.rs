@@ -1894,6 +1894,9 @@ impl GitLayer for GitCli {
                 .env("GIT_AUTHOR_EMAIL", "riff@localhost")
                 .env("GIT_COMMITTER_NAME", "riff")
                 .env("GIT_COMMITTER_EMAIL", "riff@localhost")
+                // fixed dates: identical inputs hash to the same scratch commit
+                .env("GIT_AUTHOR_DATE", "1000000000 +0000")
+                .env("GIT_COMMITTER_DATE", "1000000000 +0000")
                 .output()?;
             if !made.status.success() {
                 let stderr = String::from_utf8_lossy(&made.stderr).trim().to_string();
@@ -3536,6 +3539,28 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         git_in(&repo, &["config", "--unset", "user.email"]);
         let r = check(&repo, "base", "topic2", None).unwrap();
         assert!(matches!(r, RebaseCheck::Clean { commits: 2 }), "{r:?}");
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_check_repeat_writes_no_new_objects() {
+        let repo = check_fixture("rcheck-repeat");
+        clean_topic(&repo);
+        let count = |repo: &Path| {
+            String::from_utf8(git_out(repo, &["count-objects", "-v"]))
+                .unwrap()
+                .lines()
+                .find(|l| l.starts_with("count:"))
+                .unwrap()
+                .to_string()
+        };
+        let r = check(&repo, "base", "topic2", None).unwrap();
+        assert!(matches!(r, RebaseCheck::Clean { commits: 2 }), "{r:?}");
+        let after_first = count(&repo);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let r = check(&repo, "base", "topic2", None).unwrap();
+        assert!(matches!(r, RebaseCheck::Clean { commits: 2 }), "{r:?}");
+        assert_eq!(count(&repo), after_first);
         let _ = fs::remove_dir_all(&repo);
     }
 

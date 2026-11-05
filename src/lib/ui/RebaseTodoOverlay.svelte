@@ -80,13 +80,23 @@
     const steps: RebaseStep[] = untrack(() =>
       rows.map((r) => ({ action: r.action, sha: r.sha })),
     );
-    return startRebaseCheck(
-      plan.repoPath,
-      plan.upstream,
-      plan.branch,
-      steps,
-      (s) => (check = s),
-    );
+    // Debounced: show "checking" now (never a stale mark for an old order) and
+    // start the backend run once the edits settle.
+    check = { kind: "checking", done: 0, total: 0 };
+    let cancel: (() => void) | undefined;
+    const timer = setTimeout(() => {
+      cancel = startRebaseCheck(
+        plan.repoPath,
+        plan.upstream,
+        plan.branch,
+        steps,
+        (s) => (check = s),
+      );
+    }, 200);
+    return () => {
+      clearTimeout(timer);
+      cancel?.();
+    };
   });
 
   const warnSha = $derived(check?.kind === "conflict" ? check.commit.sha : null);

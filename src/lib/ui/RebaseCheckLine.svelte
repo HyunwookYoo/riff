@@ -1,5 +1,6 @@
 <!-- src/lib/ui/RebaseCheckLine.svelte -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import {
     checkBadge,
     checkText,
@@ -37,6 +38,14 @@
     clearTimeout(timer);
     timer = setTimeout(() => (copied = false), 1500);
   }
+
+  // A new state is a new request: drop the "Copied" mark of the old one.
+  $effect(() => {
+    void st;
+    clearTimeout(timer);
+    copied = false;
+  });
+  onDestroy(() => clearTimeout(timer));
 </script>
 
 {#if st}
@@ -45,8 +54,22 @@
       class="cl cl-{st.kind}"
       title={st.kind === "conflict"
         ? st.files.map(fileLabel).join("\n") + "\n" + LATER
-        : undefined}>{prefix}{checkBadge(st)}</span
+        : st.kind === "cant_check"
+          ? st.reason
+          : undefined}>{prefix}{checkBadge(st)}</span
     >
+    {#if st.kind === "conflict"}
+      <button
+        type="button"
+        class="cl-copy cl-copy-compact"
+        onclick={(e) => {
+          e.stopPropagation();
+          void copy(st);
+        }}
+      >
+        {copied ? "Copied" : "Copy request for AI"}
+      </button>
+    {/if}
   {:else}
     <div class="cl-full">
       <span class="cl cl-{st.kind}">{checkText(st)}</span>
@@ -87,6 +110,8 @@
     padding-left: 20px;
     font-family: var(--mono);
     font-size: 0.9em;
+    max-height: 30vh;
+    overflow-y: auto;
   }
   .cl-later {
     margin-top: 2px;
@@ -102,5 +127,11 @@
     color: var(--fg);
     cursor: pointer;
     font-size: 0.9em;
+  }
+  .cl-copy-compact {
+    margin: 0 0 0 6px;
+    padding: 0 6px;
+    font-size: 0.85em;
+    white-space: nowrap;
   }
 </style>
