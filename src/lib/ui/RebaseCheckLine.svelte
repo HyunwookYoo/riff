@@ -3,6 +3,7 @@
   import {
     checkBadge,
     checkText,
+    fileLabel,
     type CheckState,
     type ConflictCheck,
   } from "$lib/rebaseCheck";
@@ -25,10 +26,6 @@
 
   let copied = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
-
-  function fileLabel(f: { path: string; kind: string | null }): string {
-    return f.kind ? `${f.path} (${f.kind})` : f.path;
-  }
 
   async function copy(c: ConflictCheck) {
     try {

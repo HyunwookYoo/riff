@@ -75,10 +75,12 @@ export function checkBadge(s: CheckState): string {
   }
 }
 
+export function fileLabel(f: ConflictFile): string {
+  return f.kind ? `${f.path} (${f.kind})` : f.path;
+}
+
 export function filesText(files: ConflictFile[]): string {
-  return files
-    .map((f) => (f.kind === "binary" ? `${f.path} (binary)` : f.path))
-    .join(", ");
+  return files.map(fileLabel).join(", ");
 }
 
 export function aiRequest(o: {

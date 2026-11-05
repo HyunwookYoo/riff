@@ -179,6 +179,16 @@ describe("filesText", () => {
       ]),
     ).toBe("a.txt, b.uasset (binary)");
   });
+
+  it("labels any kind merge-tree names", () => {
+    expect(
+      filesText([
+        { path: "sub", kind: "submodule" },
+        { path: "x", kind: "modify/delete" },
+        { path: "a.txt", kind: null },
+      ]),
+    ).toBe("sub (submodule), x (modify/delete), a.txt");
+  });
 });
 
 describe("aiRequest", () => {
@@ -196,6 +206,13 @@ describe("aiRequest", () => {
 
   it("builds a plain request", () => {
     expect(aiRequest(base)).toBe([...head, ...tail].join("\n"));
+  });
+
+  it("labels a non-binary kind in the file line", () => {
+    const c = { ...conflict, files: [{ path: "sub", kind: "submodule" }] };
+    expect(aiRequest({ ...base, conflict: c })).toContain(
+      '(5개 중 2번째): sub (submodule)\n',
+    );
   });
 
   it("includes the plan block", () => {
