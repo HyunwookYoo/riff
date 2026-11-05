@@ -1,8 +1,16 @@
 <!-- src/lib/ui/RebaseTodoOverlay.svelte -->
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
+  import { untrack } from "svelte";
   import { startRebasePlan } from "$lib/rebase";
+  import {
+    aiRequest,
+    filesText,
+    startRebaseCheck,
+    type CheckState,
+  } from "$lib/rebaseCheck";
   import type { RebaseAction, RebaseStep } from "$lib/types";
+  import RebaseCheckLine from "./RebaseCheckLine.svelte";
 
   type Row = { sha: string; short: string; summary: string; action: RebaseAction };
 
@@ -55,6 +63,33 @@
       return "The first commit kept has nothing above it to meld into.";
     return null;
   });
+
+  // Re-check whenever the plan's shape changes. Only the plan, `problem` and
+  // the rows' key drive this; the teardown cancels the previous run so the
+  // newest wins and closing the overlay stops it.
+  let check = $state<CheckState | null>(null);
+  const planKey = $derived(rows.map((r) => r.action + ":" + r.sha).join(","));
+  $effect(() => {
+    const plan = appState.rebasePlan;
+    const blocked = problem;
+    void planKey;
+    if (!plan || blocked) {
+      check = null;
+      return;
+    }
+    const steps: RebaseStep[] = untrack(() =>
+      rows.map((r) => ({ action: r.action, sha: r.sha })),
+    );
+    return startRebaseCheck(
+      plan.repoPath,
+      plan.upstream,
+      plan.branch,
+      steps,
+      (s) => (check = s),
+    );
+  });
+
+  const warnSha = $derived(check?.kind === "conflict" ? check.commit.sha : null);
 
   function close() {
     appState.rebasePlan = null;
@@ -149,6 +184,9 @@
               {/each}
             </select>
             <span class="rb-sha">{row.short}</span>
+            {#if check?.kind === "conflict" && row.sha === warnSha}
+              <span class="rb-warn" title={filesText(check.files)}>⚠</span>
+            {/if}
             <span class="rb-summary">{row.summary}</span>
             <span class="rb-moves">
               <button
@@ -167,6 +205,21 @@
           </div>
         {/each}
       </div>
+      <RebaseCheckLine
+        state={check}
+        request={(conflict) =>
+          aiRequest({
+            repoPath: plan.repoPath,
+            branch: plan.branch ?? appState.currentBranch ?? "HEAD",
+            target: plan.upstream,
+            conflict,
+            plan: rows.map((r) => ({
+              action: r.action,
+              short: r.short,
+              summary: r.summary,
+            })),
+          })}
+      />
       <div class="rb-foot">
         <span class="rb-note">
           {#if problem}
@@ -281,6 +334,10 @@
     font-family: var(--mono);
     font-size: 0.85em;
     color: var(--accent);
+  }
+  .rb-warn {
+    flex: 0 0 auto;
+    color: var(--warn-fg, #d29922);
   }
   .rb-summary {
     flex: 1;

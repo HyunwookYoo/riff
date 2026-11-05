@@ -8,13 +8,12 @@ import {
   refreshActiveView,
 } from "./workingCopy";
 import { reloadBranchesFor } from "./workspace";
-import { confirmAction } from "./dialogs";
 import { classifyGitError } from "./gitError";
 import type { RebaseStep } from "./types";
 
 /// Short label for a rebase target: a ref keeps its name, a raw SHA is
 /// abbreviated the way the graph shows it.
-function shortTarget(target: string): string {
+export function shortTarget(target: string): string {
   return /^[0-9a-f]{7,40}$/.test(target) ? target.slice(0, 7) : target;
 }
 
@@ -74,19 +73,23 @@ export async function requestRebase(
   }
   // Rebasing a branch you are not on ends with that branch checked out —
   // git's own behaviour, worth saying before the fact rather than after.
-  const switches =
-    branch && branch !== appState.currentBranch
-      ? `\n\nriff will end up on ${branch}.`
-      : "";
-  const ok = await confirmAction(
-    `Rebase ${what} onto ${shortTarget(upstream)}?\n\n` +
-      `${commits.length} commit${commits.length === 1 ? "" : "s"} will be rewritten. ` +
-      `The pre-rebase tip stays recoverable from the reflog (Ctrl+Shift+R).` +
-      switches,
-    { title: "Rebase" },
-  );
-  if (!ok) return;
-  await runRebase(() => rebase(repoPath, upstream, branch));
+  appState.rebaseConfirm = {
+    repoPath,
+    upstream,
+    branch,
+    label: `${what} onto ${shortTarget(upstream)}`,
+    commits,
+    what,
+    switchesTo: branch && branch !== appState.currentBranch ? branch : null,
+  };
+}
+
+/// Run the rebase the confirm overlay is showing and close it.
+export async function confirmRebase(): Promise<void> {
+  const c = appState.rebaseConfirm;
+  if (!c) return;
+  appState.rebaseConfirm = null;
+  await runRebase(() => rebase(c.repoPath, c.upstream, c.branch));
 }
 
 /// Load the commits a rebase would replay. Returns null when the query itself

@@ -271,6 +271,13 @@ export interface RebasePlan {
   commits: Commit[];
 }
 
+/// The plain-rebase confirm overlay's contents: the plan plus the display name
+/// of what is rebased and the branch riff will end up on, when that changes.
+export interface RebaseConfirm extends RebasePlan {
+  what: string;
+  switchesTo: string | null;
+}
+
 /// One HEAD reflog entry. Mirrors Rust `ReflogEntry`. `selector` is the
 /// `HEAD@{N}` form; `subject` is git's reflog message (e.g. `commit: …`,
 /// `reset: moving to …`); `time` is when the reflog entry was written — i.e.
