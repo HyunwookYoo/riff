@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -13,7 +13,8 @@ use super::diff;
 use super::uasset;
 use super::{
     Branch, BranchKind, BranchStatus, ChangedFile, Commit, CommitFind, Containment, ContainmentDetail,
-    ConflictVersions, DiffMode, FileDiff, FileStatus, GitError, GitLayer, RebaseStep, ReflogEntry,
+    ConflictFile, ConflictVersions, DiffMode, FileDiff, FileStatus, GitError, GitLayer, RebaseAction,
+    RebaseCheck, RebaseStep, ReflogEntry,
     RepoStatus, SquashCheck, SquashVerdict, StatusEntry, SubmoduleCommit, SubmoduleInfo,
 };
 
@@ -1814,6 +1815,95 @@ impl GitLayer for GitCli {
         self.rebase_interactive_impl(path, upstream, branch, steps)
     }
 
+    fn rebase_check(
+        &self,
+        path: &Path,
+        upstream: &str,
+        branch: &str,
+        steps: Option<&[RebaseStep]>,
+        on_step: &mut dyn FnMut(u32, u32) -> bool,
+    ) -> Result<RebaseCheck, GitError> {
+        // Read-only: no write_lock and no drop_session. Only loose objects
+        // (merge-tree trees, scratch commits) are written.
+        if matches!(git_version(), Some(v) if v < (2, 40)) {
+            return Ok(RebaseCheck::CantCheck { reason: "needs git 2.40+".into() });
+        }
+        let plan = self.rebase_plan(path, upstream, branch)?;
+        let commits: Vec<Commit> = match steps {
+            None => plan,
+            Some(steps) => {
+                let mut picked = Vec::new();
+                for s in steps.iter().filter(|s| s.action != RebaseAction::Drop) {
+                    let c = plan.iter().find(|c| c.sha == s.sha).ok_or_else(|| {
+                        GitError::CommandFailed("rebase plan is out of date".into())
+                    })?;
+                    picked.push(c.clone());
+                }
+                picked
+            }
+        };
+        if commits.is_empty() {
+            return Ok(RebaseCheck::Nothing);
+        }
+        let total = commits.len() as u32;
+
+        let out = self.run(path, &["rev-parse", &format!("{}^{{commit}}", validate_ref(upstream)?)])?;
+        let mut cur = String::from_utf8_lossy(&out).trim().to_string();
+        for (i, c) in commits.iter().enumerate() {
+            if !on_step(i as u32, total) {
+                return Ok(RebaseCheck::Cancelled);
+            }
+            let Some(parent) = c.parents.first() else {
+                return Ok(RebaseCheck::CantCheck { reason: format!("{} has no parent", c.short_sha) });
+            };
+            let merged = git_command()
+                .arg("-C")
+                .arg(path)
+                .args(["merge-tree", "--write-tree", "-z", "--name-only"])
+                .arg(format!("--merge-base={parent}"))
+                .arg(&cur)
+                .arg(&c.sha)
+                .output()?;
+            match merged.status.code() {
+                Some(0) => {}
+                Some(1) => {
+                    return Ok(RebaseCheck::Conflict {
+                        at: i as u32 + 1,
+                        total,
+                        commit: c.clone(),
+                        files: parse_merge_tree_conflicts(&merged.stdout),
+                    })
+                }
+                _ => {
+                    let stderr = String::from_utf8_lossy(&merged.stderr).trim().to_string();
+                    return Err(GitError::CommandFailed(stderr));
+                }
+            }
+            if i + 1 == commits.len() {
+                break;
+            }
+            // merge-tree takes commits, not trees: chain the result through a
+            // scratch commit (no ref points at it; gc collects it).
+            let tree_end = merged.stdout.iter().position(|b| *b == 0).unwrap_or(merged.stdout.len());
+            let tree = String::from_utf8_lossy(&merged.stdout[..tree_end]).trim().to_string();
+            let made = git_command()
+                .arg("-C")
+                .arg(path)
+                .args(["commit-tree", "--no-gpg-sign", &tree, "-p", &cur, "-m", "riff rebase preview"])
+                .env("GIT_AUTHOR_NAME", "riff")
+                .env("GIT_AUTHOR_EMAIL", "riff@localhost")
+                .env("GIT_COMMITTER_NAME", "riff")
+                .env("GIT_COMMITTER_EMAIL", "riff@localhost")
+                .output()?;
+            if !made.status.success() {
+                let stderr = String::from_utf8_lossy(&made.stderr).trim().to_string();
+                return Err(GitError::CommandFailed(stderr));
+            }
+            cur = String::from_utf8_lossy(&made.stdout).trim().to_string();
+        }
+        Ok(RebaseCheck::Clean { commits: total })
+    }
+
     fn pending_op(&self, path: &Path) -> Result<String, GitError> {
         let out = self.run(path, &["rev-parse", "--git-dir"])?;
         // `--git-dir` is relative to `path` (or absolute). join() handles both.
@@ -2620,6 +2710,54 @@ fn parse_gitlink_sha(bytes: &[u8]) -> Result<Option<String>, GitError> {
     Ok(Some(rest[..tab].to_string()))
 }
 
+/// `(major, minor)` from `git --version` output such as
+/// `git version 2.43.0.windows.1`.
+fn parse_git_version(s: &str) -> Option<(u32, u32)> {
+    let mut parts = s.trim().strip_prefix("git version ")?.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
+/// The installed git's version, read once. None when it cannot be read or
+/// parsed — callers then proceed as if the feature they need is there.
+fn git_version() -> Option<(u32, u32)> {
+    static VERSION: OnceLock<Option<(u32, u32)>> = OnceLock::new();
+    *VERSION.get_or_init(|| {
+        let out = git_command().arg("--version").output().ok()?;
+        parse_git_version(&String::from_utf8_lossy(&out.stdout))
+    })
+}
+
+/// Conflicted files from `merge-tree --write-tree -z --name-only` output:
+/// `tree NUL path NUL ... NUL NUL`, then message records `count NUL path...
+/// type NUL message NUL`. Submodule conflicts append free text after the last
+/// record, so parsing stops at the first field that is not a count.
+fn parse_merge_tree_conflicts(out: &[u8]) -> Vec<ConflictFile> {
+    let mut fields = out.split(|b| *b == 0).map(|f| String::from_utf8_lossy(f).into_owned());
+    fields.next();
+    let paths: Vec<String> = fields.by_ref().take_while(|p| !p.is_empty()).collect();
+    let mut kinds: HashMap<String, String> = HashMap::new();
+    while let Some(count) = fields.next().and_then(|f| f.parse::<usize>().ok()) {
+        let rec_paths: Vec<String> = fields.by_ref().take(count).collect();
+        let Some(ty) = fields.next() else { break };
+        fields.next();
+        let inner = ty.strip_prefix("CONFLICT (").and_then(|t| t.strip_suffix(')'));
+        let Some(inner) = inner.filter(|i| *i != "contents") else { continue };
+        let kind = if inner.starts_with("submodule") { "submodule" } else { inner };
+        for p in rec_paths {
+            kinds.entry(p).or_insert_with(|| kind.to_string());
+        }
+    }
+    paths
+        .into_iter()
+        .map(|path| {
+            let kind = kinds.get(&path).cloned();
+            ConflictFile { path, kind }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3194,6 +3332,256 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         let entry = format!("160000,{sha},sub");
         git_in(repo, &["update-index", "--add", "--cacheinfo", &entry]);
         git_in(repo, &["commit", "-qm", msg]);
+    }
+
+    /// `base` (f.txt `a b c`, g.txt `1`) and `topic` off it with t1 (g.txt),
+    /// t2 (f.txt line 2 -> T) and t3 (adds h.txt), then `base` gains b1 (f.txt
+    /// line 2 -> B): replaying topic conflicts first at t2. Leaves `base` out.
+    fn check_fixture(name: &str) -> PathBuf {
+        let repo = temp_repo(name);
+        git_in(&repo, &["config", "core.autocrlf", "false"]);
+        git_in(&repo, &["checkout", "-q", "-b", "base"]);
+        fs::write(repo.join("g.txt"), "1\n").unwrap();
+        commit_file(&repo, "f.txt", "a\nb\nc\n", "base");
+        git_in(&repo, &["checkout", "-q", "-b", "topic"]);
+        commit_file(&repo, "g.txt", "2\n", "t1");
+        commit_file(&repo, "f.txt", "a\nT\nc\n", "t2");
+        commit_file(&repo, "h.txt", "h\n", "t3");
+        git_in(&repo, &["checkout", "-q", "base"]);
+        commit_file(&repo, "f.txt", "a\nB\nc\n", "b1");
+        repo
+    }
+
+    /// `[t1, t2, t3]` shas of `check_fixture`'s topic, oldest first.
+    fn check_shas(repo: &Path) -> [String; 3] {
+        [
+            rev_parse(repo, "topic~2"),
+            rev_parse(repo, "topic~1"),
+            rev_parse(repo, "topic"),
+        ]
+    }
+
+    fn step(action: RebaseAction, sha: &str) -> RebaseStep {
+        RebaseStep { action, sha: sha.to_string() }
+    }
+
+    fn check(
+        repo: &Path,
+        upstream: &str,
+        branch: &str,
+        steps: Option<&[RebaseStep]>,
+    ) -> Result<RebaseCheck, GitError> {
+        GitCli::new().rebase_check(repo, upstream, branch, steps, &mut |_, _| true)
+    }
+
+    /// `topic2` off `base`, two commits touching only h.txt: replays cleanly.
+    fn clean_topic(repo: &Path) {
+        git_in(repo, &["checkout", "-q", "-b", "topic2"]);
+        commit_file(repo, "h.txt", "1\n", "c1");
+        commit_file(repo, "h.txt", "2\n", "c2");
+        git_in(repo, &["checkout", "-q", "base"]);
+    }
+
+    fn git_out(dir: &Path, args: &[&str]) -> Vec<u8> {
+        let out = git_command().arg("-C").arg(dir).args(args).output().unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        out.stdout
+    }
+
+    #[test]
+    fn rebase_check_clean_branch() {
+        let repo = check_fixture("rcheck-clean");
+        clean_topic(&repo);
+        let r = check(&repo, "base", "topic2", None).unwrap();
+        assert!(matches!(r, RebaseCheck::Clean { commits: 2 }), "{r:?}");
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_check_stops_at_first_conflict() {
+        let repo = check_fixture("rcheck-conflict");
+        let r = check(&repo, "base", "topic", None).unwrap();
+        match r {
+            RebaseCheck::Conflict { at, total, commit, files } => {
+                assert_eq!((at, total), (2, 3));
+                assert_eq!(commit.summary, "t2");
+                assert_eq!(
+                    files,
+                    vec![ConflictFile { path: "f.txt".into(), kind: None }]
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_check_nothing_to_replay() {
+        let repo = check_fixture("rcheck-nothing");
+        let r = check(&repo, "base", "base", None).unwrap();
+        assert!(matches!(r, RebaseCheck::Nothing), "{r:?}");
+        let [t1, t2, t3] = check_shas(&repo);
+        let all_drop = [
+            step(RebaseAction::Drop, &t1),
+            step(RebaseAction::Drop, &t2),
+            step(RebaseAction::Drop, &t3),
+        ];
+        let r = check(&repo, "base", "topic", Some(&all_drop)).unwrap();
+        assert!(matches!(r, RebaseCheck::Nothing), "{r:?}");
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_check_follows_edited_plan() {
+        let repo = check_fixture("rcheck-plan");
+        let [t1, t2, t3] = check_shas(&repo);
+
+        let dropped = [
+            step(RebaseAction::Pick, &t1),
+            step(RebaseAction::Drop, &t2),
+            step(RebaseAction::Pick, &t3),
+        ];
+        let r = check(&repo, "base", "topic", Some(&dropped)).unwrap();
+        assert!(matches!(r, RebaseCheck::Clean { commits: 2 }), "{r:?}");
+
+        let reordered = [
+            step(RebaseAction::Pick, &t3),
+            step(RebaseAction::Pick, &t1),
+            step(RebaseAction::Drop, &t2),
+        ];
+        let r = check(&repo, "base", "topic", Some(&reordered)).unwrap();
+        assert!(matches!(r, RebaseCheck::Clean { commits: 2 }), "{r:?}");
+
+        let squashed = [
+            step(RebaseAction::Pick, &t2),
+            step(RebaseAction::Squash, &t1),
+            step(RebaseAction::Fixup, &t3),
+        ];
+        let r = check(&repo, "base", "topic", Some(&squashed)).unwrap();
+        assert!(matches!(r, RebaseCheck::Conflict { at: 1, total: 3, .. }), "{r:?}");
+
+        let stale = [step(RebaseAction::Pick, &rev_parse(&repo, "base"))];
+        assert!(check(&repo, "base", "topic", Some(&stale)).is_err());
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_check_cancel_stops() {
+        let repo = check_fixture("rcheck-cancel");
+        let mut seen = Vec::new();
+        let r = GitCli::new()
+            .rebase_check(&repo, "base", "topic", None, &mut |done, total| {
+                seen.push((done, total));
+                done != 1
+            })
+            .unwrap();
+        assert!(matches!(r, RebaseCheck::Cancelled), "{r:?}");
+        assert_eq!(seen, vec![(0, 3), (1, 3)]);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_check_names_binary_conflicts() {
+        let repo = temp_repo("rcheck-binary");
+        git_in(&repo, &["config", "core.autocrlf", "false"]);
+        git_in(&repo, &["checkout", "-q", "-b", "base"]);
+        fs::write(repo.join("bin.uasset"), [0u8, 1]).unwrap();
+        git_in(&repo, &["add", "-A"]);
+        git_in(&repo, &["commit", "-qm", "bin"]);
+        git_in(&repo, &["checkout", "-q", "-b", "topic"]);
+        fs::write(repo.join("bin.uasset"), [0u8, 2]).unwrap();
+        git_in(&repo, &["commit", "-qam", "t"]);
+        git_in(&repo, &["checkout", "-q", "base"]);
+        fs::write(repo.join("bin.uasset"), [0u8, 3]).unwrap();
+        git_in(&repo, &["commit", "-qam", "b"]);
+        let r = check(&repo, "base", "topic", None).unwrap();
+        match r {
+            RebaseCheck::Conflict { files, .. } => assert!(
+                files.contains(&ConflictFile {
+                    path: "bin.uasset".into(),
+                    kind: Some("binary".into())
+                }),
+                "{files:?}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_check_reports_korean_paths_verbatim() {
+        let repo = temp_repo("rcheck-korean");
+        git_in(&repo, &["config", "core.autocrlf", "false"]);
+        git_in(&repo, &["checkout", "-q", "-b", "base"]);
+        commit_file(&repo, "한글 파일.txt", "a\nb\nc\n", "base");
+        git_in(&repo, &["checkout", "-q", "-b", "topic"]);
+        commit_file(&repo, "한글 파일.txt", "a\nT\nc\n", "t");
+        git_in(&repo, &["checkout", "-q", "base"]);
+        commit_file(&repo, "한글 파일.txt", "a\nB\nc\n", "b");
+        let r = check(&repo, "base", "topic", None).unwrap();
+        match r {
+            RebaseCheck::Conflict { files, .. } => assert_eq!(files[0].path, "한글 파일.txt"),
+            other => panic!("{other:?}"),
+        }
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_check_ignores_signing_config() {
+        let repo = check_fixture("rcheck-signing");
+        clean_topic(&repo);
+        git_in(&repo, &["config", "commit.gpgsign", "true"]);
+        git_in(&repo, &["config", "gpg.program", "does-not-exist"]);
+        git_in(&repo, &["config", "--unset", "user.name"]);
+        git_in(&repo, &["config", "--unset", "user.email"]);
+        let r = check(&repo, "base", "topic2", None).unwrap();
+        assert!(matches!(r, RebaseCheck::Clean { commits: 2 }), "{r:?}");
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn rebase_check_leaves_repo_untouched() {
+        let repo = check_fixture("rcheck-readonly");
+        clean_topic(&repo);
+        fs::write(repo.join("f.txt"), "a\ndirty\nc\n").unwrap();
+        fs::write(repo.join("g.txt"), "staged\n").unwrap();
+        git_in(&repo, &["add", "g.txt"]);
+        let snapshot = |repo: &Path| {
+            [
+                git_out(repo, &["rev-parse", "HEAD"]),
+                git_out(repo, &["show-ref"]),
+                git_out(repo, &["status", "--porcelain=v2"]),
+                git_out(repo, &["diff"]),
+                git_out(repo, &["diff", "--cached"]),
+            ]
+        };
+        let before = snapshot(&repo);
+        let r = check(&repo, "base", "topic", None).unwrap();
+        assert!(matches!(r, RebaseCheck::Conflict { .. }), "{r:?}");
+        let r = check(&repo, "base", "topic2", None).unwrap();
+        assert!(matches!(r, RebaseCheck::Clean { .. }), "{r:?}");
+        assert_eq!(snapshot(&repo), before);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn parse_merge_tree_conflicts_reads_kinds() {
+        let out = b"tree\0sub\0f\0\01\0sub\0CONFLICT (submodule not initialized)\0msg\0\
+            1\0sub\0CONFLICT (contents)\0msg\0Recursive merging ...\n\01\0f\0Auto-merging\0m\0";
+        assert_eq!(
+            parse_merge_tree_conflicts(out),
+            vec![
+                ConflictFile { path: "sub".into(), kind: Some("submodule".into()) },
+                ConflictFile { path: "f".into(), kind: None },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_git_version_reads_windows_suffix() {
+        assert_eq!(parse_git_version("git version 2.43.0.windows.1\n"), Some((2, 43)));
+        assert_eq!(parse_git_version("git version 2.39.2"), Some((2, 39)));
+        assert_eq!(parse_git_version("x"), None);
     }
 
     /// User settings that hide a submodule change from `git diff` or print it

@@ -224,6 +224,27 @@ pub enum RebaseAction {
     Drop,
 }
 
+/// One path a simulated rebase step leaves conflicted. `kind` is git's
+/// conflict type when it is more specific than a plain content conflict
+/// (`binary`, `modify/delete`, `add/add`, `submodule`, ...), else None.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConflictFile {
+    pub path: String,
+    pub kind: Option<String>,
+}
+
+/// Outcome of `rebase_check`, the read-only rebase simulation. `commits`,
+/// `at` and `total` count replayed (non-drop) commits; `at` is 1-based.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RebaseCheck {
+    Clean { commits: u32 },
+    Conflict { at: u32, total: u32, commit: Commit, files: Vec<ConflictFile> },
+    Nothing,
+    CantCheck { reason: String },
+    Cancelled,
+}
+
 /// Submodule entry as declared in `.gitmodules`. `initialized` is true when
 /// the submodule's working tree has been checked out (i.e. `<repo>/<path>/.git`
 /// exists). Used by the multi-root workspace (§13) to populate the repo list.
@@ -492,6 +513,19 @@ pub trait GitLayer {
         branch: Option<&str>,
         steps: &[RebaseStep],
     ) -> Result<bool, GitError>;
+    /// Simulate the rebase (`steps` when the user edited the plan, else the
+    /// straight `rebase_plan` pick) with `merge-tree`, one commit at a time,
+    /// and report the first commit that conflicts. Read-only toward the
+    /// working tree, index, HEAD and refs. `branch` empty means HEAD.
+    /// `on_step(done, total)` runs before each step; returning false cancels.
+    fn rebase_check(
+        &self,
+        path: &Path,
+        upstream: &str,
+        branch: &str,
+        steps: Option<&[RebaseStep]>,
+        on_step: &mut dyn FnMut(u32, u32) -> bool,
+    ) -> Result<RebaseCheck, GitError>;
     /// The in-progress operation, if any: "merge" | "rebase" | "cherry-pick" |
     /// "revert" | "none". Drives the conflict banner.
     fn pending_op(&self, path: &Path) -> Result<String, GitError>;
