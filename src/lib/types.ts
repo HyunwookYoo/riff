@@ -232,6 +232,33 @@ export interface RebaseStep {
   sha: string;
 }
 
+/// A path that conflicts in a simulated rebase step. `kind` is "binary" for a
+/// file that can't be merged line by line, else null. Mirrors Rust `ConflictFile`.
+export interface ConflictFile {
+  path: string;
+  kind: string | null;
+}
+
+/// Outcome of `rebase_check`. Mirrors Rust `RebaseCheck`.
+export type RebaseCheck =
+  | { kind: "clean"; commits: number }
+  | {
+      kind: "conflict";
+      at: number;
+      total: number;
+      commit: Commit;
+      files: ConflictFile[];
+    }
+  | { kind: "nothing" }
+  | { kind: "cant_check"; reason: string }
+  | { kind: "cancelled" };
+
+/// Progress of a running rebase check. Mirrors Rust `RebaseCheckProgress`.
+export interface RebaseCheckProgress {
+  done: number;
+  total: number;
+}
+
 /// The rebase the plan editor is open on: what it would replay (`commits`,
 /// oldest first, straight from `rebase_plan`) and where. `branch` is null when
 /// the rebase runs on the current branch; `label` is the human form of

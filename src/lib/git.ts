@@ -15,6 +15,8 @@ import type {
   FileStatus,
   FileViewMode,
   PersistedState,
+  RebaseCheck,
+  RebaseCheckProgress,
   RebaseStep,
   ReflogEntry,
   RepoStatus,
@@ -211,6 +213,35 @@ export function rebasePlan(
   branch: string,
 ): Promise<Commit[]> {
   return invoke("rebase_plan", { path, upstream, branch });
+}
+
+/**
+ * Simulate the rebase read-only and report the first conflict, if any.
+ * `steps` null checks a plain rebase. `id` names this run for
+ * `cancelRebaseCheck`; `onProgress` fires before each replayed commit.
+ */
+export function rebaseCheck(
+  path: string,
+  upstream: string,
+  branch: string,
+  steps: RebaseStep[] | null,
+  id: number,
+  onProgress: (p: RebaseCheckProgress) => void,
+): Promise<RebaseCheck> {
+  const channel = new Channel<RebaseCheckProgress>();
+  channel.onmessage = onProgress;
+  return invoke("rebase_check", {
+    path,
+    upstream,
+    branch,
+    steps,
+    id,
+    onProgress: channel,
+  });
+}
+
+export function cancelRebaseCheck(id: number): Promise<void> {
+  return invoke("cancel_rebase_check", { id });
 }
 
 /**

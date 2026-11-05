@@ -7,11 +7,22 @@ use std::path::Path;
 
 use git::{
     Blame, Branch, BranchStatus, ChangedFile, Commit, CommitFind, Containment, ContainmentDetail,
-    ConflictVersions, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer, RebaseStep,
-    ReflogEntry, RepoStatus, SquashCheck, SubmoduleInfo,
+    ConflictVersions, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer, RebaseCheck,
+    RebaseStep, ReflogEntry, RepoStatus, SquashCheck, SubmoduleInfo,
 };
 use store::{PersistedState, StoreError};
 use tauri::Manager;
+
+/// Ids of rebase checks the frontend has asked to stop. A running check polls
+/// (and consumes) its own id between replay steps.
+#[derive(Default)]
+struct RebaseChecks(std::sync::Mutex<std::collections::HashSet<u32>>);
+
+#[derive(Clone, serde::Serialize)]
+struct RebaseCheckProgress {
+    done: u32,
+    total: u32,
+}
 
 #[tauri::command]
 async fn validate_repo(state: tauri::State<'_, GitCli>, path: String) -> Result<String, GitError> {
@@ -265,6 +276,37 @@ async fn rebase_plan(
     branch: String,
 ) -> Result<Vec<Commit>, GitError> {
     state.rebase_plan(Path::new(&path), &upstream, &branch)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn rebase_check(
+    state: tauri::State<'_, GitCli>,
+    checks: tauri::State<'_, RebaseChecks>,
+    path: String,
+    upstream: String,
+    branch: String,
+    steps: Option<Vec<RebaseStep>>,
+    id: u32,
+    on_progress: tauri::ipc::Channel<RebaseCheckProgress>,
+) -> Result<RebaseCheck, GitError> {
+    let result = state.rebase_check(
+        Path::new(&path),
+        &upstream,
+        &branch,
+        steps.as_deref(),
+        &mut |done, total| {
+            let _ = on_progress.send(RebaseCheckProgress { done, total });
+            !checks.0.lock().unwrap().remove(&id)
+        },
+    );
+    checks.0.lock().unwrap().remove(&id);
+    result
+}
+
+#[tauri::command]
+fn cancel_rebase_check(checks: tauri::State<'_, RebaseChecks>, id: u32) {
+    checks.0.lock().unwrap().insert(id);
 }
 
 #[tauri::command]
@@ -591,6 +633,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(GitCli::new())
         .manage(watch::RepoWatch::new())
+        .manage(RebaseChecks::default())
         .setup(|app| {
             // The watcher needs an AppHandle to emit events; it only exists now.
             app.state::<watch::RepoWatch>()
@@ -619,6 +662,8 @@ pub fn run() {
             branch_status,
             push,
             rebase_plan,
+            rebase_check,
+            cancel_rebase_check,
             rebase,
             rebase_interactive,
             pending_op,
