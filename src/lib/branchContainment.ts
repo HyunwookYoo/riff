@@ -370,7 +370,16 @@ async function loadGroup(idx: number, s: number, tips: Tips): Promise<void> {
   } catch (e) {
     // No tips: a failed group loads again on the next refresh.
     if (s === bcSession) {
-      patchGroup(idx, { status: "error", error: String(e), baseTip: null, compareTip: null });
+      // The old tips' preview no longer describes anything riff could read.
+      rebaseRuns.get(idx)?.cancel();
+      rebaseRuns.delete(idx);
+      patchGroup(idx, {
+        status: "error",
+        error: String(e),
+        baseTip: null,
+        compareTip: null,
+        rebase: null,
+      });
     }
   }
 }

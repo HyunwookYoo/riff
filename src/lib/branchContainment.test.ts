@@ -1642,3 +1642,30 @@ describe("rebase conflict preview", () => {
     expect(cancels[0]).toHaveBeenCalled();
   });
 });
+
+describe("rebase preview after a failed reload", () => {
+  it("drops the old answer and run when a moved-tips reload fails", async () => {
+    const cancel = vi.fn();
+    let onUpdate: (s: CheckState) => void = () => {};
+    vi.mocked(startRebaseCheck).mockImplementation((_p, _u, _b, _s, cb) => {
+      onUpdate = cb;
+      return cancel;
+    });
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    vi.mocked(containment).mockResolvedValueOnce(marks({ ahead: 0 }));
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+    vi.mocked(commitLog).mockResolvedValue([commit("t1")]);
+    await loadBranchContainment();
+    // The old tips' answer is on the group while its run is still current.
+    const clean: CheckState = { kind: "clean", commits: 2 };
+    appState.bcGroups = { 0: { ...appState.bcGroups[0], rebase: clean } };
+
+    vi.mocked(commitLog).mockResolvedValue([commit("t2")]);
+    vi.mocked(containment).mockRejectedValue(new Error("boom"));
+    await loadBranchContainment();
+    expect(appState.bcGroups[0]).toMatchObject({ status: "error", rebase: null });
+    expect(cancel).toHaveBeenCalled();
+    onUpdate({ kind: "clean", commits: 9 });
+    expect(appState.bcGroups[0].rebase).toBeNull();
+  });
+});
