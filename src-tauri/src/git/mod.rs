@@ -94,6 +94,22 @@ pub struct ContainmentDetail {
     pub introduced_by: Option<Commit>,
 }
 
+/// Where the commit a SHA prefix names sits in one commit-table list. See
+/// `GitLayer::find_commit`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommitFind {
+    /// Commits in compare's history whose SHA starts with the prefix; only 1
+    /// names a commit.
+    pub matches: u32,
+    /// That one commit's full SHA.
+    pub sha: Option<String>,
+    /// Whether the commit is in base (an ancestor of it).
+    pub in_target: bool,
+    /// The commit's row in the list asked about, counting from 0; None when
+    /// the list leaves it out.
+    pub index: Option<u32>,
+}
+
 /// Whether a branch's changes already reached the base without ancestry — the
 /// squash-merge case `containment` cannot see. See `GitLayer::squash_check`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -549,6 +565,21 @@ pub trait GitLayer {
         sha: &str,
         target: &str,
     ) -> Result<ContainmentDetail, GitError>;
+    /// Find the commit whose SHA starts with `prefix` (4 to 40 hex digits, any
+    /// case) among `source`'s history ("" = every ref), for the commit table's
+    /// SHA search. Reports how many commits match, whether the one match is in
+    /// `target`, and its row in the list the table shows: `source --not
+    /// <list_exclude>` in date order, or `source`'s whole history in log order
+    /// when `list_exclude` is None (the two lists `commit_log_excluding` and
+    /// `commit_log` page through).
+    fn find_commit(
+        &self,
+        path: &Path,
+        prefix: &str,
+        source: &str,
+        target: &str,
+        list_exclude: Option<&str>,
+    ) -> Result<CommitFind, GitError>;
     /// Whether `source`'s changes since its merge-base with `target` already
     /// landed in `target` without ancestry: as one commit whose patch-id equals
     /// the branch's net change (`Squash`), or as content only — merging would

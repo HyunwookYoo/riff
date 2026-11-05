@@ -166,6 +166,17 @@ export interface ContainmentDetail {
   introduced_by: Commit | null;
 }
 
+/// Where the commit a SHA prefix names sits in one commit-table list. Mirrors
+/// Rust `CommitFind`: `matches` counts compare's commits with that prefix (only
+/// 1 names a commit, `sha`); `in_target` is whether it is in base; `index` is
+/// its row in the list asked about (null when that list leaves it out).
+export interface CommitFind {
+  matches: number;
+  sha: string | null;
+  in_target: boolean;
+  index: number | null;
+}
+
 /// One entry from `git status --porcelain=v2`. Mirrors Rust `StatusEntry`.
 /// `index_status` (X, staged side) and `worktree_status` (Y, unstaged side)
 /// are single-character porcelain codes (`.MADRCU?`, `.` = unmodified);

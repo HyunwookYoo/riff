@@ -10,6 +10,7 @@ vi.mock("./git", () => ({
   commitLogExcluding: vi.fn(),
   commitContainmentDetail: vi.fn(),
   squashCheck: vi.fn(),
+  findCommit: vi.fn(),
 }));
 vi.mock("./repoRange", () => ({ resolveRepoRanges: vi.fn() }));
 vi.mock("./compare", () => ({
@@ -20,8 +21,10 @@ vi.mock("./compare", () => ({
 
 import {
   PAGE_SIZE,
+  clearBranchContainment,
   clearPick,
   dropPickOutside,
+  findInTable,
   groupCounts,
   isRepoVisible,
   loadBranchContainment,
@@ -41,6 +44,7 @@ import {
   commitLog,
   commitLogExcluding,
   containment,
+  findCommit,
   squashCheck,
 } from "./git";
 import { resolveRepoRanges } from "./repoRange";
@@ -110,6 +114,7 @@ beforeEach(() => {
     commitLogExcluding,
     commitContainmentDetail,
     squashCheck,
+    findCommit,
     resolveRepoRanges,
     compare,
     listedRanges,
@@ -1448,5 +1453,107 @@ describe("squash detection", () => {
     await first;
     expect(appState.bcGroups[0].compare).toBe("new");
     expect(appState.bcGroups[0].squash).toEqual(sq("none"));
+  });
+});
+
+describe("findInTable", () => {
+  const found = (sha: string, index: number | null, in_target = false) => ({
+    matches: 1,
+    sha,
+    in_target,
+    index,
+  });
+  const rows = (n: number, from = 0) =>
+    Array.from({ length: n }, (_, i) => commit(`c${from + i}`));
+
+  it("turns down a query that is not 4 to 40 hex digits", async () => {
+    for (const q of ["", "abc", "xyz1", "a".repeat(41)]) {
+      expect(await findInTable(q)).toEqual({ kind: "invalid" });
+    }
+    expect(findCommit).not.toHaveBeenCalled();
+  });
+
+  it("finds a listed row without loading anything", async () => {
+    appState.bcGroups = { 0: group({ commits: rows(3), marks: marks({ ahead: 3 }) }) };
+    vi.mocked(findCommit).mockResolvedValue(found("c1", 1));
+    expect(await findInTable(" C1ab ")).toEqual({ kind: "found", repoIdx: 0, sha: "c1" });
+    expect(findCommit).toHaveBeenCalledWith("/main", "c1ab", "feature", "main", "main");
+    expect(commitLogExcluding).not.toHaveBeenCalled();
+  });
+
+  it("loads through a row past the loaded pages in one fetch", async () => {
+    appState.bcGroups = {
+      0: group({ commits: rows(100), hasMore: true, marks: marks({ ahead: 400 }) }),
+    };
+    vi.mocked(findCommit).mockResolvedValue(found("c250", 250));
+    vi.mocked(commitLogExcluding).mockResolvedValue(rows(200, 100));
+    expect(await findInTable("c250")).toEqual({ kind: "found", repoIdx: 0, sha: "c250" });
+    expect(commitLogExcluding).toHaveBeenCalledWith("/main", "feature", "main", 200, 100);
+    expect(appState.bcGroups[0].hasMore).toBe(true);
+  });
+
+  it("shows merged commits for a commit already in base, then finds it there", async () => {
+    appState.bcGroups = { 0: group({ commits: rows(1), marks: marks({ ahead: 1 }) }) };
+    vi.mocked(findCommit)
+      .mockResolvedValueOnce(found("old", null, true))
+      .mockResolvedValueOnce(found("old", 1, true));
+    vi.mocked(commitLog).mockResolvedValue([commit("c0"), commit("old")]);
+    expect(await findInTable("0dd0")).toEqual({ kind: "found", repoIdx: 0, sha: "old" });
+    expect(appState.bcShowMerged).toBe(true);
+    // The merged list here is compare's whole history: nothing excluded.
+    expect(findCommit).toHaveBeenLastCalledWith("/main", "0dd0", "feature", "main", null);
+  });
+
+  it("asks about the list after the introducing merge when it is known", async () => {
+    appState.bcShowMerged = true;
+    appState.bcGroups = {
+      0: group({ commits: [commit("f1")], mergedBy: commit("m1", ["b0", "f1"]) }),
+    };
+    vi.mocked(findCommit).mockResolvedValue(found("f1", 0, true));
+    expect(await findInTable("f1f1")).toEqual({ kind: "found", repoIdx: 0, sha: "f1" });
+    expect(findCommit).toHaveBeenCalledWith("/main", "f1f1", "feature", "main", "b0");
+  });
+
+  it("says when a commit in base is in no list", async () => {
+    appState.bcShowMerged = true;
+    appState.bcGroups = { 0: group({ mergedBy: commit("m1", ["b0", "f1"]) }) };
+    vi.mocked(findCommit).mockResolvedValue(found("old", null, true));
+    expect(await findInTable("abcd")).toEqual({ kind: "unlisted" });
+  });
+
+  it("says when no commit or several match across the groups on screen", async () => {
+    appState.bcGroups = { 0: group({}), 1: group({ path: "/main/sub" }) };
+    vi.mocked(findCommit).mockResolvedValue({ matches: 0, sha: null, in_target: false, index: null });
+    expect(await findInTable("abcd")).toEqual({ kind: "not-in-range" });
+    vi.mocked(findCommit)
+      .mockResolvedValueOnce(found("abcd1", 0))
+      .mockResolvedValueOnce(found("abcd2", 0));
+    expect(await findInTable("abcd")).toEqual({ kind: "ambiguous" });
+  });
+
+  it("searches only the repos on screen", async () => {
+    appState.workspaceLayout = "tabs";
+    appState.activeRepoIdx = 1;
+    appState.bcGroups = { 0: group({}), 1: group({ path: "/main/sub", commits: rows(1) }) };
+    vi.mocked(findCommit).mockResolvedValue(found("c0", 0));
+    expect(await findInTable("abcd")).toEqual({ kind: "found", repoIdx: 1, sha: "c0" });
+    expect(findCommit).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(findCommit).mock.calls[0][0]).toBe("/main/sub");
+  });
+
+  it("reports a failed lookup when nothing else matched", async () => {
+    appState.bcGroups = { 0: group({}) };
+    vi.mocked(findCommit).mockRejectedValue("boom");
+    expect(await findInTable("abcd")).toEqual({ kind: "error", message: "boom" });
+  });
+
+  it("drops its answer when the table reloads meanwhile", async () => {
+    appState.bcGroups = { 0: group({ commits: rows(1) }) };
+    let answer!: (f: ReturnType<typeof found>) => void;
+    vi.mocked(findCommit).mockReturnValue(new Promise((r) => (answer = r)));
+    const search = findInTable("abcd");
+    clearBranchContainment();
+    answer(found("c0", 0));
+    expect(await search).toEqual({ kind: "stale" });
   });
 });

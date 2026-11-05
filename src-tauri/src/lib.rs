@@ -6,7 +6,7 @@ pub mod watch;
 use std::path::Path;
 
 use git::{
-    Blame, Branch, BranchStatus, ChangedFile, Commit, Containment, ContainmentDetail,
+    Blame, Branch, BranchStatus, ChangedFile, Commit, CommitFind, Containment, ContainmentDetail,
     ConflictVersions, DiffMode, FileDiff, FileStatus, GitCli, GitError, GitLayer, RebaseStep,
     ReflogEntry, RepoStatus, SquashCheck, SubmoduleInfo,
 };
@@ -457,6 +457,18 @@ async fn commit_containment_detail(
 }
 
 #[tauri::command]
+async fn find_commit(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    prefix: String,
+    source: String,
+    target: String,
+    list_exclude: Option<String>,
+) -> Result<CommitFind, GitError> {
+    state.find_commit(Path::new(&path), &prefix, &source, &target, list_exclude.as_deref())
+}
+
+#[tauri::command]
 async fn squash_check(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -625,6 +637,7 @@ pub fn run() {
             containment,
             commit_log_excluding,
             commit_containment_detail,
+            find_commit,
             squash_check,
             load_state,
             add_recent_repo,

@@ -6,6 +6,7 @@ import type {
   BranchStatus,
   ChangedFile,
   Commit,
+  CommitFind,
   Containment,
   ContainmentDetail,
   ConflictVersions,
@@ -330,6 +331,22 @@ export function squashCheck(
   return share(`squash_check|${path}|${source}|${target}`, () =>
     invoke("squash_check", { path, source, target }),
   );
+}
+
+/**
+ * Find the commit whose SHA starts with `prefix` in `source`'s history: how
+ * many match, whether it is in `target`, and its row in the list `source --not
+ * listExclude` (date order), or in `source`'s whole history when `listExclude`
+ * is null. Read-only.
+ */
+export function findCommit(
+  path: string,
+  prefix: string,
+  source: string,
+  target: string,
+  listExclude: string | null,
+): Promise<CommitFind> {
+  return invoke("find_commit", { path, prefix, source, target, listExclude });
 }
 
 /**

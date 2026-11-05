@@ -12,7 +12,7 @@ use super::blame::{parse_porcelain, Blame};
 use super::diff;
 use super::uasset;
 use super::{
-    Branch, BranchKind, BranchStatus, ChangedFile, Commit, Containment, ContainmentDetail,
+    Branch, BranchKind, BranchStatus, ChangedFile, Commit, CommitFind, Containment, ContainmentDetail,
     ConflictVersions, DiffMode, FileDiff, FileStatus, GitError, GitLayer, RebaseStep, ReflogEntry,
     RepoStatus, SquashCheck, SquashVerdict, StatusEntry, SubmoduleCommit, SubmoduleInfo,
 };
@@ -335,6 +335,29 @@ pub(super) fn validate_ref(s: &str) -> Result<&str, GitError> {
         return Err(GitError::InvalidRef(s.to_string()));
     }
     Ok(s)
+}
+
+/// A SHA prefix of 4 to 40 hex digits, lowercased (rev-list prints lowercase).
+fn validate_sha_prefix(s: &str) -> Result<String, GitError> {
+    if (4..=40).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(s.to_ascii_lowercase())
+    } else {
+        Err(GitError::InvalidRef(s.to_string()))
+    }
+}
+
+/// How many SHAs in `rev-list` output start with `prefix`, and the SHA when
+/// exactly one does.
+fn match_sha_prefix(list: &str, prefix: &str) -> (u32, Option<String>) {
+    let mut hits = list.lines().filter(|l| l.starts_with(prefix));
+    let first = hits.next().map(str::to_string);
+    let matches = first.iter().count() as u32 + hits.count() as u32;
+    (matches, if matches == 1 { first } else { None })
+}
+
+/// `sha`'s line in `rev-list` output, counting from 0.
+fn row_of(list: &str, sha: &str) -> Option<u32> {
+    list.lines().position(|l| l == sha).map(|i| i as u32)
 }
 
 /// Parse `git log -z COMMIT_LOG_FORMAT` output into commits. Split out from the
@@ -2218,6 +2241,45 @@ impl GitLayer for GitCli {
         })
     }
 
+    fn find_commit(
+        &self,
+        path: &Path,
+        prefix: &str,
+        source: &str,
+        target: &str,
+        list_exclude: Option<&str>,
+    ) -> Result<CommitFind, GitError> {
+        let prefix = validate_sha_prefix(prefix)?;
+        let target = validate_ref(target)?;
+        let source = if source.is_empty() { "--all" } else { validate_ref(source)? };
+        let history = self.run(path, &["rev-list", source])?;
+        let history = String::from_utf8_lossy(&history);
+        let (matches, sha) = match_sha_prefix(&history, &prefix);
+        let Some(sha) = sha else {
+            return Ok(CommitFind { matches, sha: None, in_target: false, index: None });
+        };
+        // Raw command: a non-zero exit is "no", not an error.
+        let in_target = git_command()
+            .arg("-C")
+            .arg(path)
+            .args(["merge-base", "--is-ancestor", &sha, target])
+            .output()?
+            .status
+            .success();
+        let index = match list_exclude {
+            None => row_of(&history, &sha),
+            // The list leaves out everything in `exclude`.
+            Some(exclude) if in_target && exclude == target => None,
+            Some(exclude) => {
+                let exclude = validate_ref(exclude)?;
+                let list =
+                    self.run(path, &["rev-list", "--date-order", source, "--not", exclude])?;
+                row_of(&String::from_utf8_lossy(&list), &sha)
+            }
+        };
+        Ok(CommitFind { matches, sha: Some(sha), in_target, index })
+    }
+
     fn squash_check(
         &self,
         path: &Path,
@@ -3668,5 +3730,80 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         assert!(cli.read_file_at(&repo, "HEAD", "-notes.md").is_err());
 
         let _ = fs::remove_dir_all(&repo);
+    }
+
+    /// `base` at the seed, `feat` two commits past it, and one commit on base
+    /// alone. Returns the repo and the SHAs of feat's commits, newest first.
+    fn find_fixture(name: &str) -> (PathBuf, String, String, String) {
+        let repo = temp_repo(name);
+        git_in(&repo, &["branch", "base"]);
+        git_in(&repo, &["checkout", "-q", "-b", "feat"]);
+        commit_file(&repo, "a.txt", "a
+", "a");
+        commit_file(&repo, "b.txt", "b
+", "b");
+        git_in(&repo, &["checkout", "-q", "base"]);
+        commit_file(&repo, "c.txt", "c
+", "c");
+        let (a, b, c) = (rev_parse(&repo, "feat~1"), rev_parse(&repo, "feat"), rev_parse(&repo, "base"));
+        (repo, b, a, c)
+    }
+
+    #[test]
+    fn find_commit_places_an_unmerged_commit_in_the_default_list() {
+        let (repo, b, a, _) = find_fixture("find-unmerged");
+        let cli = GitCli::new();
+        let r = cli.find_commit(&repo, &a[..7].to_uppercase(), "feat", "base", Some("base")).unwrap();
+        assert_eq!(
+            r,
+            CommitFind { matches: 1, sha: Some(a.clone()), in_target: false, index: Some(1) }
+        );
+        let r = cli.find_commit(&repo, &b, "feat", "base", Some("base")).unwrap();
+        assert_eq!(r.index, Some(0));
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn find_commit_places_a_commit_in_base_only_in_the_merged_list() {
+        let (repo, _, _, _) = find_fixture("find-in-base");
+        let seed = rev_parse(&repo, "feat~2");
+        let cli = GitCli::new();
+        let r = cli.find_commit(&repo, &seed[..8], "feat", "base", Some("base")).unwrap();
+        assert_eq!(r.sha.as_deref(), Some(seed.as_str()));
+        assert!(r.in_target);
+        assert_eq!(r.index, None);
+        // The merged list without a known merge: feat's whole history.
+        let r = cli.find_commit(&repo, &seed[..8], "feat", "base", None).unwrap();
+        assert_eq!(r.index, Some(2));
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn find_commit_finds_nothing_outside_the_compare_history() {
+        let (repo, _, _, c) = find_fixture("find-outside");
+        let r = GitCli::new().find_commit(&repo, &c[..10], "feat", "base", Some("base")).unwrap();
+        assert_eq!(r, CommitFind { matches: 0, sha: None, in_target: false, index: None });
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn find_commit_rejects_a_prefix_that_is_not_four_or_more_hex_digits() {
+        let (repo, _, _, _) = find_fixture("find-invalid");
+        let cli = GitCli::new();
+        for bad in ["abc", "xyz1", "-abcd", &"a".repeat(41)] {
+            assert!(cli.find_commit(&repo, bad, "feat", "base", Some("base")).is_err(), "{bad}");
+        }
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn match_sha_prefix_counts_every_match() {
+        let list = "abcd111
+abcd222
+ffff000
+";
+        assert_eq!(match_sha_prefix(list, "abcd"), (2, None));
+        assert_eq!(match_sha_prefix(list, "abcd2"), (1, Some("abcd222".to_string())));
+        assert_eq!(match_sha_prefix(list, "0000"), (0, None));
     }
 }

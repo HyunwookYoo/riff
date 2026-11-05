@@ -104,6 +104,7 @@ Blame 모드에서도 동일한 그룹 헤더가 나옵니다. 클릭한 파일�
 - **compare에만 있는 커밋**을 repo별로 묶어 보여줍니다: ● base에 없음 · ◐ 다른 방식으로 들어감 (rebase / cherry-pick / squash) · ✓ 이미 들어감(**Show merged commits** 켰을 때).
 - 맨 위 요약 줄이 답을 한 문장으로 말합니다 (예: `main ← feature/x: ● 8 not merged · ◐ 1 applied as patch`). 전부 들어갔으면 **어떤 머지로 들어왔는지**를 보여줍니다.
 - **squash merge 감지**: squash로 합친 브랜치의 커밋도 `squashed into <sha>` 로 표시합니다. 내용 비교(`merge-tree --write-tree`)는 **git 2.38 이상**에서 동작하고, 그보다 낮으면 patch-id 일치만 찾습니다.
+- **Find SHA…** 칸에 SHA(앞 4자리 이상)를 넣고 Enter: 그 커밋 행으로 스크롤해 강조합니다. 아직 안 불러온 페이지면 불러오고, 이미 base에 들어간 커밋이면 **Show merged commits** 를 켜서 보여줍니다. 범위에 없으면 `not in this range`, 여러 커밋에 걸리면 `ambiguous` 라고 알려줍니다. Esc로 지웁니다.
 - 커밋을 클릭하면 아래 파일 목록과 diff가 그 커밋(`parent..commit`)만 보여주고, 파일 목록 위 줄에 그 커밋이 base에 들어갔는지가 나옵니다. 같은 행을 다시 누르거나 **× All changes** 로 전체 변경으로 돌아갑니다.
 - 경계선을 드래그해 높이 조절, `▴` 로 요약 줄만 남기고 접기.
 

@@ -4,6 +4,7 @@ import {
   commitLog,
   commitLogExcluding,
   containment,
+  findCommit,
   squashCheck,
 } from "./git";
 import { compare, forgetListedRanges, listedRanges } from "./compare";
@@ -11,7 +12,15 @@ import { resolveRepoRanges } from "./repoRange";
 import { EMPTY_TREE } from "./emptyTree";
 import { scopeLine, shortRef, type ToolbarPair } from "./rangeText";
 import type { Counts, RowMark, SideNames, Summary } from "./commitTableText";
-import type { BcGroup, Commit, Containment, RepoRange, SquashCheck, TabMark } from "./types";
+import type {
+  BcGroup,
+  Commit,
+  CommitFind,
+  Containment,
+  RepoRange,
+  SquashCheck,
+  TabMark,
+} from "./types";
 
 /// Rows fetched per page of a commit-table group.
 export const PAGE_SIZE = 100;
@@ -208,11 +217,17 @@ function patchGroup(idx: number, patch: Partial<BcGroup>): void {
 }
 
 /// Whether a group's list goes on past `rows`, `page` being the last page
-/// fetched. The default list is as long as containment's ahead count; a
-/// merged-commits list has no known length, so only a full page says so.
-function moreToLoad(marks: Containment | null, rows: Commit[], page: Commit[]): boolean {
+/// fetched (`limit` rows asked for). The default list is as long as
+/// containment's ahead count; a merged-commits list has no known length, so
+/// only a full page says so.
+function moreToLoad(
+  marks: Containment | null,
+  rows: Commit[],
+  page: Commit[],
+  limit = PAGE_SIZE,
+): boolean {
   return appState.bcShowMerged
-    ? page.length === PAGE_SIZE
+    ? page.length === limit
     : rows.length < (marks?.ahead ?? 0);
 }
 
@@ -223,14 +238,22 @@ function fetchPage(
   g: Pick<BcGroup, "path" | "base" | "compare">,
   mergedBy: BcGroup["mergedBy"],
   skip: number,
+  limit = PAGE_SIZE,
 ): Promise<Commit[]> {
-  if (!appState.bcShowMerged) {
-    return commitLogExcluding(g.path, g.compare, g.base, PAGE_SIZE, skip);
-  }
-  const beforeMerge = mergedBy?.parents[0];
-  return beforeMerge
-    ? commitLogExcluding(g.path, g.compare, beforeMerge, PAGE_SIZE, skip)
-    : commitLog(g.path, g.compare, false, PAGE_SIZE, skip);
+  const exclude = listExclude(g, mergedBy);
+  return exclude !== null
+    ? commitLogExcluding(g.path, g.compare, exclude, limit, skip)
+    : commitLog(g.path, g.compare, false, limit, skip);
+}
+
+/// What the list fetchPage reads leaves out — everything in this ref — or
+/// null for compare's whole history.
+function listExclude(
+  g: Pick<BcGroup, "base">,
+  mergedBy: BcGroup["mergedBy"],
+): string | null {
+  if (!appState.bcShowMerged) return g.base;
+  return mergedBy?.parents[0] ?? null;
 }
 
 /// Refresh group `idx`: reload it, unless both of its tips still point where
@@ -455,8 +478,9 @@ async function loadOnce(): Promise<void> {
   await Promise.all(toLoad.map(([i, r]) => refreshGroup(i, r, s)));
 }
 
-/// The next page of group `idx` — its "Load 100 more" row.
-export async function loadMoreGroup(idx: number): Promise<void> {
+/// The next page of group `idx` — its "Load 100 more" row — or, with `upTo`,
+/// as many pages as it takes to list at least that many rows.
+export async function loadMoreGroup(idx: number, upTo = 0): Promise<void> {
   const g = appState.bcGroups[idx];
   if (!g || g.status !== "ready" || !g.hasMore || g.loadingMore) return;
   const list = listSession;
@@ -464,8 +488,9 @@ export async function loadMoreGroup(idx: number): Promise<void> {
   // its offset means nothing and the page is dropped.
   const rows = g.commits;
   patchGroup(idx, { loadingMore: true });
+  const limit = Math.max(1, Math.ceil((upTo - rows.length) / PAGE_SIZE)) * PAGE_SIZE;
   try {
-    const page = await fetchPage(g, g.mergedBy, rows.length);
+    const page = await fetchPage(g, g.mergedBy, rows.length, limit);
     if (list !== listSession) return;
     if (appState.bcGroups[idx]?.commits !== rows) {
       patchGroup(idx, { loadingMore: false });
@@ -476,7 +501,7 @@ export async function loadMoreGroup(idx: number): Promise<void> {
     const commits = rows.concat(page.filter((c) => !listed.has(c.sha)));
     patchGroup(idx, {
       commits,
-      hasMore: moreToLoad(g.marks, commits, page),
+      hasMore: moreToLoad(g.marks, commits, page, limit),
       loadingMore: false,
     });
   } catch {
@@ -513,6 +538,85 @@ export async function setShowMerged(on: boolean): Promise<void> {
       }
     }),
   );
+}
+
+/// What a SHA search of the commit table came to.
+export type FindResult =
+  /// The row is listed now (merged commits shown and pages loaded as needed).
+  | { kind: "found"; repoIdx: number; sha: string }
+  /// Not 4 to 40 hex digits.
+  | { kind: "invalid" }
+  /// No commit on screen's compare side has that prefix.
+  | { kind: "not-in-range" }
+  /// More than one does.
+  | { kind: "ambiguous" }
+  /// In base from before the merge the merged list starts at: no list has it.
+  | { kind: "unlisted" }
+  | { kind: "error"; message: string }
+  /// The table reloaded (other refs, repo or layout) while the search ran.
+  | { kind: "stale" };
+
+/// Find the commit whose SHA starts with `query` among the groups on screen
+/// and make its row listed: turn merged commits on when it is in base, and
+/// load pages through its row. Scrolling to the row is the table's job.
+export async function findInTable(query: string): Promise<FindResult> {
+  const prefix = query.trim().toLowerCase();
+  if (!/^[0-9a-f]{4,40}$/.test(prefix)) return { kind: "invalid" };
+  const s = bcSession;
+  const ask = (idx: number): Promise<CommitFind> => {
+    const g = appState.bcGroups[idx];
+    return findCommit(g.path, prefix, g.compare, g.base, listExclude(g, g.mergedBy));
+  };
+  const idxs = Object.keys(appState.bcGroups)
+    .map(Number)
+    .filter((i) => isRepoVisible(i) && appState.bcGroups[i].status === "ready");
+  let matches = 0;
+  let failed: string | null = null;
+  const hits: { idx: number; find: CommitFind }[] = [];
+  await Promise.all(
+    idxs.map(async (idx) => {
+      try {
+        const find = await ask(idx);
+        matches += find.matches;
+        if (find.sha) hits.push({ idx, find });
+      } catch (e) {
+        failed = String(e);
+      }
+    }),
+  );
+  if (s !== bcSession) return { kind: "stale" };
+  if (matches > 1) return { kind: "ambiguous" };
+  if (hits.length === 0) {
+    return failed !== null ? { kind: "error", message: failed } : { kind: "not-in-range" };
+  }
+  const idx = hits[0].idx;
+  let find = hits[0].find;
+  if (find.index === null && find.in_target && !appState.bcShowMerged) {
+    await setShowMerged(true);
+    if (s !== bcSession || !appState.bcGroups[idx]) return { kind: "stale" };
+    try {
+      find = await ask(idx);
+    } catch (e) {
+      return { kind: "error", message: String(e) };
+    }
+    if (s !== bcSession) return { kind: "stale" };
+  }
+  const { sha, index } = find;
+  if (sha === null || index === null) return { kind: "unlisted" };
+  // A "Load more" already running makes loadMoreGroup a no-op; a few rounds
+  // let it land first.
+  for (let round = 0; round < 3; round++) {
+    const g = appState.bcGroups[idx];
+    if (s !== bcSession || !g) return { kind: "stale" };
+    if (g.commits.some((c) => c.sha === sha)) return { kind: "found", repoIdx: idx, sha };
+    if (!g.hasMore) break;
+    await loadMoreGroup(idx, index + 1);
+  }
+  const g = appState.bcGroups[idx];
+  if (s !== bcSession || !g) return { kind: "stale" };
+  return g.commits.some((c) => c.sha === sha)
+    ? { kind: "found", repoIdx: idx, sha }
+    : { kind: "error", message: "couldn't load its row" };
 }
 
 /// Pick a commit: its own diff (parent..commit) shows, inside its repo only.

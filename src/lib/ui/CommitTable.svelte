@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { appState } from "$lib/store.svelte";
   import {
     PAGE_SIZE,
+    findInTable,
     groupCounts,
     isRepoVisible,
     loadBranchContainment,
@@ -12,6 +14,7 @@
     showAllChanges,
     squashLanded,
     summarize,
+    type FindResult,
     type VisibleGroup,
   } from "$lib/branchContainment";
   import { rangeLabel, rangeTooltip, sideNames } from "$lib/rangeText";
@@ -110,6 +113,66 @@
     else selectBranchCommit(idx, c);
   }
 
+  // SHA search. The row it lands on stays outlined until the next search;
+  // clearing `foundKey` first replays the row's flash on a repeat search.
+  let findQuery = $state("");
+  let findNote = $state<string | null>(null);
+  let finding = $state(false);
+  let foundKey = $state<string | null>(null);
+  let body = $state<HTMLDivElement | undefined>(undefined);
+  const findText: Record<Exclude<FindResult["kind"], "found" | "error" | "stale">, string> = {
+    invalid: "type 4+ hex digits",
+    "not-in-range": "not in this range",
+    ambiguous: "ambiguous, type more",
+    unlisted: "in base, not listed",
+  };
+  const rowKey = (idx: number, sha: string) => `${idx}:${sha}`;
+
+  async function find() {
+    if (finding) return;
+    finding = true;
+    findNote = null;
+    foundKey = null;
+    try {
+      const r = await findInTable(findQuery);
+      if (r.kind === "stale") return;
+      if (r.kind === "error") {
+        findNote = `couldn't search: ${r.message}`;
+        return;
+      }
+      if (r.kind !== "found") {
+        findNote = findText[r.kind];
+        return;
+      }
+      appState.commitTableCollapsed = false;
+      if (collapsed.has(r.repoIdx)) {
+        const next = new Set(collapsed);
+        next.delete(r.repoIdx);
+        collapsed = next;
+      }
+      foundKey = rowKey(r.repoIdx, r.sha);
+      await tick();
+      body
+        ?.querySelector<HTMLElement>(`[data-key="${foundKey}"]`)
+        ?.scrollIntoView({ block: "center" });
+    } finally {
+      finding = false;
+    }
+  }
+
+  function onFindKey(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void find();
+    } else if (e.key === "Escape" && (findQuery || findNote || foundKey)) {
+      // Clears the search first; an Esc on an empty box goes back as usual.
+      e.preventDefault();
+      findQuery = "";
+      findNote = null;
+      foundKey = null;
+    }
+  }
+
   // How many unmerged rows are still unloaded (default list only).
   function leftCount(g: BcGroup): number | null {
     if (appState.bcShowMerged || !g.marks) return null;
@@ -120,6 +183,22 @@
 <div class="ct">
   <div class="ct-summary">
     <span class="text" title={summary}>{summary}</span>
+    <input
+      type="search"
+      class="find"
+      placeholder="Find SHA…"
+      spellcheck="false"
+      autocomplete="off"
+      title="Find a commit by SHA (4+ hex digits), then Enter"
+      bind:value={findQuery}
+      oninput={() => (findNote = null)}
+      onkeydown={onFindKey}
+    />
+    {#if finding}
+      <span class="find-note">finding…</span>
+    {:else if findNote}
+      <span class="find-note">{findNote}</span>
+    {/if}
     <label class="toggle" title="Also list the commits already in base">
       <input
         type="checkbox"
@@ -142,7 +221,7 @@
     <div class="ct-head" aria-hidden="true">
       <span></span><span>SHA</span><span>Summary</span><span>Author</span><span>Date</span><span>Status</span>
     </div>
-    <div class="ct-body">
+    <div class="ct-body" bind:this={body}>
       {#each rows as r (r.idx)}
         {@const range = appState.repoRanges[r.idx]}
         {@const g = r.group}
@@ -200,6 +279,8 @@
                 class="ct-row"
                 class:sel={isPicked(r.idx, c.sha)}
                 class:dim={mark === "in"}
+                class:found={foundKey === rowKey(r.idx, c.sha)}
+                data-key={rowKey(r.idx, c.sha)}
                 onclick={() => clickRow(r.idx, c)}
                 title={c.summary}
               >
@@ -268,6 +349,20 @@
     color: var(--muted);
     cursor: pointer;
     user-select: none;
+  }
+  .find {
+    width: 13ch;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: inherit;
+    padding: 1px 6px;
+    font: inherit;
+    font-family: var(--mono);
+  }
+  .find-note {
+    color: var(--muted);
+    font-style: italic;
   }
   .collapse {
     border: 1px solid var(--border);
@@ -366,6 +461,17 @@
   .ct-row.sel {
     background: var(--accent-soft);
     box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .ct-row.found {
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+    animation: found-flash 1.4s ease-out;
+  }
+  @keyframes found-flash {
+    0%,
+    35% {
+      background: var(--accent-soft);
+    }
   }
   .ct-row.dim .sum,
   .ct-row.dim .author,
