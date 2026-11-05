@@ -10,6 +10,7 @@ import {
 import { compare, forgetListedRanges, listedRanges } from "./compare";
 import { resolveRepoRanges } from "./repoRange";
 import { EMPTY_TREE } from "./emptyTree";
+import { startRebaseCheck } from "./rebaseCheck";
 import { scopeLine, shortRef, type ToolbarPair } from "./rangeText";
 import type { Counts, RowMark, SideNames, Summary } from "./commitTableText";
 import type {
@@ -192,6 +193,7 @@ function emptyGroup(range: OkRange): BcGroup {
     loadingMore: false,
     mergedBy: undefined,
     squash: null,
+    rebase: null,
     baseTip: null,
     compareTip: null,
   };
@@ -276,6 +278,45 @@ async function refreshGroup(idx: number, range: OkRange, s: number): Promise<voi
     tips.baseTip === g.baseTip &&
     tips.compareTip === g.compareTip;
   if (!unmoved) await loadGroup(idx, s, tips);
+  // A kept group whose check never answered (the table was unmounted under a
+  // commit view, which cancels the runs) starts it again.
+  else if (!rebaseRuns.has(idx) && (g.rebase === null || g.rebase.kind === "checking")) {
+    checkRebase(idx);
+  }
+}
+
+// Running rebase checks by group; an entry is removed once its result lands.
+const rebaseRuns = new Map<number, { cancel: () => void }>();
+
+/// Cancel every running rebase check (the table leaving the screen, or cleared).
+export function cancelRebaseChecks(): void {
+  for (const run of rebaseRuns.values()) run.cancel();
+  rebaseRuns.clear();
+}
+
+/// Start group `idx`'s rebase conflict preview, replacing any run for it. A
+/// range with an empty-tree side (a submodule pin that appeared or vanished)
+/// has nothing to rebase. Updates land only while this run is current and the
+/// group's range is the one it was started for.
+function checkRebase(idx: number): void {
+  rebaseRuns.get(idx)?.cancel();
+  rebaseRuns.delete(idx);
+  const g = appState.bcGroups[idx];
+  if (!g || g.base === EMPTY_TREE || g.compare === EMPTY_TREE) {
+    patchGroup(idx, { rebase: null });
+    return;
+  }
+  const { path, base, compare: branch } = g;
+  const run = { cancel: () => {} };
+  rebaseRuns.set(idx, run);
+  run.cancel = startRebaseCheck(path, base, branch, null, (state) => {
+    const cur = appState.bcGroups[idx];
+    if (rebaseRuns.get(idx) !== run || cur?.path !== path || cur.base !== base || cur.compare !== branch) {
+      return;
+    }
+    if (state.kind !== "checking") rebaseRuns.delete(idx);
+    patchGroup(idx, { rebase: state });
+  });
 }
 
 async function loadGroup(idx: number, s: number, tips: Tips): Promise<void> {
@@ -323,6 +364,7 @@ async function loadGroup(idx: number, s: number, tips: Tips): Promise<void> {
       loadingMore: false,
       ...(unmerged ? { baseTip: null, compareTip: null } : { ...tips, squash: null }),
     });
+    checkRebase(idx);
     settlePick(idx);
     if (unmerged) await checkSquash(idx, s, tips);
   } catch (e) {
@@ -681,6 +723,7 @@ async function loadSelectedDetail(repoIdx: number, sha: string): Promise<void> {
 /// outside Branch mode, or with no repo open.
 export function clearBranchContainment(): void {
   bcSession++;
+  cancelRebaseChecks();
   appState.bcGroups = {};
   clearPick();
 }

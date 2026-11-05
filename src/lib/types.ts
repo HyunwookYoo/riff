@@ -1,3 +1,5 @@
+import type { CheckState } from "./rebaseCheck";
+
 export type BranchKind = "local" | "remote" | "tag";
 
 export interface Branch {
@@ -506,6 +508,9 @@ export interface BcGroup {
   /// Squash detection for a group that still has ● rows: "checking" while
   /// squash_check runs, its answer once back, null when not run or failed.
   squash: SquashCheck | "checking" | null;
+  /// Rebase conflict preview of compare onto base; null until a check starts,
+  /// and for a range with an empty-tree side.
+  rebase: CheckState | null;
   /// The commits base and compare pointed at when the group last loaded; a
   /// refresh that finds them unmoved keeps the group as it is. null until the
   /// group has loaded (and after a failed load or a list toggle).

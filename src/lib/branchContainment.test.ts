@@ -12,6 +12,7 @@ vi.mock("./git", () => ({
   squashCheck: vi.fn(),
   findCommit: vi.fn(),
 }));
+vi.mock("./rebaseCheck", () => ({ startRebaseCheck: vi.fn() }));
 vi.mock("./repoRange", () => ({ resolveRepoRanges: vi.fn() }));
 vi.mock("./compare", () => ({
   compare: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("./compare", () => ({
 import {
   PAGE_SIZE,
   clearBranchContainment,
+  cancelRebaseChecks,
   clearPick,
   dropPickOutside,
   findInTable,
@@ -48,6 +50,8 @@ import {
   squashCheck,
 } from "./git";
 import { resolveRepoRanges } from "./repoRange";
+import { startRebaseCheck, type CheckState } from "./rebaseCheck";
+import { EMPTY_TREE } from "./emptyTree";
 import { compare, forgetListedRanges, listedRanges } from "./compare";
 import type {
   BcGroup,
@@ -101,6 +105,7 @@ const group = (g: Partial<BcGroup>): BcGroup => ({
   loadingMore: false,
   mergedBy: undefined,
   squash: null,
+  rebase: null,
   baseTip: null,
   compareTip: null,
   ...g,
@@ -119,9 +124,12 @@ beforeEach(() => {
     compare,
     listedRanges,
     forgetListedRanges,
+    startRebaseCheck,
   ]) {
     vi.mocked(f).mockReset();
   }
+  vi.mocked(startRebaseCheck).mockReturnValue(() => {});
+  cancelRebaseChecks();
   Object.assign(appState, {
     appMode: "compare",
     repoPath: "/main",
@@ -1555,5 +1563,82 @@ describe("findInTable", () => {
     clearBranchContainment();
     answer(found("c0", 0));
     expect(await search).toEqual({ kind: "stale" });
+  });
+});
+
+describe("rebase conflict preview", () => {
+  const cancels: ReturnType<typeof vi.fn>[] = [];
+  const updates: ((s: CheckState) => void)[] = [];
+  beforeEach(() => {
+    cancels.length = 0;
+    updates.length = 0;
+    vi.mocked(startRebaseCheck).mockImplementation((_p, _u, _b, _s, onUpdate) => {
+      const cancel = vi.fn();
+      cancels.push(cancel);
+      updates.push(onUpdate);
+      return cancel;
+    });
+    vi.mocked(containment).mockResolvedValue(marks({ ahead: 0 }));
+    vi.mocked(commitLog).mockResolvedValue([commit("t1")]);
+    vi.mocked(commitLogExcluding).mockResolvedValue([]);
+  });
+  const clean: CheckState = { kind: "clean", commits: 2 };
+
+  it("starts a check for a loaded group and stores what it reports", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    await loadBranchContainment();
+    expect(startRebaseCheck).toHaveBeenCalledWith("/main", "main", "feature", null, expect.any(Function));
+    updates[0](clean);
+    expect(appState.bcGroups[0].rebase).toEqual(clean);
+  });
+
+  it("cancels the old check when the range changes, and drops its updates", async () => {
+    vi.mocked(resolveRepoRanges)
+      .mockResolvedValueOnce([range("/main", "main", "feature-x")])
+      .mockResolvedValueOnce([range("/main", "main", "feature-y")]);
+    await loadBranchContainment();
+    await loadBranchContainment();
+    expect(cancels[0]).toHaveBeenCalled();
+    expect(startRebaseCheck).toHaveBeenCalledTimes(2);
+    updates[0](clean);
+    expect(appState.bcGroups[0].rebase).toBeNull();
+    updates[1]({ kind: "clean", commits: 5 });
+    expect(appState.bcGroups[0].rebase).toEqual({ kind: "clean", commits: 5 });
+  });
+
+  it("does not check a range with an empty-tree side", async () => {
+    const sub: RepoRange = { ok: true, path: "/main", base: EMPTY_TREE, compare: "bbb", source: "gitlink" };
+    vi.mocked(resolveRepoRanges).mockResolvedValue([sub]);
+    await loadBranchContainment();
+    expect(startRebaseCheck).not.toHaveBeenCalled();
+    expect(appState.bcGroups[0].rebase).toBeNull();
+  });
+
+  it("does not start a second check on a refresh with unmoved tips", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    await loadBranchContainment();
+    expect(appState.bcGroups[0].baseTip).toBe("t1");
+    await loadBranchContainment(); // still running
+    updates[0](clean);
+    await loadBranchContainment(); // answered
+    expect(startRebaseCheck).toHaveBeenCalledTimes(1);
+    expect(appState.bcGroups[0].rebase).toEqual(clean);
+  });
+
+  it("restarts an unanswered check on an unmoved refresh after cancelRebaseChecks", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    await loadBranchContainment();
+    updates[0]({ kind: "checking", done: 1, total: 4 });
+    cancelRebaseChecks();
+    expect(cancels[0]).toHaveBeenCalled();
+    await loadBranchContainment();
+    expect(startRebaseCheck).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels the running check when the table is cleared", async () => {
+    vi.mocked(resolveRepoRanges).mockResolvedValue([range("/main", "main", "feature")]);
+    await loadBranchContainment();
+    clearBranchContainment();
+    expect(cancels[0]).toHaveBeenCalled();
   });
 });

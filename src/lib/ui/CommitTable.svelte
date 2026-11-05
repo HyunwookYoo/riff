@@ -1,8 +1,11 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { onDestroy, tick } from "svelte";
+  import RebaseCheckLine from "$lib/ui/RebaseCheckLine.svelte";
+  import { aiRequest } from "$lib/rebaseCheck";
   import { appState } from "$lib/store.svelte";
   import {
     PAGE_SIZE,
+    cancelRebaseChecks,
     findInTable,
     groupCounts,
     isRepoVisible,
@@ -39,6 +42,10 @@
     void appState.repos;
     if (appState.appMode === "compare") void loadBranchContainment();
   });
+
+  // The rebase checks belong to the table on screen (a commit view in Branch
+  // mode unmounts it); the refresh on remount restarts what was cut off.
+  onDestroy(cancelRebaseChecks);
 
   const pair = $derived({
     base: appState.startBranch,
@@ -183,6 +190,16 @@
 <div class="ct">
   <div class="ct-summary">
     <span class="text" title={summary}>{summary}</span>
+    {#if visible.length === 1}
+      {@const v = visible[0]}
+      <RebaseCheckLine
+        compact
+        state={v.group.rebase}
+        prefix={`rebase onto ${v.names.base}: `}
+        request={(conflict) =>
+          aiRequest({ repoPath: v.group.path, branch: v.group.compare, target: v.group.base, conflict })}
+      />
+    {/if}
     <input
       type="search"
       class="find"
@@ -256,6 +273,15 @@
                   })}
                 {/if}
               </span>
+              {#if visible.length > 1}
+                <RebaseCheckLine
+                  compact
+                  state={g.rebase}
+                  prefix={`rebase onto ${sideNames(range, pair).base}: `}
+                  request={(conflict) =>
+                    aiRequest({ repoPath: g.path, branch: g.compare, target: g.base, conflict })}
+                />
+              {/if}
             {/if}
           </div>
         {/if}
