@@ -79,6 +79,28 @@ describe("startRebaseCheck", () => {
     expect(mockCancel).toHaveBeenCalledWith(mockCheck.mock.calls[0][4]);
   });
 
+  it("cancel after the result is a no-op", async () => {
+    mockCheck.mockResolvedValue({ kind: "clean", commits: 1 });
+    const cancel = startRebaseCheck("/r", "main", "feat", null, () => {});
+    await flush();
+    cancel();
+    expect(mockCancel).not.toHaveBeenCalled();
+  });
+
+  it("does not emit progress that arrives after the result", async () => {
+    let report!: (p: { done: number; total: number }) => void;
+    mockCheck.mockImplementation(async (...args) => {
+      report = args[5];
+      return { kind: "clean", commits: 1 } as RebaseCheck;
+    });
+    const seen: CheckState[] = [];
+    startRebaseCheck("/r", "main", "feat", null, (s) => seen.push(s));
+    await flush();
+    report({ done: 1, total: 1 });
+    expect(seen[seen.length - 1]).toEqual({ kind: "clean", commits: 1 });
+    expect(seen).toHaveLength(2);
+  });
+
   it("uses a different id per start", () => {
     mockCheck.mockReturnValue(new Promise(() => {}));
     startRebaseCheck("/r", "main", "feat", null, () => {});

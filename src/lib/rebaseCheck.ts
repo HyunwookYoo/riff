@@ -35,8 +35,12 @@ export function startRebaseCheck(
   ).then(
     (r) => {
       if (r.kind !== "cancelled") emit(r);
+      live = false;
     },
-    (e) => emit({ kind: "cant_check", reason: String(e).split("\n")[0] }),
+    (e) => {
+      emit({ kind: "cant_check", reason: String(e).split("\n")[0] });
+      live = false;
+    },
   );
   return () => {
     if (!live) return;
