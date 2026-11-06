@@ -3,6 +3,46 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v2.5.0
+
+**rebase가 conflict로 멈출지 시작하기 전에 알려주고**, Branch 모드 커밋 표에서 SHA로 커밋을 찾을 수 있게 했습니다.
+
+### ✨ 하이라이트
+
+- **rebase conflict 미리 보기** — rebase를 시작하기 전에 결과를 먼저 보여줍니다: `✓ no conflicts (N commits)` 는 그대로 진행해도 안전, `⚠ conflict at <sha> <제목> (k of N)` 은 처음 conflict가 날 커밋과 그 파일(binary·submodule·modify/delete 등 종류 포함)을 알려줍니다. 커밋할 게 없으면 `nothing to rebase`, 알 수 없으면 `can't check (이유)` — 모르는 결과를 ✓로 보여주지 않습니다.
+    - **일반 rebase** — OS 확인창 대신 앱 안의 확인창이 뜨고, 다시 쓸 커밋 수·reflog 안내와 함께 미리 보기가 나옵니다. ⚠여도 Rebase는 누를 수 있습니다.
+    - **interactive rebase 계획 편집기** — 순서를 바꾸거나 drop·squash·fixup·edit를 고를 때마다 편집한 계획대로 다시 검사하고, conflict가 날 행에 ⚠를 붙입니다.
+    - **Branch 모드** — 커밋 표 요약 줄(repo가 여럿이면 각 그룹 헤더)에 `rebase onto <base>: ✓ / ⚠` 를 보여줍니다. 결과만 보여주며 rebase는 하지 않습니다.
+- **Copy request for AI** — ⚠ 옆 버튼을 누르면 Claude Code 같은 AI에 붙여 넣을 rebase 요청문(한국어)이 복사됩니다: repo 경로, 무엇을 어디 위로 rebase할지, conflict가 예상되는 커밋과 파일, 신중히 해결하라는 지시. interactive rebase면 편집한 계획도 함께 들어갑니다.
+- **Find SHA…** — Branch 모드 커밋 표에서 SHA(앞 4자리 이상)를 넣고 Enter를 누르면 그 커밋 행으로 스크롤해 강조합니다. 아직 안 불러온 페이지면 불러오고, base에 이미 들어간 커밋이면 **Show merged commits** 를 켜서 보여줍니다. 범위에 없으면 `not in this range`, 여러 커밋에 걸리면 `ambiguous`.
+
+### 📝 참고
+
+- 미리 보기는 `git merge-tree --write-tree` 로 계산하므로 **git 2.40 이상**이 필요합니다. 작업 트리·index·HEAD·ref는 건드리지 않습니다.
+- 처음 conflict가 나는 커밋까지만 검사합니다. 그 커밋을 어떻게 해결하느냐에 따라 뒤 커밋의 결과가 달라지기 때문입니다.
+
+### 📦 설치 / 업그레이드
+
+- 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+
+## v2.4.0
+
+**Blame에서 커밋을 열면 그 커밋의 화면으로** 바뀌고, **커밋 이전 시점으로 거슬러 blame** 할 수 있게 했습니다.
+
+### ✨ 하이라이트
+
+- **커밋 보기** — `View commit →` 가 그 커밋의 화면으로 바뀝니다: 커밋 카드(제목·작성자·날짜·부모·파일 수·본문), `Commit <sha> ⧉` (전체 SHA 복사), blame하던 파일을 그 커밋 시점 경로로 선택하고 보던 줄로 스크롤. merge 커밋은 첫 부모 대비, 첫 커밋은 빈 트리 대비로 보여줍니다.
+- **Blame before this** — 팝오버의 `↶ Blame before this` 나 커밋 패널의 `↶` 로 그 커밋의 부모 시점에서 같은 파일을 다시 blame합니다. 파일 이름이 바뀐 커밋도 옛 경로로 따라가고, 에디터 위 띠의 **← Back** · **Back to HEAD** 나 `Esc` 로 한 단계씩 돌아옵니다.
+
+### 🐛 수정
+
+- 경로에 한글 등 특수 문자가 있는 파일의 blame 경로가 따옴표째로 남던 문제.
+- 커밋 보기에서 repo 탭을 바꾸면 이전 커밋 화면이 남던 문제, 빠르게 drill하면 이전 결과가 늦게 덮어쓰던 문제.
+
+### 📦 설치 / 업그레이드
+
+- 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+
 ## v2.3.0
 
 **Branch 모드에서 submodule로 들어가고 나오는 길이 눈에 보이게** 바꿨습니다.
