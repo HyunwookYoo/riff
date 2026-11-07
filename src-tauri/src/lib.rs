@@ -498,7 +498,7 @@ async fn pr_hunks(
     path: String,
     base: String,
     head: String,
-) -> Result<Vec<git::FileHunks>, GitError> {
+) -> Result<git::PrHunks, GitError> {
     state.pr_hunks(Path::new(&path), &base, &head)
 }
 

@@ -57,12 +57,15 @@ async function readSide(repo: string, rev: string, file: string): Promise<string
   }
 }
 
-/** Full text per `${path}|${side}` that the record's line items refer to. */
+/**
+ * Full text per `${path}|${side}` that the record's line items refer to. LEFT
+ * is read at the merge-base: GitHub's LEFT lines (and the diff's old side) are.
+ */
 async function sideTexts(
   repo: string,
   rec: PrRecord,
   files: FileHunks[],
-  baseSha: string,
+  mergeBase: string,
   headSha: string,
 ): Promise<Map<string, string>> {
   const texts = new Map<string, string>();
@@ -77,7 +80,7 @@ async function sideTexts(
       const text =
         k.slice(sep + 1) === "RIGHT"
           ? await readSide(repo, headSha, path)
-          : await readSide(repo, baseSha, files.find((f) => f.path === path)?.oldPath ?? path);
+          : await readSide(repo, mergeBase, files.find((f) => f.path === path)?.oldPath ?? path);
       if (text !== undefined) texts.set(k, text);
     }),
   );
@@ -100,18 +103,19 @@ export async function openPr(key: PrKey): Promise<void> {
   s.headMoved = null;
   s.newSinceFiles = [];
   const repoPath = appState.repos[summary.repoIdx].path;
-  const { baseSha } = summary;
   try {
-    let headSha = await fetchPr(repoPath, summary.remote, summary.number, summary.baseRef, baseSha);
+    let headSha = await fetchPr(repoPath, summary.remote, summary.number, summary.baseRef, summary.baseSha);
     if (seq !== openSeq) return;
     const detail = await prDetail(summary.repo.host, summary.nodeId);
     if (seq !== openSeq) return;
-    if (detail.headSha !== headSha) {
-      // A push landed between the calls: fetch the newer head once.
+    // The detail's base, not the (older) list's: the base branch may have moved.
+    const { baseSha } = detail;
+    if (detail.headSha !== headSha || baseSha !== summary.baseSha) {
+      // A push landed between the calls: fetch the newer head (and base) once.
       headSha = await fetchPr(repoPath, summary.remote, summary.number, summary.baseRef, baseSha);
       if (seq !== openSeq) return;
     }
-    const files = await prHunks(repoPath, baseSha, headSha);
+    const { mergeBase, files } = await prHunks(repoPath, baseSha, headSha);
     if (seq !== openSeq) return;
     let rec: PrRecord;
     try {
@@ -139,7 +143,7 @@ export async function openPr(key: PrKey): Promise<void> {
     const moved = headMoveFor(rec, headSha);
     const newSince = moved ? await prChangedFiles(repoPath, baseSha, moved.from, headSha) : [];
     if (rec.anchorHead !== null && rec.anchorHead !== headSha) {
-      const texts = await sideTexts(repoPath, rec, files, baseSha, headSha);
+      const texts = await sideTexts(repoPath, rec, files, mergeBase, headSha);
       rec = reanchorAll(rec, headSha, texts, files);
       dirty = true;
     } else if (rec.anchorHead === null) {

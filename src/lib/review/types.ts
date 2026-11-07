@@ -3,6 +3,8 @@ export interface GhRepo { host: string; owner: string; name: string }
 export type PrKey = string; // `${host}/${owner}/${name}#${number}`
 export interface Hunk { oldStart: number; oldLines: number; newStart: number; newLines: number }
 export interface FileHunks { path: string; oldPath: string | null; hunks: Hunk[] }
+/** `mergeBase`: merge-base(base, head), where the LEFT side and GitHub's LEFT lines are read. */
+export interface PrHunks { mergeBase: string; files: FileHunks[] }
 export interface PrSummary {
   key: PrKey; repo: GhRepo; repoIdx: number; remote: string; nodeId: string; number: number;
   title: string; author: string; url: string; additions: number; deletions: number;

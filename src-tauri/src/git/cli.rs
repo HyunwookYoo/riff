@@ -14,7 +14,7 @@ use super::uasset;
 use super::{
     Branch, BranchKind, BranchStatus, ChangedFile, Commit, CommitFind, Containment, ContainmentDetail,
     ConflictFile, ConflictVersions, DiffMode, FileDiff, FileHunks, FileStatus, GitError, GitLayer,
-    Hunk, RebaseAction, RebaseCheck, RebaseStep, ReflogEntry, Remote,
+    Hunk, PrHunks, RebaseAction, RebaseCheck, RebaseStep, ReflogEntry, Remote,
     RepoStatus, SquashCheck, SquashVerdict, StatusEntry, SubmoduleCommit, SubmoduleInfo,
 };
 
@@ -2277,7 +2277,12 @@ impl GitLayer for GitCli {
         {
             return Err(GitError::InvalidRef(base_ref.to_string()));
         }
-        let base_sha = validate_ref(base_sha)?;
+        // base_sha is fetched by name below: only a full object id may reach git.
+        let is_oid = matches!(base_sha.len(), 40 | 64)
+            && base_sha.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if !is_oid {
+            return Err(GitError::InvalidRef(base_sha.to_string()));
+        }
         let head_spec = format!("+refs/pull/{number}/head:refs/riff/pr/{number}/head");
         let base_spec = format!("+refs/heads/{base_ref}:refs/riff/pr/{number}/base");
         // `--refmap=` stops git's opportunistic refs/remotes/* update; the rest
@@ -2299,7 +2304,15 @@ impl GitLayer for GitCli {
             && self
                 .run_network(
                     path,
-                    &["fetch", "--no-tags", "--refmap=", "--no-write-fetch-head", remote, base_sha],
+                    &[
+                        "fetch",
+                        "--no-tags",
+                        "--refmap=",
+                        "--no-write-fetch-head",
+                        "--no-recurse-submodules",
+                        remote,
+                        base_sha,
+                    ],
                 )
                 .is_err()
         {
@@ -2311,9 +2324,13 @@ impl GitLayer for GitCli {
         Ok(String::from_utf8_lossy(&out).trim().to_string())
     }
 
-    fn pr_hunks(&self, path: &Path, base: &str, head: &str) -> Result<Vec<FileHunks>, GitError> {
+    fn pr_hunks(&self, path: &Path, base: &str, head: &str) -> Result<PrHunks, GitError> {
         let base = validate_ref(base)?;
         let head = validate_ref(head)?;
+        let out = self.run(path, &["merge-base", base, head])?;
+        let merge_base = String::from_utf8_lossy(&out).trim().to_string();
+        // Diff from the merge-base itself (what `base...head` means) so the
+        // hunks and the returned merge-base can't disagree.
         let out = self.run(
             path,
             &[
@@ -2326,10 +2343,11 @@ impl GitLayer for GitCli {
                 "-U3",
                 "--src-prefix=a/",
                 "--dst-prefix=b/",
-                &format!("{base}...{head}"),
+                &merge_base,
+                head,
             ],
         )?;
-        Ok(parse_hunks(&String::from_utf8_lossy(&out)))
+        Ok(PrHunks { merge_base, files: parse_hunks(&String::from_utf8_lossy(&out)) })
     }
 
     fn pr_changed_files(
@@ -3573,7 +3591,7 @@ index 555..000
     #[test]
     fn pr_hunks_match_git_headers() {
         let repo = pr_fixture("pr-hunks");
-        let got = GitCli::new().pr_hunks(&repo, "main", "topic").unwrap();
+        let got = GitCli::new().pr_hunks(&repo, "main", "topic").unwrap().files;
         let out = git_command()
             .arg("-C")
             .arg(&repo)
@@ -3655,6 +3673,34 @@ index 555..000
         }
         let out = git_command().arg("-C").arg(&repo).args(["branch", "--list", "victim"]).output().unwrap();
         assert!(out.stdout.is_empty());
+    }
+
+    #[test]
+    fn fetch_pr_rejects_non_hex_base_sha() {
+        let repo = temp_repo("fetch-pr-base-sha");
+        let sha = rev_parse(&repo, "HEAD");
+        let upper = sha.to_uppercase();
+        let short = &sha[..12];
+        let long = format!("{sha}0");
+        for bad in ["HEAD", "main", short, upper.as_str(), long.as_str(), "--upload-pack=x"] {
+            let r = GitCli::new().fetch_pr(&repo, "origin", 1, "main", bad);
+            assert!(matches!(r, Err(GitError::InvalidRef(_))), "{bad}: {r:?}");
+        }
+    }
+
+    #[test]
+    fn pr_hunks_returns_the_fork_point_when_base_moved() {
+        let repo = pr_fixture("pr-hunks-mb");
+        let fork = rev_parse(&repo, "main");
+        // The base tip moves past the fork point after the PR branched.
+        commit_file(&repo, "b.txt", "moved
+", "main moves");
+        let tip = rev_parse(&repo, "main");
+        assert_ne!(tip, fork);
+        let got = GitCli::new().pr_hunks(&repo, "main", "topic").unwrap();
+        assert_eq!(got.merge_base, fork);
+        assert_eq!(got.files.len(), 1, "{:?}", got.files);
+        assert_eq!(got.files[0].path, "a.txt");
     }
 
     #[test]

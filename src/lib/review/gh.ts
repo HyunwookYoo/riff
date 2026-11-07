@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { FileHunks } from "./types";
+import type { PrHunks } from "./types";
 
 export function gitRemotes(path: string): Promise<{ name: string; url: string }[]> {
   return invoke("git_remotes", { path });
@@ -16,7 +16,7 @@ export function fetchPr(
   return invoke("fetch_pr", { path, remote, number, baseRef, baseSha });
 }
 
-export function prHunks(path: string, base: string, head: string): Promise<FileHunks[]> {
+export function prHunks(path: string, base: string, head: string): Promise<PrHunks> {
   return invoke("pr_hunks", { path, base, head });
 }
 

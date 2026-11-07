@@ -37,6 +37,14 @@ pub struct FileHunks {
     pub hunks: Vec<Hunk>,
 }
 
+/// What a PR changes: the hunks, and the merge-base their old side is read at.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PrHunks {
+    pub merge_base: String,
+    pub files: Vec<FileHunks>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Branch {
     pub name: String,
@@ -677,8 +685,9 @@ pub trait GitLayer {
         base_ref: &str,
         base_sha: &str,
     ) -> Result<String, GitError>;
-    /// Per-file hunks of `base...head` (what the PR changes), renames detected.
-    fn pr_hunks(&self, path: &Path, base: &str, head: &str) -> Result<Vec<FileHunks>, GitError>;
+    /// Per-file hunks of `base...head` (what the PR changes), renames detected,
+    /// with the merge-base the old side (and GitHub's LEFT lines) refers to.
+    fn pr_hunks(&self, path: &Path, base: &str, head: &str) -> Result<PrHunks, GitError>;
     /// Files whose PR patch differs between `old_head` and `new_head`, ignoring
     /// changes that only come from rebasing onto a moved base. Sorted.
     fn pr_changed_files(
