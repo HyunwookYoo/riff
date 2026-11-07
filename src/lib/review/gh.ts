@@ -52,3 +52,19 @@ export async function ghGraphql<T>(
   const res = await ghApi(host, "POST", "graphql", { query, variables });
   return res.data as T;
 }
+
+export function loadReview(key: string): Promise<unknown | null> {
+  return invoke("load_review", { key });
+}
+
+export function saveReview(key: string, value: unknown): Promise<void> {
+  return invoke("save_review", { key, value });
+}
+
+export function deleteReview(key: string): Promise<void> {
+  return invoke("delete_review", { key });
+}
+
+export function listReviews(): Promise<string[]> {
+  return invoke("list_reviews");
+}

@@ -683,6 +683,30 @@ fn set_tab_order(
     store::set_tab_order(&app, main_repo, order)
 }
 
+#[tauri::command]
+fn load_review(app: tauri::AppHandle, key: String) -> Result<Option<serde_json::Value>, StoreError> {
+    store::review::load(&app, &key)
+}
+
+#[tauri::command]
+fn save_review(
+    app: tauri::AppHandle,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), StoreError> {
+    store::review::save(&app, &key, &value)
+}
+
+#[tauri::command]
+fn delete_review(app: tauri::AppHandle, key: String) -> Result<(), StoreError> {
+    store::review::delete(&app, &key)
+}
+
+#[tauri::command]
+fn list_reviews(app: tauri::AppHandle) -> Result<Vec<String>, StoreError> {
+    store::review::list(&app)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Declare which repo roots the filesystem watcher should observe (main repo +
 /// any manual repos; submodules are covered by the main root's recursive watch).
@@ -774,6 +798,10 @@ pub fn run() {
             add_manual_repo,
             remove_manual_repo,
             set_tab_order,
+            load_review,
+            save_review,
+            delete_review,
+            list_reviews,
             set_watched_repos,
         ])
         .run(tauri::generate_context!())

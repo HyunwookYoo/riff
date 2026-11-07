@@ -1,6 +1,7 @@
 //! Persistent state stored in `<app_config_dir>/state.json`.
 //! Keeps the recent-repo list and user-set theme preference.
 
+pub mod review;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
