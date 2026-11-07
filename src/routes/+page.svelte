@@ -24,6 +24,7 @@
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import ReviewView from "$lib/ui/review/ReviewView.svelte";
+  import { reviewState, sortedPaths } from "$lib/review/reviewState.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
   import TabBar from "$lib/ui/TabBar.svelte";
   import ScopeBar from "$lib/ui/ScopeBar.svelte";
@@ -243,6 +244,15 @@
   }
 
   function moveSelection(delta: 1 | -1) {
+    // PR Review: one file at a time, through the review file list.
+    if (appState.appMode === "review") {
+      const paths = sortedPaths(reviewState.files);
+      if (paths.length === 0) return;
+      const cur = reviewState.selectedPath ? paths.indexOf(reviewState.selectedPath) : -1;
+      reviewState.selectedPath =
+        paths[cur < 0 ? 0 : (cur + delta + paths.length) % paths.length];
+      return;
+    }
     // Graph mode: j/k moves the file selection, which lives in the Files tab —
     // bring it forward so the selection never changes out of sight.
     if (appState.appMode === "history") graphTab = "files";

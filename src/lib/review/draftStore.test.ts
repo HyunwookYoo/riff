@@ -43,6 +43,16 @@ describe("draftStore", () => {
     expect(saveReview).not.toHaveBeenCalled();
   });
 
+  it("onRecordChanged hands a load failure to onError instead of rejecting", async () => {
+    const cb = vi.fn();
+    const onError = vi.fn();
+    await onRecordChanged(K, cb, onError);
+    loadReview.mockResolvedValueOnce({ version: 2, key: K });
+    await m.handler!({ payload: { key: K, origin: "drafts" } });
+    expect(cb).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(new Error("unreadable-review-record"));
+  });
+
   it("loadRecord returns emptyRecord when nothing stored", async () => {
     loadReview.mockResolvedValueOnce(null);
     expect(await loadRecord(K)).toEqual(emptyRecord(K));

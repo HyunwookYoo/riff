@@ -35,10 +35,18 @@ class ItemWidget extends WidgetType {
   eq(other: ItemWidget): boolean {
     return other.item.key === this.item.key;
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const el = document.createElement("div");
     el.className = "cm-review-inline";
-    unmounts.set(el, this.item.mount(el));
+    const unmount = this.item.mount(el);
+    // The editor ignores DOM changes inside widgets; re-measure when one
+    // resizes so heights (and the merge view's side alignment) stay right.
+    const ro = new ResizeObserver(() => view.requestMeasure());
+    ro.observe(el);
+    unmounts.set(el, () => {
+      ro.disconnect();
+      unmount();
+    });
     return el;
   }
   destroy(dom: HTMLElement): void {
@@ -105,6 +113,14 @@ export function reviewExtension(opts: {
     EditorView.theme({
       ".cm-review-gutter .cm-gutterElement": { cursor: "pointer", padding: "0 3px", color: "var(--accent)" },
       ".cm-review-gutter .cm-gutterElement:hover": { background: "var(--accent-soft)" },
+      ".cm-review-inline": {
+        padding: "4px 8px",
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        fontSize: "13px",
+        whiteSpace: "normal",
+        cursor: "auto",
+      },
+      ".cm-review-note": { color: "var(--error-fg)" },
     }),
   ];
 }

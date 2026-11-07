@@ -5,9 +5,9 @@ import { loadRecord, saveRecord } from "./draftStore";
 import { deleteReview, fetchPr, listReviews, markPrSeen, prChangedFiles, prHunks } from "./gh";
 import { prDetail } from "./github";
 import { headMoveFor, keysToDelete, loadPrList, REFRESH_MS, type HostState } from "./prList";
-import type { FileHunks, PrDetail, PrKey, PrRecord, PrSummary } from "./types";
+import type { FileHunks, PrDetail, PrKey, PrRecord, PrSummary, ReviewThread } from "./types";
 
-const UNREADABLE = "This PR's saved draft can't be read; riff won't overwrite it.";
+export const UNREADABLE = "This PR's saved draft can't be read; riff won't overwrite it.";
 
 class ReviewState {
   prs = $state<PrSummary[]>([]);
@@ -16,6 +16,8 @@ class ReviewState {
   selectedKey = $state<PrKey | null>(null);
   /** The head sha actually displayed; the only sha viewedHead/seen may be set to. */
   headSha = $state<string | null>(null);
+  /** The base sha `files` (hunks) were computed against. */
+  baseSha = $state<string | null>(null);
   detail = $state<PrDetail | null>(null);
   files = $state<FileHunks[]>([]);
   record = $state<PrRecord | null>(null);
@@ -89,6 +91,7 @@ export async function openPr(key: PrKey): Promise<void> {
   if (!summary) return;
   s.selectedKey = key;
   s.headSha = null;
+  s.baseSha = null;
   s.error = null;
   s.detail = null;
   s.files = [];
@@ -117,6 +120,7 @@ export async function openPr(key: PrKey): Promise<void> {
       if (seq !== openSeq) return;
       if (e instanceof Error && e.message === "unreadable-review-record") {
         s.headSha = headSha;
+        s.baseSha = baseSha;
         s.detail = detail;
         s.files = files;
         s.error = UNREADABLE; // record stays null; never saved over
@@ -146,15 +150,55 @@ export async function openPr(key: PrKey): Promise<void> {
     if (dirty) await saveRecord(rec);
     if (seq !== openSeq) return;
     s.headSha = headSha;
+    s.baseSha = baseSha;
     s.detail = detail;
     s.files = files;
     s.record = rec;
     // If the PR still moved past the displayed head, keep the gate explicit.
     s.headMoved = moved ?? (detail.headSha !== headSha ? { from: headSha, to: detail.headSha } : null);
     s.newSinceFiles = newSince;
-    s.selectedPath = files[0]?.path ?? null;
+    s.selectedPath = sortedPaths(files)[0] ?? null;
   } catch (e) {
     if (seq === openSeq) s.error = String(e);
+  }
+}
+
+/** The review file list order (path order); file navigation follows it. */
+export function sortedPaths(files: FileHunks[]): string[] {
+  return files.map((f) => f.path).sort();
+}
+
+/** Shown at its line; outdated and file-level threads go to the Outdated area. */
+export function isInlineThread(t: ReviewThread): boolean {
+  return !t.isOutdated && t.line !== null;
+}
+
+let detailSeq = 0;
+
+/** Re-reads the open PR's detail (threads, conversation) in place. */
+export async function reloadDetail(): Promise<void> {
+  const s = reviewState;
+  const key = s.selectedKey;
+  const seq = openSeq;
+  const dseq = ++detailSeq;
+  const summary = s.prs.find((p) => p.key === key);
+  if (!summary || !s.detail) return;
+  const detail = await prDetail(summary.repo.host, summary.nodeId);
+  if (seq !== openSeq || dseq !== detailSeq || s.selectedKey !== key) return;
+  s.detail = detail;
+  // As in openPr: the PR moved past the displayed head, keep the gate explicit.
+  if (s.headSha && detail.headSha !== s.headSha && !s.headMoved) {
+    s.headMoved = { from: s.headSha, to: detail.headSha };
+  }
+}
+
+/** Shows `next` at once and persists it; a failed save keeps it on screen. */
+export async function writeRecord(next: PrRecord): Promise<void> {
+  reviewState.record = next;
+  try {
+    await saveRecord(next);
+  } catch (e) {
+    reviewState.error = `Draft not saved: ${e}`;
   }
 }
 

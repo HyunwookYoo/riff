@@ -20,10 +20,22 @@ export async function saveRecord(r: PrRecord): Promise<void> {
   await emit(CHANGED_EVENT, { key: r.key, origin: getCurrentWebviewWindow().label });
 }
 
-export function onRecordChanged(key: PrKey, cb: (r: PrRecord) => void): Promise<() => void> {
+/** `onError` gets load failures, e.g. Error("unreadable-review-record"). */
+export function onRecordChanged(
+  key: PrKey,
+  cb: (r: PrRecord) => void,
+  onError?: (e: unknown) => void,
+): Promise<() => void> {
   const own = getCurrentWebviewWindow().label;
   return listen<{ key: PrKey; origin: string }>(CHANGED_EVENT, async (e) => {
     if (e.payload.key !== key || e.payload.origin === own) return;
-    cb(await loadRecord(key));
+    let r: PrRecord;
+    try {
+      r = await loadRecord(key);
+    } catch (err) {
+      onError?.(err);
+      return;
+    }
+    cb(r);
   });
 }
