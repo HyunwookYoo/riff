@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "review-drafts",
+  "description": "The PR Review drafts window: its close handler saves typed text, then destroys the window",
+  "windows": ["review-drafts"],
+  "permissions": ["core:window:allow-destroy"]
+}

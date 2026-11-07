@@ -30,6 +30,27 @@ export function setEvent(r: PrRecord, event: ReviewEvent): PrRecord {
   return { ...r, event };
 }
 
+/**
+ * Applies typed-but-unsaved edits: item bodies by id and the review body (null = untouched).
+ * Blank item bodies are never applied and come back in `kept`; edits of missing items are dropped.
+ */
+export function applyEdits(
+  r: PrRecord,
+  edits: Record<string, string>,
+  body: string | null,
+): { next: PrRecord; kept: Record<string, string> } {
+  let next = r;
+  const kept: Record<string, string> = {};
+  for (const [id, text] of Object.entries(edits)) {
+    const item = next.items.find((i) => i.id === id);
+    if (!item) continue;
+    if (!text.trim()) kept[id] = text;
+    else if (text !== item.body) next = editItem(next, id, text);
+  }
+  if (body !== null && body !== next.body) next = setBody(next, body);
+  return { next, kept };
+}
+
 /** `texts` is keyed `${path}|${side}` and holds that side's full file text at `newHead`. */
 export function reanchorAll(
   r: PrRecord,

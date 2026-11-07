@@ -732,10 +732,24 @@ pub fn run() {
             Ok(())
         })
         // The PR Review drafts window can't work alone (the main window owns
-        // submit): closing the main window quits the app.
+        // submit): closing the main window closes it too, through a normal
+        // close request so its close handler saves typed text first. The app
+        // then quits as its last window closes; the timer only backs up a
+        // drafts window that never finishes closing.
         .on_window_event(|window, event| {
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
-                window.app_handle().exit(0);
+            if window.label() != "main" || !matches!(event, tauri::WindowEvent::Destroyed) {
+                return;
+            }
+            let app = window.app_handle().clone();
+            match app.get_webview_window("review-drafts") {
+                Some(drafts) => {
+                    let _ = drafts.close();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        app.exit(0);
+                    });
+                }
+                None => app.exit(0),
             }
         })
         .invoke_handler(tauri::generate_handler![

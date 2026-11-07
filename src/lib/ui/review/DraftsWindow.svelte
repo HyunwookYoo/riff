@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { emit, listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { replaceState } from "$app/navigation";
   import {
     DRAFTS_OPEN_EVENT,
@@ -15,7 +16,7 @@
     type SubmitReply,
     type SubmitRequest,
   } from "$lib/review/draftStore";
-  import { editItem, removeItem, setBody, setEvent, submittable } from "$lib/review/draft";
+  import { applyEdits, removeItem, setEvent, submittable } from "$lib/review/draft";
   import { UNREADABLE } from "$lib/review/reviewState.svelte";
   import type { PrKey, PrRecord, ReviewEvent } from "$lib/review/types";
   import { showToast } from "../toast";
@@ -96,6 +97,10 @@
         status = e.payload.message;
         showToast(e.payload.message);
       }),
+      // Closing (the X, Alt+F4, or the main window closing it) saves what was typed first.
+      getCurrentWindow().onCloseRequested(async () => {
+        await flush();
+      }),
     ];
     return () => offs.forEach((p) => void p.then((u) => u()));
   });
@@ -131,15 +136,7 @@
     clearTimeout(timer);
     const r = record;
     if (!r || loadError) return false;
-    let next = r;
-    const kept: Record<string, string> = {};
-    for (const [id, text] of Object.entries(edits)) {
-      const item = next.items.find((i) => i.id === id);
-      if (!item) continue;
-      if (!text.trim()) kept[id] = text;
-      else if (text !== item.body) next = editItem(next, id, text);
-    }
-    if (bodyEdit !== null && bodyEdit !== next.body) next = setBody(next, bodyEdit);
+    const { next, kept } = applyEdits(r, edits, bodyEdit);
     edits = kept;
     bodyEdit = null;
     return next === r ? true : save(next);
@@ -153,6 +150,7 @@
   function onItemBlur(id: string) {
     // A blank body is never saved: leaving it restores the saved one.
     if (edits[id] !== undefined && !edits[id].trim()) delete edits[id];
+    void flush();
   }
 
   async function remove(id: string) {
@@ -236,6 +234,7 @@
         bodyEdit = e.currentTarget.value;
         scheduleFlush();
       }}
+      onblur={() => void flush()}
     ></textarea>
     <div class="row">
       {#each EVENTS as ev (ev.value)}

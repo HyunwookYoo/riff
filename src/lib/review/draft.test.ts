@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emptyRecord, addItem, editItem, reanchorAll, submittable, parseRecord, isValidRecord } from "./draft";
+import { emptyRecord, addItem, editItem, reanchorAll, submittable, parseRecord, isValidRecord, applyEdits } from "./draft";
 import type { FileHunks } from "./types";
 
 const K = "h/o/r#1";
@@ -55,5 +55,30 @@ describe("draft", () => {
 
   it("parseRecord returns empty for version-1 record without items array", () => {
     expect(parseRecord({ version: 1, key: K, body: "x" }, K)).toEqual(emptyRecord(K));
+  });
+});
+
+describe("applyEdits", () => {
+  const base = () => {
+    let r = addItem(emptyRecord(K), line("a.ts", 1, ["x"]), "one", "ai");
+    r = addItem(r, line("a.ts", 2, ["y"]), "two", "mine");
+    return r;
+  };
+
+  it("applies typed item bodies and the review body; keeps blank and unknown edits out", () => {
+    const r = base();
+    const [a, b] = r.items.map((i) => i.id);
+    const { next, kept } = applyEdits(r, { [a]: "one!", [b]: "  ", gone: "x" }, "summary");
+    expect(next.items.map((i) => i.body)).toEqual(["one!", "two"]);
+    expect(next.items[0].origin).toBe("ai-edited");
+    expect(next.body).toBe("summary");
+    expect(kept).toEqual({ [b]: "  " });
+  });
+
+  it("returns the same record when nothing changed", () => {
+    const r = base();
+    const { next, kept } = applyEdits(r, { [r.items[0].id]: "one" }, null);
+    expect(next).toBe(r);
+    expect(kept).toEqual({});
   });
 });
