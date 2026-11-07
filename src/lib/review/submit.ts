@@ -76,6 +76,36 @@ export async function submit(args: {
     throw e;
   }
 
-  const sent = new Set(items.map((i) => i.id));
-  return { ...record, items: record.items.filter((i) => !sent.has(i.id)), body: "", event: "COMMENT" };
+  return removeSubmitted(record, items.map((i) => i.id));
+}
+
+/** The record after a submit: `sentIds` gone, body and event reset; apply it to the CURRENT record. */
+export function removeSubmitted(r: PrRecord, sentIds: string[]): PrRecord {
+  const sent = new Set(sentIds);
+  return { ...r, items: r.items.filter((i) => !sent.has(i.id)), body: "", event: "COMMENT" };
+}
+
+/** Choices for an existing GitHub pending review; "add" only if it is pinned to `headSha`. */
+export function pendingChoices(
+  pendingId: string | null,
+  pendingCommit: string | null,
+  headSha: string,
+): PendingChoice[] | null {
+  if (!pendingId) return null;
+  return pendingCommit === headSha ? ["add", "discard"] : ["discard"];
+}
+
+export function submitErrorMessage(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg === "submit-blocked:not-seen") return "New commits since you looked: review them first";
+  if (msg === "submit-blocked:empty") return "Nothing to submit";
+  if (msg === "pending-review-stale") {
+    return "Your pending review on GitHub is pinned to an older commit; submit again and choose Discard.";
+  }
+  if (msg === "unreadable-review-record") return "This PR's saved draft can't be read; nothing was submitted.";
+  if (msg.startsWith("partial-add: ")) {
+    return "Some comments may already be in your pending review on GitHub. Your draft is unchanged; "
+      + `submit again and choose Discard to start a fresh review. (${msg.slice("partial-add: ".length)})`;
+  }
+  return `Submit failed: ${msg}`;
 }

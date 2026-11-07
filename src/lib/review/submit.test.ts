@@ -9,7 +9,7 @@ vi.mock("./github", () => ({
   deletePendingReview: vi.fn(),
 }));
 import * as gh from "./github";
-import { submit, submitBlock, buildBody } from "./submit";
+import { submit, submitBlock, buildBody, removeSubmitted, pendingChoices, submitErrorMessage } from "./submit";
 
 const H = "head1";
 const item = (id: string, target: DraftItem["target"], unplaced = false): DraftItem =>
@@ -154,5 +154,55 @@ describe("submit", () => {
     const r = rec([item("b", { kind: "body", location: "L" })]);
     await expect(submit(args(r, { existingPendingId: "old", existingPendingCommit: H, choice: "add" })))
       .rejects.toThrow(/^boom$/);
+  });
+});
+
+describe("removeSubmitted", () => {
+  it("drops exactly the sent ids from the current record and resets body and event", () => {
+    // Current record = a later state than the submit snapshot: "3" was added and "2" edited meanwhile.
+    const cur = rec([line("1"), { ...line("2"), body: "edited" }, line("3"), line("u", null, true)], {
+      body: "summary", event: "APPROVE",
+    });
+    const out = removeSubmitted(cur, ["1", "2"]);
+    expect(out.items.map((i) => i.id)).toEqual(["3", "u"]);
+    expect(out.body).toBe("");
+    expect(out.event).toBe("COMMENT");
+    expect(out.viewedHead).toBe(H);
+    expect(out.anchorHead).toBe(H);
+  });
+
+  it("ignores sent ids the current record no longer has", () => {
+    expect(removeSubmitted(rec([line("1")]), ["gone"]).items.map((i) => i.id)).toEqual(["1"]);
+  });
+});
+
+describe("pendingChoices", () => {
+  it("is null without a pending review", () => {
+    expect(pendingChoices(null, null, H)).toBeNull();
+  });
+  it("offers add and discard when the pending review is on the head", () => {
+    expect(pendingChoices("p", H, H)).toEqual(["add", "discard"]);
+  });
+  it("offers only discard when the pending review is pinned to another commit", () => {
+    expect(pendingChoices("p", "older", H)).toEqual(["discard"]);
+    expect(pendingChoices("p", null, H)).toEqual(["discard"]);
+  });
+});
+
+describe("submitErrorMessage", () => {
+  it("explains a partial add and suggests Discard", () => {
+    const msg = submitErrorMessage(new Error("partial-add: boom"));
+    expect(msg).toContain("may already be in your pending review on GitHub");
+    expect(msg).toContain("Discard");
+    expect(msg).toContain("boom");
+  });
+  it("names the known failures", () => {
+    expect(submitErrorMessage(new Error("submit-blocked:not-seen"))).toContain("New commits since you looked");
+    expect(submitErrorMessage(new Error("submit-blocked:empty"))).toBe("Nothing to submit");
+    expect(submitErrorMessage(new Error("pending-review-stale"))).toContain("older commit");
+    expect(submitErrorMessage(new Error("unreadable-review-record"))).toContain("can't be read");
+  });
+  it("passes other errors through", () => {
+    expect(submitErrorMessage("gh: 502")).toBe("Submit failed: gh: 502");
   });
 });
