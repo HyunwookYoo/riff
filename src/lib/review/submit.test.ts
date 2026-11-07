@@ -148,4 +148,11 @@ describe("submit", () => {
     await expect(submit(args(rec([line("1")]), { existingPendingId: "old", existingPendingCommit: H, choice: "add" })))
       .rejects.toThrow(/^boom$/);
   });
+
+  it("add with body-only items rethrows the original error when submitReview fails", async () => {
+    vi.mocked(gh.submitReview).mockRejectedValueOnce(new Error("boom"));
+    const r = rec([item("b", { kind: "body", location: "L" })]);
+    await expect(submit(args(r, { existingPendingId: "old", existingPendingCommit: H, choice: "add" })))
+      .rejects.toThrow(/^boom$/);
+  });
 });

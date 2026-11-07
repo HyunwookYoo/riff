@@ -60,8 +60,10 @@ export async function submit(args: {
       }
     }
     for (const it of items) {
-      if (it.target.kind === "reply") await addReply(host, reviewId, it.target.threadId, it.body);
-      posted = true;
+      if (it.target.kind === "reply") {
+        await addReply(host, reviewId, it.target.threadId, it.body);
+        posted = true;
+      }
     }
     await submitReview(host, reviewId, record.event, buildBody(record));
   } catch (e) {
