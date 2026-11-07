@@ -18,6 +18,7 @@ export interface ReviewThread {
 export interface PrDetail {
   body: string; headSha: string; baseSha: string; conversation: ThreadComment[];
   threads: ReviewThread[]; pendingReviewId: string | null;
+  pendingReviewCommit: string | null;
 }
 export type DraftTarget =
   | { kind: "line"; path: string; side: Side; line: number; startLine: number | null; quote: string[] }

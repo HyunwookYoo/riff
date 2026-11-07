@@ -20,7 +20,8 @@ const rec = (items: DraftItem[], over: Partial<PrRecord> = {}): PrRecord => ({
   version: 1, key: "h/o/r#1", items, body: "", event: "COMMENT", anchorHead: H, viewedHead: H, ...over,
 });
 const args = (record: PrRecord, over = {}) => ({
-  host: "h", prNodeId: "PR1", headSha: H, record, existingPendingId: null, choice: null, ...over,
+  host: "h", prNodeId: "PR1", headSha: H, record, existingPendingId: null, existingPendingCommit: null,
+  choice: null, ...over,
 });
 
 beforeEach(() => {
@@ -32,6 +33,12 @@ describe("submitBlock", () => {
   it("blocks when latest head not seen", () => {
     expect(submitBlock(rec([line("1")], { viewedHead: "old" }), H)).toBe("not-seen");
     expect(submitBlock(rec([line("1")], { viewedHead: null }), H)).toBe("not-seen");
+  });
+  it("blocks when anchors belong to an older head", () => {
+    expect(submitBlock(rec([line("1")], { anchorHead: "old" }), H)).toBe("not-seen");
+    expect(submitBlock(rec([line("1")], { anchorHead: null }), H)).toBe("not-seen");
+    expect(submitBlock(rec([line("1", null, true)], { anchorHead: "old" }), H)).toBe("empty");
+    expect(submitBlock(rec([item("f", { kind: "file", path: "x", location: "L" })], { anchorHead: "old" }), H)).toBeNull();
   });
   it("blocks empty COMMENT", () => {
     expect(submitBlock(rec([]), H)).toBe("empty");
@@ -106,7 +113,7 @@ describe("submit", () => {
 
   it("existing pending review with add reuses it and never deletes it on failure", async () => {
     vi.mocked(gh.addThread).mockRejectedValueOnce(new Error("boom"));
-    await expect(submit(args(rec([line("1")]), { existingPendingId: "old", choice: "add" })))
+    await expect(submit(args(rec([line("1")]), { existingPendingId: "old", existingPendingCommit: H, choice: "add" })))
       .rejects.toThrow("boom");
     expect(gh.createPendingReview).not.toHaveBeenCalled();
     expect(gh.deletePendingReview).not.toHaveBeenCalled();
@@ -120,5 +127,25 @@ describe("submit", () => {
     await submit(args(rec([line("1")]), { existingPendingId: "old", choice: "discard" }));
     expect(calls).toEqual(["delete", "create"]);
     expect(gh.deletePendingReview).toHaveBeenCalledWith("h", "old");
+  });
+
+  it("add refuses a pending review pinned to another commit", async () => {
+    await expect(submit(args(rec([line("1")]), { existingPendingId: "old", existingPendingCommit: "older", choice: "add" })))
+      .rejects.toThrow("pending-review-stale");
+    expect(gh.addThread).not.toHaveBeenCalled();
+    expect(gh.deletePendingReview).not.toHaveBeenCalled();
+  });
+
+  it("add failure after a posted thread reports partial-add", async () => {
+    vi.mocked(gh.addThread).mockResolvedValueOnce().mockRejectedValueOnce(new Error("boom"));
+    await expect(submit(args(rec([line("1"), line("2")]), { existingPendingId: "old", existingPendingCommit: H, choice: "add" })))
+      .rejects.toThrow("partial-add: boom");
+    expect(gh.deletePendingReview).not.toHaveBeenCalled();
+  });
+
+  it("add failure before any posted thread rethrows original", async () => {
+    vi.mocked(gh.addThread).mockRejectedValueOnce(new Error("boom"));
+    await expect(submit(args(rec([line("1")]), { existingPendingId: "old", existingPendingCommit: H, choice: "add" })))
+      .rejects.toThrow(/^boom$/);
   });
 });

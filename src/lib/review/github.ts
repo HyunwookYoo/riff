@@ -74,7 +74,7 @@ const DETAIL_QUERY = `query($id: ID!) {
     ... on PullRequest {
       body headRefOid baseRefOid
       comments(first: 100) { nodes { id author { login } body createdAt } }
-      reviews(states: [PENDING], first: 1) { nodes { id } }
+      reviews(states: [PENDING], first: 1) { nodes { id commit { oid } } }
       reviewThreads(first: 100) {
         nodes {
           id isResolved isOutdated path line startLine originalLine diffSide startDiffSide subjectType
@@ -96,7 +96,7 @@ export async function prDetail(host: string, nodeId: string): Promise<PrDetail> 
     node: {
       body: string; headRefOid: string; baseRefOid: string;
       comments: { nodes: RawComment[] };
-      reviews: { nodes: { id: string }[] };
+      reviews: { nodes: { id: string; commit: { oid: string } | null }[] };
       reviewThreads: {
         nodes: {
           id: string; isResolved: boolean; isOutdated: boolean; path: string;
@@ -117,6 +117,7 @@ export async function prDetail(host: string, nodeId: string): Promise<PrDetail> 
     body: n.body, headSha: n.headRefOid, baseSha: n.baseRefOid,
     conversation: n.comments.nodes.map(mapComment), threads,
     pendingReviewId: n.reviews.nodes[0]?.id ?? null,
+    pendingReviewCommit: n.reviews.nodes[0]?.commit?.oid ?? null,
   };
 }
 

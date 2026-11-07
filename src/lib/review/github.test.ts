@@ -55,7 +55,7 @@ describe("prDetail", () => {
       node: {
         body: "desc", headRefOid: "H", baseRefOid: "B",
         comments: { nodes: [{ id: "c1", author: null, body: "hi", createdAt: "t" }] },
-        reviews: { nodes: [{ id: "R1" }] },
+        reviews: { nodes: [{ id: "R1", commit: { oid: "C1" } }] },
         reviewThreads: {
           nodes: [{
             id: "T1", isResolved: false, isOutdated: true, path: "a.ts", line: null, startLine: null,
@@ -67,7 +67,7 @@ describe("prDetail", () => {
     } as never);
     const d = await prDetail("h", "PR1");
     expect(d).toEqual({
-      body: "desc", headSha: "H", baseSha: "B", pendingReviewId: "R1",
+      body: "desc", headSha: "H", baseSha: "B", pendingReviewId: "R1", pendingReviewCommit: "C1",
       conversation: [{ id: "c1", author: "ghost", body: "hi", createdAt: "t" }],
       threads: [{
         id: "T1", path: "a.ts", side: "LEFT", line: null, startLine: null, originalLine: 7,
@@ -76,6 +76,16 @@ describe("prDetail", () => {
       }],
     });
     expect(gql.mock.calls[0][2]).toEqual({ id: "PR1" });
+  });
+
+  it("pendingReviewCommit is null without a pending review or commit", async () => {
+    const node = (reviews: unknown[]) => ({
+      node: { body: "", headRefOid: "H", baseRefOid: "B", comments: { nodes: [] },
+        reviews: { nodes: reviews }, reviewThreads: { nodes: [] } },
+    });
+    gql.mockResolvedValueOnce(node([]) as never).mockResolvedValueOnce(node([{ id: "R", commit: null }]) as never);
+    expect((await prDetail("h", "P")).pendingReviewCommit).toBeNull();
+    expect((await prDetail("h", "P")).pendingReviewCommit).toBeNull();
   });
 });
 
