@@ -4,6 +4,7 @@
   import { setThreadResolved } from "$lib/review/github";
   import Composer from "./Composer.svelte";
   import InlineDraft from "./InlineDraft.svelte";
+  import { textStash } from "./composerAt";
 
   let { threadId }: { threadId: string } = $props();
 
@@ -13,7 +14,10 @@
       (i) => i.target.kind === "reply" && i.target.threadId === threadId,
     ),
   );
-  let replying = $state(false);
+  // svelte-ignore state_referenced_locally
+  const replyKey = `reply:${threadId}`;
+  // Reopen a reply box that was open when the widget was last drawn.
+  let replying = $state(textStash.has(replyKey));
   let showResolved = $state(false);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -21,10 +25,11 @@
   async function addReply(body: string) {
     const r = reviewState.record;
     const last = thread?.comments.at(-1);
-    if (!r) return;
+    if (!r) return false;
     const preview = (last?.body ?? "").slice(0, 80);
     await writeRecord(addItem(r, { kind: "reply", threadId, preview }, body, "mine"));
     replying = false;
+    return true;
   }
 
   async function toggleResolved() {
@@ -71,7 +76,7 @@
         <InlineDraft itemId={r.id} />
       {/each}
       {#if replying}
-        <Composer label="Reply" onsubmit={addReply} oncancel={() => (replying = false)} />
+        <Composer label="Reply" stashKey={replyKey} onsubmit={addReply} oncancel={() => (replying = false)} />
       {:else}
         <div class="actions">
           <button type="button" onclick={() => (replying = true)} disabled={!reviewState.record}>Reply</button>

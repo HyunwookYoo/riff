@@ -1,38 +1,51 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { reviewState } from "$lib/review/reviewState.svelte";
+  import { textStash } from "./composerAt";
 
   let {
     label,
-    initial = "",
+    stashKey,
     onsubmit,
     oncancel,
-    ontext,
   }: {
     label: string;
-    initial?: string;
-    onsubmit: (body: string) => Promise<void>;
+    /** Where the unsaved text lives while the widget may be redrawn. */
+    stashKey: string;
+    /** Resolves true once the comment is in the draft. */
+    onsubmit: (body: string) => Promise<boolean>;
     oncancel: () => void;
-    ontext?: (text: string) => void;
   } = $props();
 
+  // A stash entry means this is a redraw of an open composer, not a fresh open.
   // svelte-ignore state_referenced_locally
-  let text = $state(initial);
+  const reopened = textStash.has(stashKey);
+  // svelte-ignore state_referenced_locally
+  let text = $state(textStash.get(stashKey) ?? "");
+  // svelte-ignore state_referenced_locally
+  if (!reopened) textStash.set(stashKey, "");
   let busy = $state(false);
   let ta: HTMLTextAreaElement;
   // No record (unreadable, R7): nothing may be added to the draft.
   const blocked = $derived(!reviewState.record);
 
-  onMount(() => ta.focus());
+  onMount(() => {
+    if (!reopened) ta.focus();
+  });
 
   async function submit() {
     if (blocked || busy || !text.trim()) return;
     busy = true;
     try {
-      await onsubmit(text);
+      if (await onsubmit(text)) textStash.delete(stashKey);
     } finally {
       busy = false;
     }
+  }
+
+  function cancel() {
+    textStash.delete(stashKey);
+    oncancel();
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -41,7 +54,7 @@
       void submit();
     } else if (e.key === "Escape") {
       e.preventDefault();
-      oncancel();
+      cancel();
     }
   }
 </script>
@@ -51,7 +64,7 @@
   <textarea
     bind:this={ta}
     bind:value={text}
-    oninput={(e) => ontext?.(e.currentTarget.value)}
+    oninput={(e) => textStash.set(stashKey, e.currentTarget.value)}
     {onkeydown}
     rows="4"
     placeholder="Leave a comment (Ctrl+Enter to add)"
@@ -59,7 +72,7 @@
   ></textarea>
   <div class="actions">
     {#if blocked}<span class="blocked">{reviewState.error ?? "The draft can't be changed."}</span>{/if}
-    <button type="button" onclick={oncancel}>Cancel</button>
+    <button type="button" onclick={cancel}>Cancel</button>
     <button
       type="button"
       class="primary"

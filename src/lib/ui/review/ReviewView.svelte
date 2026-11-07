@@ -24,6 +24,7 @@
   import InlineDraft from "./InlineDraft.svelte";
   import Composer from "./Composer.svelte";
   import { reviewExtension, setInlineItems, trackView, type InlineItem } from "./cmReview";
+  import { clickComposer, composerKey, textStash, type ComposerAt } from "./composerAt";
 
   onMount(() => {
     void refreshList();
@@ -62,16 +63,14 @@
       : undefined,
   );
 
-  // Line composer; `anchor` is the first clicked line a shift-click extends from.
-  type ComposerAt = { path: string; side: Side; anchor: number; line: number; startLine: number | null };
   let composer = $state.raw<ComposerAt | null>(null);
-  let composerText = "";
   let note = $state.raw<{ path: string; side: Side; line: number; text: string } | null>(null);
 
   $effect(() => {
     void reviewState.selectedKey;
     composer = null;
     note = null;
+    textStash.clear();
   });
 
   // The live editors, tagged with the file they were built for.
@@ -85,32 +84,39 @@
       note = { path, side, line, text: reviewState.error ?? UNREADABLE };
       return;
     }
-    note = null;
-    const c = composer;
-    if (shift && c && c.path === path && c.side === side) {
-      const start = Math.min(c.anchor, line);
-      const end = Math.max(c.anchor, line);
-      if (start !== end && !isCommentable(fileHunks(path), side, end, start)) {
-        note = { path, side, line, text: "A range must stay inside one diff hunk." };
-        return;
+    const prev = composer;
+    const r = clickComposer(prev, { path, side, line, shift }, fileHunks(path));
+    note = r.note ? { path, side, line, text: r.note } : null;
+    if (r.composer === prev) return; // same target: keep the widget and its text
+    const next = r.composer;
+    // Extending a range keeps the typed text (under the new key); a new composer starts empty.
+    if (prev) {
+      const text = textStash.get(composerKey(prev));
+      textStash.delete(composerKey(prev));
+      if (shift && text !== undefined && next && next.path === prev.path && next.side === prev.side) {
+        textStash.set(composerKey(next), text);
       }
-      composer = { ...c, line: end, startLine: start === end ? null : start };
-      return;
     }
-    composerText = "";
-    composer = { path, side, anchor: line, line, startLine: null };
+    composer = next;
   }
 
-  async function addLineComment(c: ComposerAt, body: string) {
+  // Widget callbacks name their composer by key: CodeMirror keeps a widget whose
+  // key is unchanged, so its closures may predate the current `composer` object.
+  const isOpen = (key: string) => !!composer && composerKey(composer) === key;
+
+  async function addLineComment(key: string, body: string): Promise<boolean> {
+    const c = composer;
     const r = reviewState.record;
+    if (!c || composerKey(c) !== key || !r) return false;
     const t = c.side === "LEFT" ? viewA : viewB;
-    if (!r || !t?.alive || t.path !== c.path) return;
+    if (!t?.alive || t.path !== c.path) return false;
     const doc = t.view.state.doc;
     const quote: string[] = [];
     for (let n = c.startLine ?? c.line; n <= c.line; n++) quote.push(doc.line(n).text);
     const target = { kind: "line" as const, path: c.path, side: c.side, line: c.line, startLine: c.startLine, quote };
     await writeRecord(addItem(r, target, body, "mine"));
-    if (composer === c) composer = null;
+    if (isOpen(key)) composer = null;
+    return true;
   }
 
   function sideExtensions(side: "a" | "b"): Extension[] {
@@ -159,16 +165,16 @@
     const c = composer;
     if (c && c.path === path && c.side === side) {
       const label = c.startLine !== null ? `Comment on lines ${c.startLine}–${c.line}` : `Comment on line ${c.line}`;
+      const key = composerKey(c);
       out.push({
         line: c.line,
-        key: `c:${c.startLine}:${c.line}`,
+        key,
         mount: mountWith(Composer, {
           label,
-          initial: composerText,
-          ontext: (t: string) => (composerText = t),
-          onsubmit: (body: string) => addLineComment(c, body),
+          stashKey: key,
+          onsubmit: (body: string) => addLineComment(key, body),
           oncancel: () => {
-            if (composer === c) composer = null;
+            if (isOpen(key)) composer = null;
             note = null;
           },
         }),

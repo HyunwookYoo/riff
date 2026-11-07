@@ -1,23 +1,33 @@
 <script lang="ts">
   import { reviewState, writeRecord } from "$lib/review/reviewState.svelte";
   import { editItem, removeItem } from "$lib/review/draft";
+  import { textStash } from "./composerAt";
 
   let { itemId }: { itemId: string } = $props();
 
   const item = $derived(reviewState.record?.items.find((i) => i.id === itemId));
-  let editing = $state(false);
-  let text = $state("");
+  // svelte-ignore state_referenced_locally
+  const editKey = `edit:${itemId}`;
+  // An open edit survives the widget being redrawn.
+  let editing = $state(textStash.has(editKey));
+  let text = $state(textStash.get(editKey) ?? "");
 
   function startEdit() {
     if (!item) return;
     text = item.body;
+    textStash.set(editKey, text);
     editing = true;
+  }
+
+  function stopEdit() {
+    textStash.delete(editKey);
+    editing = false;
   }
 
   async function save() {
     const r = reviewState.record;
     if (!r || !text.trim()) return;
-    editing = false;
+    stopEdit();
     await writeRecord(editItem(r, itemId, text));
   }
 
@@ -42,9 +52,9 @@
       {/if}
     </div>
     {#if editing}
-      <textarea bind:value={text} rows="4"></textarea>
+      <textarea bind:value={text} rows="4" oninput={(e) => textStash.set(editKey, e.currentTarget.value)}></textarea>
       <div class="actions">
-        <button type="button" onclick={() => (editing = false)}>Cancel</button>
+        <button type="button" onclick={stopEdit}>Cancel</button>
         <button type="button" onclick={() => void save()} disabled={!text.trim() || !reviewState.record}>
           Save
         </button>
