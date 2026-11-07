@@ -79,7 +79,7 @@ export type PrKey = string; // `${host}/${owner}/${name}#${number}`
 export interface Hunk { oldStart: number; oldLines: number; newStart: number; newLines: number }
 export interface FileHunks { path: string; oldPath: string | null; hunks: Hunk[] }
 export interface PrSummary {
-  key: PrKey; repo: GhRepo; repoIdx: number; nodeId: string; number: number;
+  key: PrKey; repo: GhRepo; repoIdx: number; remote: string; nodeId: string; number: number;
   title: string; author: string; url: string; additions: number; deletions: number;
   headSha: string; baseSha: string; baseRef: string; updatedAt: string;
   section: "requested" | "reviewed"; myLastReviewSha: string | null;
@@ -310,7 +310,7 @@ export interface PrRecord {
 - Consumes: `ghGraphql` (Task 3); types (Task 5).
 - Produces:
   - `viewerLogin(host): Promise<string>`, cached per host for the session.
-  - `searchPrs(host, repos: {repo: GhRepo; repoIdx: number}[], login: string): Promise<PrSummary[]>`. It runs two searches:
+  - `searchPrs(host, repos: {repo: GhRepo; repoIdx: number; remote: string}[], login: string): Promise<PrSummary[]>`. It runs two searches (each result carries the matching entry's `repoIdx` and `remote`):
     - `is:pr is:open review-requested:@me archived:false repo:o/r …` with `section:"requested"`;
     - `is:pr is:open reviewed-by:@me archived:false repo:o/r …` with `section:"reviewed"`.
 
