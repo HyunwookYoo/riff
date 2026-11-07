@@ -9,7 +9,7 @@
   import { changesFileDiff, fileDiff, setUeVersionForRepo } from "$lib/git";
   import { resolveRepoRanges } from "$lib/repoRange";
   import { paneLabels } from "$lib/rangeText";
-  import type { ChangedFile, FileDiff } from "$lib/types";
+  import type { ChangedFile, DiffMode, FileDiff } from "$lib/types";
   import { detectLanguage, supportedLanguages } from "$lib/diff/lang";
   import { isDarkMode, shikiExtension } from "$lib/diff/shiki";
   import { fullLineChangePlugin } from "$lib/diff/fullLine";
@@ -19,6 +19,41 @@
   import Dropdown from "./Dropdown.svelte";
   import ImageDiff from "./ImageDiff.svelte";
   import SubmoduleDiff from "./SubmoduleDiff.svelte";
+
+  // All optional: without them DiffView follows appState.selectedFile and the
+  // app's ranges. `source` pins an explicit repo/range/file (PR Review).
+  let {
+    source,
+    sideExtensions,
+    forceSideBySide = false,
+  }: {
+    source?: {
+      repoPath: string;
+      start: string;
+      target: string;
+      file: ChangedFile;
+      mode?: DiffMode;
+    };
+    /** Extra extensions per side-by-side editor: "a" = old, "b" = new. */
+    sideExtensions?: (side: "a" | "b") => Extension[];
+    forceSideBySide?: boolean;
+  } = $props();
+
+  const file = $derived(source?.file ?? appState.selectedFile);
+  // The owner may rebuild `source` on unrelated state changes; loads key on
+  // what it names, not on the object.
+  const sourceKey = $derived(
+    source
+      ? JSON.stringify([
+          source.repoPath,
+          source.start,
+          source.target,
+          source.mode ?? "three-dot",
+          source.file.path,
+          source.file.old_path,
+        ])
+      : null,
+  );
 
   let host: HTMLDivElement;
   let mergeView: MergeView | null = null;
@@ -54,9 +89,11 @@
   const NARROW_BREAKPOINT = 720;
   let containerW = $state(0);
   const effectiveViewMode = $derived(
-    containerW > 0 && containerW < NARROW_BREAKPOINT
-      ? "unified"
-      : appState.viewMode,
+    forceSideBySide
+      ? "side-by-side"
+      : containerW > 0 && containerW < NARROW_BREAKPOINT
+        ? "unified"
+        : appState.viewMode,
   );
 
   const langOptions = $derived([
@@ -78,7 +115,8 @@
   const ueVersionOptions = UE_VERSIONS.map((v) => ({ value: v, label: v }));
 
   const selectedRepoPath = $derived(
-    appState.repos[appState.selectedFile?.repoIdx ?? 0]?.path ??
+    source?.repoPath ??
+      appState.repos[file?.repoIdx ?? 0]?.path ??
       appState.repoPath,
   );
   const ueVersion = $derived(
@@ -93,7 +131,7 @@
   // toggles the rendered image view, reusing ImageDiff with data: URLs built
   // from the text content — no backend round-trip.
   const isSvg = $derived(
-    appState.selectedFile?.path.toLowerCase().endsWith(".svg") ?? false,
+    file?.path.toLowerCase().endsWith(".svg") ?? false,
   );
   let svgPreview = $state(false);
   const showSvgPreview = $derived(
@@ -105,7 +143,7 @@
   // Branch mode: name what each pane shows — base / compare, or parent /
   // commit for a commit picked in the commit table.
   const labels = $derived.by(() => {
-    const f = appState.selectedFile;
+    const f = file;
     if (appState.appMode !== "compare" || !f) return null;
     if (commitViewActive()) return { left: "before", right: "after" };
     const idx = f.repoIdx ?? 0;
@@ -132,7 +170,7 @@
 
   // Reset override whenever the selected file or compare context changes.
   $effect(() => {
-    void appState.selectedFile;
+    void (sourceKey ?? file);
     void appState.targetBranch;
     void appState.compareMode;
     void appState.mode;
@@ -142,13 +180,12 @@
   // Re-render whenever the selected file, view mode, theme, override, or
   // compare mode changes.
   $effect(() => {
-    const file = appState.selectedFile;
+    void (sourceKey ?? file);
     const mode = effectiveViewMode;
     const theme = appState.effectiveTheme;
     const ov = langOverride;
     const cm = appState.compareMode;
     const uv = ueVersion;
-    void file;
     void mode;
     void theme;
     void ov;
@@ -166,8 +203,10 @@
 
   async function load(force: boolean) {
     const session = ++loadSession;
-    const file = appState.selectedFile;
-    if (!file || !appState.repoPath) {
+    // Untracked in source mode: the load effect keys on sourceKey instead.
+    const src = untrack(() => source);
+    const cur = src ? untrack(() => file) : file;
+    if (!cur || !(src ? src.repoPath : appState.repoPath)) {
       teardown();
       diff = null;
       loadError = null;
@@ -178,8 +217,9 @@
     // Multi-root (§13): the selected file's repo dictates which path and
     // which refs to feed file_diff. compare() already resolved this when
     // listing the file; mirror the rules here so the right diff opens.
-    const repoIdx = file.repoIdx ?? 0;
-    const repoPath = appState.repos[repoIdx]?.path ?? appState.repoPath;
+    const repoIdx = cur.repoIdx ?? 0;
+    const repoPath =
+      src?.repoPath ?? appState.repos[repoIdx]?.path ?? appState.repoPath;
 
     // Double-buffer: if an editor is already on screen, keep it visible and
     // fetch the new diff in the background (no "Loading diff…" flash). Only
@@ -195,12 +235,23 @@
     let next: FileDiff | null = null;
     let nextErr: string | null = null;
     try {
-      if (appState.appMode === "changes") {
+      if (src) {
+        next = await fileDiff(
+          src.repoPath,
+          src.start,
+          src.target,
+          src.mode ?? "three-dot",
+          cur.path,
+          cur.old_path,
+          force,
+          ueVersion,
+        );
+      } else if (appState.appMode === "changes") {
         next = await changesFileDiff(
           repoPath,
-          file.path,
-          file.old_path,
-          file.status,
+          cur.path,
+          cur.old_path,
+          cur.status,
           force,
           ueVersion,
         );
@@ -216,8 +267,8 @@
           range.start,
           range.target,
           "two-dot",
-          file.path,
-          file.old_path,
+          cur.path,
+          cur.old_path,
           force,
           ueVersion,
         );
@@ -233,8 +284,8 @@
             range.base,
             range.compare,
             appState.mode,
-            file.path,
-            file.old_path,
+            cur.path,
+            cur.old_path,
             force,
             ueVersion,
           );
@@ -261,11 +312,11 @@
       const guardDark = isDarkMode();
       const guardLang =
         langOverride ??
-        (next.derived_label ? "json" : detectLanguage(file.path));
+        (next.derived_label ? "json" : detectLanguage(cur.path));
       if (
         (mergeView || unifiedView) &&
         mounted &&
-        mounted.path === file.path &&
+        mounted.path === cur.path &&
         mounted.old === next.old_content &&
         mounted.new === next.new_content &&
         mounted.mode === effectiveViewMode &&
@@ -280,7 +331,7 @@
       // the last moment. `diff` is set now so the toolbar (lang dropdown)
       // tracks the new file; the host DOM is still the old editor until swap.
       diff = next;
-      await mount(file, next.old_content, next.new_content, session);
+      await mount(cur, next.old_content, next.new_content, session);
     } else {
       // Non-text (binary / too-large), error, or nothing: drop the old editor
       // and show the state message.
@@ -342,11 +393,19 @@
       mergeView = new MergeView({
         a: {
           doc: oldText,
-          extensions: [...baseExts, ...(oldExt ? [oldExt] : [])],
+          extensions: [
+            ...baseExts,
+            ...(oldExt ? [oldExt] : []),
+            ...(sideExtensions?.("a") ?? []),
+          ],
         },
         b: {
           doc: newText,
-          extensions: [...baseExts, ...(newExt ? [newExt] : [])],
+          extensions: [
+            ...baseExts,
+            ...(newExt ? [newExt] : []),
+            ...(sideExtensions?.("b") ?? []),
+          ],
         },
         parent: host,
         collapseUnchanged: { margin: 3, minSize: 4 },
@@ -389,7 +448,7 @@
           view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "center" }) });
         });
       }
-    } else {
+    } else if (!source) {
       const mem = appState.tabMemory.get(file.repoIdx ?? 0);
       if (mem?.filePath === file.path && typeof mem.scrollPos === "number" && view) {
         const top = mem.scrollPos;
@@ -488,6 +547,7 @@
         </button>
         <button type="button" onclick={() => adjustFontSize(1)} aria-label="Increase font size">A+</button>
       </div>
+      {#if !forceSideBySide}
       <button
         type="button"
         class:active={effectiveViewMode === "side-by-side"}
@@ -507,6 +567,7 @@
       >
         Unified
       </button>
+      {/if}
       {/if}
     </div>
     {/if}
