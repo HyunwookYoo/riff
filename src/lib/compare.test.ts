@@ -28,7 +28,8 @@ vi.mock("./diff/shiki", () => ({ preloadLanguages: vi.fn() }));
 vi.mock("./commitHistory", () => ({ restoreCompareContext: vi.fn() }));
 vi.mock("./workingCopy", () => ({ enterChangesMode: vi.fn() }));
 
-import { compare, forgetListedRanges, listedRanges } from "./compare";
+import { compare, cycleAppMode, forgetListedRanges, listedRanges } from "./compare";
+import { enterChangesMode } from "./workingCopy";
 import { appState } from "./store.svelte";
 import { diffFiles } from "./git";
 import { resolveRepoRanges } from "./repoRange";
@@ -196,5 +197,17 @@ describe("compare", () => {
     await compare();
     forgetListedRanges();
     expect(listedRanges()).toBeNull();
+  });
+});
+
+describe("cycleAppMode", () => {
+  it("goes blame → review → changes", () => {
+    const st = appState as unknown as { appMode: string };
+    vi.mocked(enterChangesMode).mockClear();
+    st.appMode = "blame";
+    cycleAppMode();
+    expect(st.appMode).toBe("review");
+    cycleAppMode();
+    expect(enterChangesMode).toHaveBeenCalledTimes(1);
   });
 });

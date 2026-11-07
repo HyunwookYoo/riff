@@ -258,13 +258,20 @@ export async function compare(opts: CompareOptions = {}): Promise<void> {
   }
 }
 
-/// Cycle the workspace: Changes → Compare → Blame → Changes.
+/// Cycle the workspace: Changes → Compare → Blame → PR Review → Changes.
 /// Triggered by Ctrl+Shift+W. The graph sub-view returns to Changes. The cycle
 /// is positional, not a stack pop.
 export function cycleAppMode(): void {
   // Graph sub-view or Blame → back to the working (Changes) view.
-  if (appState.appMode === "history" || appState.appMode === "blame") {
+  if (
+    appState.appMode === "history" ||
+    appState.appMode === "review"
+  ) {
     void enterChangesMode();
+    return;
+  }
+  if (appState.appMode === "blame") {
+    enterReviewMode();
     return;
   }
   // Changes → branch compare. Restore the compare refs a graph visit may have
@@ -277,6 +284,10 @@ export function cycleAppMode(): void {
   // Branch compare → blame: carry the selected file so blame opens on it.
   carrySelectionToBlame();
   appState.appMode = "blame";
+}
+
+export function enterReviewMode(): void {
+  appState.appMode = "review";
 }
 
 /// Pin the currently selected file as the blame target so entering blame mode

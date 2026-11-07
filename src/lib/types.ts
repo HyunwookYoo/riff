@@ -113,8 +113,9 @@ export type FileViewMode = "flat" | "tree";
 /// sub-mode is `CompareMode`); `blame` is the standalone blame workspace;
 /// `history` browses a commit log and shows the selected commit's diff (via
 /// the same branch-compare pipeline, parent..commit); `changes` is the
-/// Working (Changes) view — one HEAD-relative list + diff. Session-only.
-export type AppMode = "compare" | "blame" | "history" | "changes";
+/// Working (Changes) view — one HEAD-relative list + diff; `review` is the
+/// PR Review workspace. Session-only.
+export type AppMode = "compare" | "blame" | "history" | "changes" | "review";
 
 /// One commit row in the history browser. Mirrors Rust `git::Commit`.
 /// `parents` are full SHAs (drive the graph lane layout); `refs` are raw

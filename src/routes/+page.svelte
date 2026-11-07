@@ -23,6 +23,7 @@
   import Timelapse from "$lib/ui/Timelapse.svelte";
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
+  import ReviewView from "$lib/ui/review/ReviewView.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
   import TabBar from "$lib/ui/TabBar.svelte";
   import ScopeBar from "$lib/ui/ScopeBar.svelte";
@@ -607,6 +608,8 @@
 
     {#if appState.appMode === "blame"}
       <BlameView />
+    {:else if appState.appMode === "review"}
+      <ReviewView />
     {:else if appState.appMode === "changes"}
       <div class="changes-col">
         <div class="changes-scroll"><WorkingCopyList /></div>

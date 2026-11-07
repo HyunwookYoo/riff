@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { appState } from "$lib/store.svelte";
-  import { compare } from "$lib/compare";
+  import { compare, enterReviewMode } from "$lib/compare";
   import { clearPick } from "$lib/branchContainment";
   import { commitViewActive } from "$lib/history";
   import {
@@ -112,6 +112,14 @@
       title="Blame a file"
     >
       Blame
+    </button>
+    <button
+      type="button"
+      class:active={appState.appMode === "review"}
+      onclick={enterReviewMode}
+      title="Review pull requests"
+    >
+      PR Review
     </button>
   </div>
   <!-- The branch chip toggles the Branches panel, which only Working Copy and

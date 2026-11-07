@@ -5,6 +5,7 @@ import {
   doFetch,
   doPull,
 } from "./workingCopy";
+import { enterReviewMode } from "./compare";
 import { enterGraphView, restoreCompareContext } from "./commitHistory";
 import { requestCheckout } from "./checkout";
 import { chooseTheme } from "./theme";
@@ -50,6 +51,7 @@ export function buildCommands(): Command[] {
         appState.appMode = "blame";
       },
     },
+    { id: "go.review", title: "Go to PR Review", category: "Go", run: () => enterReviewMode() },
     {
       id: "view.sidebar",
       title: "Toggle refs sidebar",
