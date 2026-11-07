@@ -31,6 +31,10 @@ const SUBMODULE_LOG_CAP: usize = 50;
 const SQUASH_MAX_PATHSPECS: usize = 200;
 const SQUASH_SCAN_CAP: &str = "300";
 
+/// `--all` minus riff's private `refs/riff/*` (PR review heads). `--exclude`
+/// only affects the `--all` that follows it, so the order is load-bearing.
+const ALL_REFS: [&str; 2] = ["--exclude=refs/riff/*", "--all"];
+
 /// Bytes scanned for NUL when sniffing for binary content.
 const BINARY_SNIFF_BYTES: usize = 8192;
 
@@ -1093,7 +1097,7 @@ impl GitLayer for GitCli {
         ];
         if all {
             // Every ref, chronological — the default "all branches" graph.
-            args.push("--all");
+            args.extend(ALL_REFS);
             args.push("--date-order");
         } else {
             // Empty ref means HEAD. Reuse the leading-dash guard so a crafted
@@ -2231,7 +2235,7 @@ impl GitLayer for GitCli {
         if source_is_branch {
             rl_args.push(source);
         } else {
-            rl_args.push("--all");
+            rl_args.extend(ALL_REFS);
         }
         rl_args.push("--not");
         rl_args.push(target);
@@ -2283,7 +2287,7 @@ impl GitLayer for GitCli {
             "--date-order",
         ];
         if source.is_empty() {
-            args.push("--all");
+            args.extend(ALL_REFS);
         } else {
             args.push(validate_ref(source)?);
         }
@@ -2344,8 +2348,13 @@ impl GitLayer for GitCli {
     ) -> Result<CommitFind, GitError> {
         let prefix = validate_sha_prefix(prefix)?;
         let target = validate_ref(target)?;
-        let source = if source.is_empty() { "--all" } else { validate_ref(source)? };
-        let history = self.run(path, &["rev-list", source])?;
+        let mut rl_args = vec!["rev-list"];
+        if source.is_empty() {
+            rl_args.extend(ALL_REFS);
+        } else {
+            rl_args.push(validate_ref(source)?);
+        }
+        let history = self.run(path, &rl_args)?;
         let history = String::from_utf8_lossy(&history);
         let (matches, sha) = match_sha_prefix(&history, &prefix);
         let Some(sha) = sha else {
@@ -3252,6 +3261,17 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
             .unwrap();
         assert!(out.status.success(), "rev-parse {rev}");
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn commit_log_all_ignores_riff_refs() {
+        let repo = temp_repo("riff-refs-hidden");
+        git_in(&repo, &["checkout", "-q", "--detach"]);
+        commit_file(&repo, "x.txt", "x\n", "x");
+        git_in(&repo, &["update-ref", "refs/riff/pr/1/head", "HEAD"]);
+        git_in(&repo, &["checkout", "-q", "-"]);
+        let log = GitCli::new().commit_log(&repo, "", true, 50, 0).unwrap();
+        assert!(log.iter().all(|c| c.summary != "x"), "riff ref leaked into --all");
     }
 
     /// `base` and `topic` off the seed commit, with one commit on topic whose
