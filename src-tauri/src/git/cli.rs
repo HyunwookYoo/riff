@@ -2270,13 +2270,37 @@ impl GitLayer for GitCli {
         }
         let remote = validate_ref(remote)?;
         let base_ref = validate_ref(base_ref)?;
+        // base_ref is spliced into a refspec: ':' or glob chars would redirect it.
+        if base_ref.contains(|c: char| {
+            c.is_whitespace() || c.is_ascii_control() || ":*?[\\^~".contains(c)
+        }) || base_ref.contains("..")
+        {
+            return Err(GitError::InvalidRef(base_ref.to_string()));
+        }
         let base_sha = validate_ref(base_sha)?;
         let head_spec = format!("+refs/pull/{number}/head:refs/riff/pr/{number}/head");
         let base_spec = format!("+refs/heads/{base_ref}:refs/riff/pr/{number}/base");
-        self.run_network(path, &["fetch", "--no-tags", remote, &head_spec, &base_spec])?;
+        // `--refmap=` stops git's opportunistic refs/remotes/* update; the rest
+        // keep the fetch from writing anything but the two riff refs.
+        self.run_network(
+            path,
+            &[
+                "fetch",
+                "--no-tags",
+                "--refmap=",
+                "--no-write-fetch-head",
+                "--no-recurse-submodules",
+                remote,
+                &head_spec,
+                &base_spec,
+            ],
+        )?;
         if !self.has_commit(path, base_sha)?
             && self
-                .run_network(path, &["fetch", "--no-tags", remote, base_sha])
+                .run_network(
+                    path,
+                    &["fetch", "--no-tags", "--refmap=", "--no-write-fetch-head", remote, base_sha],
+                )
                 .is_err()
         {
             return Err(GitError::CommandFailed(format!(
@@ -3578,7 +3602,25 @@ index 555..000
             let out = git_command().arg("-C").arg(r).args(["branch", "--list"]).output().unwrap();
             String::from_utf8_lossy(&out.stdout).to_string()
         };
-        let (b0, h0) = (branches(&repo), rev_parse(&repo, "HEAD"));
+        // The push created remote-tracking refs; drop them so an opportunistic
+        // update during fetch would show up as a new ref.
+        git_in(&repo, &["update-ref", "-d", "refs/remotes/origin/main"]);
+        git_in(&repo, &["update-ref", "-d", "refs/remotes/origin/topic"]);
+        let outside = |r: &Path| {
+            let out = git_command()
+                .arg("-C")
+                .arg(r)
+                .args(["for-each-ref", "--format=%(refname) %(objectname)"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|l| !l.starts_with("refs/riff/"))
+                .collect::<Vec<_>>()
+                .join("
+")
+        };
+        let (b0, h0, o0) = (branches(&repo), rev_parse(&repo, "HEAD"), outside(&repo));
 
         let sha = GitCli::new().fetch_pr(&repo, "origin", 7, "main", &main_sha).unwrap();
         assert_eq!(sha, topic_sha);
@@ -3586,6 +3628,8 @@ index 555..000
         assert_eq!(rev_parse(&repo, "refs/riff/pr/7/base"), main_sha);
         assert_eq!(branches(&repo), b0);
         assert_eq!(rev_parse(&repo, "HEAD"), h0);
+        assert_eq!(outside(&repo), o0, "fetch wrote outside refs/riff");
+        assert!(!repo.join(".git/FETCH_HEAD").exists(), "FETCH_HEAD written");
         let refs = GitCli::new().list_refs(&repo).unwrap();
         assert!(refs.iter().all(|b| !b.name.contains("riff")), "{refs:?}");
     }
@@ -3602,12 +3646,29 @@ index 555..000
     }
 
     #[test]
+    fn fetch_pr_rejects_refspec_injection_in_base_ref() {
+        let repo = temp_repo("fetch-pr-inject");
+        let sha = rev_parse(&repo, "HEAD");
+        for bad in ["main:refs/heads/victim", "a*", "a b", "a..b", "a^", "a~1", "a?", "a[", r"a\b"] {
+            let r = GitCli::new().fetch_pr(&repo, "origin", 1, bad, &sha);
+            assert!(matches!(r, Err(GitError::InvalidRef(_))), "{bad}: {r:?}");
+        }
+        let out = git_command().arg("-C").arg(&repo).args(["branch", "--list", "victim"]).output().unwrap();
+        assert!(out.stdout.is_empty());
+    }
+
+    #[test]
     fn pr_changed_files_ignores_rebase_noise() {
         let repo = pr_fixture("pr-changed");
-        let body: String = (1..=20).map(|i| format!("line{i}\n")).collect();
+        let body: String = (1..=20).map(|i| format!("line{i}
+")).collect();
         let old_head = rev_parse(&repo, "topic");
-        // main moves (b.txt), topic is rebased onto it and also edits c.txt.
-        commit_file(&repo, "b.txt", &body.replace("line2\n", "line2 changed\n"), "main b");
+        // main inserts lines above the PR's hunk in a.txt, so after the rebase the
+        // hunk's @@ numbers and the blob ids in `index` differ; topic2 also edits c.txt.
+        commit_file(&repo, "a.txt", &format!("new1
+new2
+new3
+{body}"), "main a");
         git_in(&repo, &["checkout", "-q", "-b", "topic2", "main"]);
         git_in(&repo, &["cherry-pick", &old_head]);
         commit_file(&repo, "c.txt", &body.replace("line15", "LINE15"), "edit c");
