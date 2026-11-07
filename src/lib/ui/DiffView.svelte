@@ -388,6 +388,10 @@
         ? toCMChanges(diff.changes, (a, b, c, d) => new Change(a, b, c, d))
         : [];
     const diffConfig = { override: () => changes.slice() };
+    // Not with `source` (PR Review): riff's diff (CRLF-normalised) can differ
+    // from git's hunks, so a collapsed run could hide commentable lines,
+    // threads or drafts.
+    const collapse = source ? {} : { collapseUnchanged: { margin: 3, minSize: 4 } };
 
     if (effectiveViewMode === "side-by-side") {
       mergeView = new MergeView({
@@ -408,7 +412,7 @@
           ],
         },
         parent: host,
-        collapseUnchanged: { margin: 3, minSize: 4 },
+        ...collapse,
         diffConfig,
       });
       setActiveDiffView(mergeView.b);
@@ -422,7 +426,7 @@
             unifiedMergeView({
               original: oldText,
               mergeControls: false,
-              collapseUnchanged: { margin: 3, minSize: 4 },
+              ...collapse,
               diffConfig,
             }),
           ],
