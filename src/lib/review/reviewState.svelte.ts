@@ -4,7 +4,7 @@ import { reanchorAll } from "./draft";
 import { loadRecord, saveRecord } from "./draftStore";
 import { deleteReview, fetchPr, listReviews, markPrSeen, prChangedFiles, prHunks } from "./gh";
 import { prDetail } from "./github";
-import { loadPrList, REFRESH_MS, type HostState } from "./prList";
+import { headMoveFor, keysToDelete, loadPrList, REFRESH_MS, type HostState } from "./prList";
 import type { FileHunks, PrDetail, PrKey, PrRecord, PrSummary } from "./types";
 
 const UNREADABLE = "This PR's saved draft can't be read; riff won't overwrite it.";
@@ -14,6 +14,8 @@ class ReviewState {
   hosts = $state<HostState[]>([]);
   loadingList = $state(false);
   selectedKey = $state<PrKey | null>(null);
+  /** The head sha actually displayed; the only sha viewedHead/seen may be set to. */
+  headSha = $state<string | null>(null);
   detail = $state<PrDetail | null>(null);
   files = $state<FileHunks[]>([]);
   record = $state<PrRecord | null>(null);
@@ -37,7 +39,7 @@ export async function refreshList(): Promise<void> {
     if (seq !== listSeq) return;
     reviewState.prs = r.prs;
     reviewState.hosts = r.hosts;
-    void cleanupRecords();
+    void cleanupRecords().catch(() => {});
   } catch (e) {
     if (seq === listSeq) reviewState.error = String(e);
   } finally {
@@ -86,6 +88,7 @@ export async function openPr(key: PrKey): Promise<void> {
   const summary = s.prs.find((p) => p.key === key);
   if (!summary) return;
   s.selectedKey = key;
+  s.headSha = null;
   s.error = null;
   s.detail = null;
   s.files = [];
@@ -96,10 +99,15 @@ export async function openPr(key: PrKey): Promise<void> {
   const repoPath = appState.repos[summary.repoIdx].path;
   const { baseSha } = summary;
   try {
-    const headSha = await fetchPr(repoPath, summary.remote, summary.number, summary.baseRef, baseSha);
+    let headSha = await fetchPr(repoPath, summary.remote, summary.number, summary.baseRef, baseSha);
     if (seq !== openSeq) return;
     const detail = await prDetail(summary.repo.host, summary.nodeId);
     if (seq !== openSeq) return;
+    if (detail.headSha !== headSha) {
+      // A push landed between the calls: fetch the newer head once.
+      headSha = await fetchPr(repoPath, summary.remote, summary.number, summary.baseRef, baseSha);
+      if (seq !== openSeq) return;
+    }
     const files = await prHunks(repoPath, baseSha, headSha);
     if (seq !== openSeq) return;
     let rec: PrRecord;
@@ -108,6 +116,7 @@ export async function openPr(key: PrKey): Promise<void> {
     } catch (e) {
       if (seq !== openSeq) return;
       if (e instanceof Error && e.message === "unreadable-review-record") {
+        s.headSha = headSha;
         s.detail = detail;
         s.files = files;
         s.error = UNREADABLE; // record stays null; never saved over
@@ -117,19 +126,15 @@ export async function openPr(key: PrKey): Promise<void> {
     }
     if (seq !== openSeq) return;
 
-    const prevViewed = rec.viewedHead;
-    let moved: { from: string; to: string } | null = null;
-    let newSince: string[] = [];
     let dirty = false;
     if (rec.viewedHead === null) {
       rec = { ...rec, viewedHead: headSha };
       await markPrSeen(repoPath, summary.number, headSha);
       dirty = true;
     }
+    const moved = headMoveFor(rec, headSha);
+    const newSince = moved ? await prChangedFiles(repoPath, baseSha, moved.from, headSha) : [];
     if (rec.anchorHead !== null && rec.anchorHead !== headSha) {
-      const from = prevViewed ?? rec.anchorHead;
-      moved = { from, to: headSha };
-      newSince = await prChangedFiles(repoPath, baseSha, from, headSha);
       const texts = await sideTexts(repoPath, rec, files, baseSha, headSha);
       rec = reanchorAll(rec, headSha, texts, files);
       dirty = true;
@@ -140,10 +145,12 @@ export async function openPr(key: PrKey): Promise<void> {
     if (seq !== openSeq) return;
     if (dirty) await saveRecord(rec);
     if (seq !== openSeq) return;
+    s.headSha = headSha;
     s.detail = detail;
     s.files = files;
     s.record = rec;
-    s.headMoved = moved;
+    // If the PR still moved past the displayed head, keep the gate explicit.
+    s.headMoved = moved ?? (detail.headSha !== headSha ? { from: headSha, to: detail.headSha } : null);
     s.newSinceFiles = newSince;
     s.selectedPath = files[0]?.path ?? null;
   } catch (e) {
@@ -153,11 +160,18 @@ export async function openPr(key: PrKey): Promise<void> {
 
 export async function markNewSinceSeen(): Promise<void> {
   const s = reviewState;
-  const summary = s.prs.find((p) => p.key === s.selectedKey);
-  if (!s.record || !s.detail || !summary) return;
-  const next = { ...s.record, viewedHead: s.detail.headSha };
-  await markPrSeen(appState.repos[summary.repoIdx].path, summary.number, s.detail.headSha);
+  const key = s.selectedKey;
+  const seq = openSeq;
+  const summary = s.prs.find((p) => p.key === key);
+  const head = s.headSha;
+  if (!s.record || !s.detail || !summary || !key || !head) return;
+  // The PR moved past what is displayed: reload rather than mark an unseen head.
+  if (s.detail.headSha !== head) return openPr(key);
+  const next = { ...s.record, viewedHead: head };
+  await markPrSeen(appState.repos[summary.repoIdx].path, summary.number, head);
+  if (seq !== openSeq || s.selectedKey !== key) return;
   await saveRecord(next);
+  if (seq !== openSeq || s.selectedKey !== key) return;
   s.record = next;
   s.headMoved = null;
 }
@@ -167,16 +181,19 @@ export function startAutoRefresh(): () => void {
   return () => clearInterval(id);
 }
 
-/** Deletes stored records for PRs no longer listed that hold no items. */
+/** Deletes stored records for unlisted PRs that hold no draft, on ready hosts only. */
 export async function cleanupRecords(): Promise<void> {
-  const listed = new Set(reviewState.prs.map((p) => p.key));
-  for (const key of await listReviews()) {
-    if (listed.has(key)) continue;
+  const keys = await listReviews();
+  const records = new Map<string, PrRecord | null>();
+  for (const key of keys) {
     try {
-      const rec = await loadRecord(key);
-      if (rec.items.length === 0) await deleteReview(key);
+      records.set(key, await loadRecord(key));
     } catch {
-      // unreadable or failing read: keep
+      records.set(key, null); // unreadable: keep
     }
+  }
+  const listed = new Set(reviewState.prs.map((p) => p.key));
+  for (const key of keysToDelete(keys, records, listed, reviewState.hosts)) {
+    await deleteReview(key);
   }
 }

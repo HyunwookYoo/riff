@@ -1,7 +1,7 @@
 import { ghStatus, gitRemotes } from "./gh";
 import { searchPrs, viewerLogin, type SearchRepo } from "./github";
 import { parseRemote } from "./remote";
-import type { PrSummary } from "./types";
+import type { PrKey, PrRecord, PrSummary } from "./types";
 
 export const REFRESH_MS = 300_000;
 
@@ -74,4 +74,28 @@ export async function loadPrList(
     }),
   );
   return { prs: results.flatMap((r) => r.prs), hosts: results.map((r) => r.state) };
+}
+
+/** The unseen head move: viewed head differs from the displayed head. */
+export function headMoveFor(r: PrRecord, headSha: string): { from: string; to: string } | null {
+  return r.viewedHead !== null && r.viewedHead !== headSha ? { from: r.viewedHead, to: headSha } : null;
+}
+
+/**
+ * Stored records safe to delete: unlisted, no items, no body text, host ready
+ * in this refresh. `records` maps key to the record, or null when unreadable.
+ */
+export function keysToDelete(
+  keys: string[],
+  records: Map<string, PrRecord | null>,
+  listed: Set<PrKey>,
+  hosts: HostState[],
+): string[] {
+  const ready = new Set(hosts.filter((h) => h.status === "ready").map((h) => h.host));
+  return keys.filter((k) => {
+    if (listed.has(k)) return false;
+    if (!ready.has(k.slice(0, k.indexOf("/")))) return false;
+    const r = records.get(k);
+    return !!r && r.items.length === 0 && r.body.trim() === "";
+  });
 }

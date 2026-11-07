@@ -5,7 +5,8 @@ vi.mock("./github", () => ({ viewerLogin: vi.fn(), searchPrs: vi.fn() }));
 
 import { ghStatus } from "./gh";
 import { searchPrs, viewerLogin } from "./github";
-import { collectRepos, loadPrList, loginHint, REFRESH_MS } from "./prList";
+import { collectRepos, headMoveFor, keysToDelete, loadPrList, loginHint, REFRESH_MS, type HostState } from "./prList";
+import { emptyRecord } from "./draft";
 
 const remotes = (m: Record<string, { name: string; url: string }[]>) => async (p: string) => m[p] ?? [];
 
@@ -62,4 +63,36 @@ describe("loadPrList", () => {
 it("loginHint text", () => {
   expect(loginHint("h.com")).toBe("gh auth login --hostname h.com");
   expect(REFRESH_MS).toBe(300_000);
+});
+
+describe("headMoveFor", () => {
+  it("reopen after re-anchor still reports the head move", () => {
+    const r = { ...emptyRecord("k"), anchorHead: "H2", viewedHead: "H1" };
+    expect(headMoveFor(r, "H2")).toEqual({ from: "H1", to: "H2" });
+  });
+  it("is null when seen or never viewed", () => {
+    expect(headMoveFor({ ...emptyRecord("k"), viewedHead: "H2" }, "H2")).toBeNull();
+    expect(headMoveFor(emptyRecord("k"), "H2")).toBeNull();
+  });
+});
+
+describe("keysToDelete", () => {
+  const ready: HostState[] = [{ host: "github.com", status: "ready", message: null }];
+  const rec = (key: string, body = "", items = 0) =>
+    ({ ...emptyRecord(key), body, items: Array(items).fill({}) }) as never;
+  it("deletes empty unlisted record of a ready host", () => {
+    const k = "github.com/o/a#1";
+    expect(keysToDelete([k], new Map([[k, rec(k)]]), new Set(), ready)).toEqual([k]);
+  });
+  it("keeps body-only drafts, items, listed keys and unreadable records", () => {
+    const a = "github.com/o/a#1", b = "github.com/o/a#2", c = "github.com/o/a#3", d = "github.com/o/a#4";
+    const m = new Map([[a, rec(a, " hi ")], [b, rec(b, "", 1)], [c, rec(c)], [d, null]]);
+    expect(keysToDelete([a, b, c, d], m, new Set([c]), ready)).toEqual([]);
+  });
+  it("keeps records of a host that is not ready", () => {
+    const k = "ghe.corp/o/a#1";
+    const hosts: HostState[] = [...ready, { host: "ghe.corp", status: "notloggedin", message: "x" }];
+    expect(keysToDelete([k], new Map([[k, rec(k)]]), new Set(), hosts)).toEqual([]);
+    expect(keysToDelete([k], new Map([[k, rec(k)]]), new Set(), [])).toEqual([]);
+  });
 });
