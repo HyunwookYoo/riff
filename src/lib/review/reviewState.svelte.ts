@@ -4,7 +4,7 @@ import { reanchorAll } from "./draft";
 import { loadRecord, saveRecord } from "./draftStore";
 import { deleteReview, fetchPr, listReviews, markPrSeen, prChangedFiles, prHunks } from "./gh";
 import { prDetail } from "./github";
-import { headMoveFor, keysToDelete, loadPrList, REFRESH_MS, type HostState } from "./prList";
+import { headMoveFor, keysToDelete, listedHeadMove, loadPrList, REFRESH_MS, type HostState } from "./prList";
 import type { FileHunks, PrDetail, PrKey, PrRecord, PrSummary, ReviewThread } from "./types";
 
 export const UNREADABLE = "This PR's saved draft can't be read; riff won't overwrite it.";
@@ -32,15 +32,23 @@ export const reviewState = new ReviewState();
 // Sequence tokens: a newer call supersedes an older one, whose results are dropped.
 let listSeq = 0;
 let openSeq = 0;
+/** Bumped whenever openPr sets the displayed head. */
+let shownSeq = 0;
 
 export async function refreshList(): Promise<void> {
   const seq = ++listSeq;
+  const shown = shownSeq;
   reviewState.loadingList = true;
   try {
     const r = await loadPrList(appState.repos);
     if (seq !== listSeq) return;
-    reviewState.prs = r.prs;
-    reviewState.hosts = r.hosts;
+    const s = reviewState;
+    s.prs = r.prs;
+    s.hosts = r.hosts;
+    // A push since the PR was opened. A list requested before the displayed
+    // head was set may predate it, so it can't tell.
+    const moved = shown === shownSeq ? listedHeadMove(r.prs, s.selectedKey, s.headSha, s.headMoved) : null;
+    if (moved) s.headMoved = moved;
     void cleanupRecords().catch(() => {});
   } catch (e) {
     if (seq === listSeq) reviewState.error = String(e);
@@ -124,6 +132,7 @@ export async function openPr(key: PrKey): Promise<void> {
       if (seq !== openSeq) return;
       if (e instanceof Error && e.message === "unreadable-review-record") {
         s.headSha = headSha;
+        shownSeq++;
         s.baseSha = baseSha;
         s.detail = detail;
         s.files = files;
@@ -154,6 +163,7 @@ export async function openPr(key: PrKey): Promise<void> {
     if (dirty) await saveRecord(rec);
     if (seq !== openSeq) return;
     s.headSha = headSha;
+    shownSeq++;
     s.baseSha = baseSha;
     s.detail = detail;
     s.files = files;

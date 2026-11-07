@@ -5,7 +5,16 @@ vi.mock("./github", () => ({ viewerLogin: vi.fn(), searchPrs: vi.fn() }));
 
 import { ghStatus } from "./gh";
 import { searchPrs, viewerLogin } from "./github";
-import { collectRepos, headMoveFor, keysToDelete, loadPrList, loginHint, REFRESH_MS, type HostState } from "./prList";
+import {
+  collectRepos,
+  headMoveFor,
+  keysToDelete,
+  listedHeadMove,
+  loadPrList,
+  loginHint,
+  REFRESH_MS,
+  type HostState,
+} from "./prList";
 import { emptyRecord } from "./draft";
 
 const remotes = (m: Record<string, { name: string; url: string }[]>) => async (p: string) => m[p] ?? [];
@@ -73,6 +82,22 @@ describe("headMoveFor", () => {
   it("is null when seen or never viewed", () => {
     expect(headMoveFor({ ...emptyRecord("k"), viewedHead: "H2" }, "H2")).toBeNull();
     expect(headMoveFor(emptyRecord("k"), "H2")).toBeNull();
+  });
+});
+
+describe("listedHeadMove", () => {
+  const prs = [{ key: "k", headSha: "H2" }, { key: "other", headSha: "X" }];
+  it("flags the selected PR's listed head moving past the displayed one", () => {
+    expect(listedHeadMove(prs, "k", "H1", null)).toEqual({ from: "H1", to: "H2" });
+    // A viewedHead move already shown is replaced by the newer push.
+    expect(listedHeadMove(prs, "k", "H1", { from: "H0", to: "H1" })).toEqual({ from: "H1", to: "H2" });
+  });
+  it("is null when nothing changes", () => {
+    expect(listedHeadMove(prs, "k", "H2", null)).toBeNull(); // same head
+    expect(listedHeadMove(prs, "k", "H1", { from: "H1", to: "H2" })).toBeNull(); // already set to that
+    expect(listedHeadMove(prs, "gone", "H1", null)).toBeNull(); // not listed
+    expect(listedHeadMove(prs, null, "H1", null)).toBeNull(); // nothing selected
+    expect(listedHeadMove(prs, "k", null, null)).toBeNull(); // still loading
   });
 });
 

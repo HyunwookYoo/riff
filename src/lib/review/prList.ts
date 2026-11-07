@@ -82,6 +82,21 @@ export function headMoveFor(r: PrRecord, headSha: string): { from: string; to: s
 }
 
 /**
+ * The selected PR's listed head differs from the displayed `headSha`: the
+ * `headMoved` to set, or null to leave it as it is.
+ */
+export function listedHeadMove(
+  prs: Pick<PrSummary, "key" | "headSha">[],
+  selectedKey: PrKey | null,
+  headSha: string | null,
+  current: { from: string; to: string } | null,
+): { from: string; to: string } | null {
+  const listed = prs.find((p) => p.key === selectedKey)?.headSha;
+  if (!headSha || !listed || listed === headSha || current?.to === listed) return null;
+  return { from: headSha, to: listed };
+}
+
+/**
  * Stored records safe to delete: unlisted, no items, no body text, host ready
  * in this refresh. `records` maps key to the record, or null when unreadable.
  */
