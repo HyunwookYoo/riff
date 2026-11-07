@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { reviewState } from "$lib/review/reviewState.svelte";
+  import { draftLocked } from "$lib/review/submitFlow.svelte";
   import { textStash } from "./composerAt";
 
   let {
@@ -26,8 +27,9 @@
   if (!reopened) textStash.set(stashKey, "");
   let busy = $state(false);
   let ta: HTMLTextAreaElement;
-  // No record (unreadable, R7): nothing may be added to the draft.
-  const blocked = $derived(!reviewState.record);
+  // No record (unreadable, R7), or a submit is sending it: nothing may be added.
+  const locked = $derived(draftLocked());
+  const blocked = $derived(!reviewState.record || locked);
 
   onMount(() => {
     if (!reopened) ta.focus();
@@ -71,7 +73,7 @@
     disabled={blocked}
   ></textarea>
   <div class="actions">
-    {#if blocked}<span class="blocked">{reviewState.error ?? "The draft can't be changed."}</span>{/if}
+    {#if blocked}<span class="blocked">{locked ? "Submitting: the draft is read-only until it finishes." : (reviewState.error ?? "The draft can't be changed.")}</span>{/if}
     <button type="button" onclick={cancel}>Cancel</button>
     <button
       type="button"

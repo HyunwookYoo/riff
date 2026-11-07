@@ -10,6 +10,7 @@ import {
 import type { PrDetail, PrKey, PrRecord, ReviewEvent } from "./types";
 
 export const NOT_OPEN = "Open this PR in riff's PR Review (main window) to submit it.";
+export const HEAD_MOVED = "New commits were pushed — review them first. Nothing was submitted.";
 
 /** What the submit decisions read from the main window; re-read after every await. */
 export interface SubmitView {
@@ -36,6 +37,14 @@ export interface SubmitDeps {
   adopt(key: PrKey, r: PrRecord): void;
   reloadDetail(): void;
   toast(msg: string): void;
+  /** The PR's detail as GitHub has it now. */
+  prDetail(host: string, nodeId: string): Promise<PrDetail>;
+  /** Show `detail`, fetched for `key`, flagging a head move past `shownHead`. */
+  adoptDetail(key: PrKey, detail: PrDetail, shownHead: string): void;
+  /** Every window stops editing `key`'s draft (resolves once announced). */
+  lock(key: PrKey): Promise<void>;
+  /** Windows re-read `key`'s draft from disk, then edit again. Never throws. */
+  unlock(key: PrKey): Promise<void>;
 }
 
 export interface SubmitFlowState {
@@ -53,8 +62,8 @@ export async function runSubmitWith(
   if (flow.busy) return "A submit is already running.";
   const v = d.view();
   if (!v.open || v.selectedKey !== key) return NOT_OPEN;
-  const { pr, headSha: head, detail } = v;
-  if (!pr || !head || !detail || !v.hasRecord) return v.error ?? "This PR is still loading.";
+  const { pr, headSha: head } = v;
+  if (!pr || !head || !v.detail || !v.hasRecord) return v.error ?? "This PR is still loading.";
   if (v.headMoved) return submitErrorMessage(new Error("submit-blocked:not-seen"));
 
   flow.busy = true;
@@ -67,6 +76,14 @@ export async function runSubmitWith(
   try {
     let start: PrRecord;
     try {
+      // Before the snapshot: no window may change the draft until the merge is saved.
+      await d.lock(key);
+      // The open-time detail may predate a push (the list refresh can lag): ask GitHub.
+      const detail = await d.prDetail(pr.host, pr.nodeId);
+      if (detail.headSha !== head) {
+        d.adoptDetail(key, detail, head);
+        return fail(HEAD_MOVED);
+      }
       // The stored record, not the in-memory one: the other window may have saved since.
       start = { ...(await d.loadRecord(key)), event: edits.event, body: edits.body };
       const block = submitBlock(start, head);
@@ -107,6 +124,7 @@ export async function runSubmitWith(
     }
     return "Review submitted";
   } finally {
+    await d.unlock(key);
     flow.busy = false;
   }
 }

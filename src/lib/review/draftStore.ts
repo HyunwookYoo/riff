@@ -13,6 +13,12 @@ export interface SubmitRequest { key: PrKey; event: ReviewEvent; body: string }
 /** Main window → drafts window: the outcome of a SUBMIT_REQUEST_EVENT. */
 export const SUBMIT_REPLY_EVENT = "review-submit-reply";
 export interface SubmitReply { key: PrKey; message: string }
+/**
+ * Main window → all windows: `key`'s draft is being submitted (busy) or done.
+ * While busy no window writes that draft; on idle each re-reads it from disk.
+ */
+export const SUBMIT_BUSY_EVENT = "review-submit-busy";
+export interface SubmitBusy { key: PrKey; busy: boolean }
 /** Main window → drafts window: show another PR's draft. */
 export const DRAFTS_OPEN_EVENT = "review-drafts-open";
 export const DRAFTS_LABEL = "review-drafts";

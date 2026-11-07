@@ -2,6 +2,7 @@
   import { reviewState, reloadDetail, writeRecord } from "$lib/review/reviewState.svelte";
   import { addItem } from "$lib/review/draft";
   import { setThreadResolved } from "$lib/review/github";
+  import { draftLocked } from "$lib/review/submitFlow.svelte";
   import Composer from "./Composer.svelte";
   import InlineDraft from "./InlineDraft.svelte";
   import { textStash } from "./composerAt";
@@ -79,7 +80,7 @@
         <Composer label="Reply" stashKey={replyKey} onsubmit={addReply} oncancel={() => (replying = false)} />
       {:else}
         <div class="actions">
-          <button type="button" onclick={() => (replying = true)} disabled={!reviewState.record}>Reply</button>
+          <button type="button" onclick={() => (replying = true)} disabled={!reviewState.record || draftLocked()}>Reply</button>
         </div>
       {/if}
     {/if}

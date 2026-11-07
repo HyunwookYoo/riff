@@ -4,7 +4,7 @@
   import { openDraftsWindow } from "$lib/review/draftStore";
   import { setEvent } from "$lib/review/draft";
   import { submitBlock } from "$lib/review/submit";
-  import { answerPending, runSubmit, submitFlow } from "$lib/review/submitFlow.svelte";
+  import { answerPending, draftLocked, runSubmit, submitFlow } from "$lib/review/submitFlow.svelte";
   import type { ReviewEvent } from "$lib/review/types";
   import { showToast } from "../toast";
   import PendingReviewDialog from "./PendingReviewDialog.svelte";
@@ -18,6 +18,8 @@
   // The displayed head is behind what was seen, or the PR moved past it.
   const notSeen = $derived(block === "not-seen" || !!reviewState.headMoved);
   const canSubmit = $derived(!!record && !block && !reviewState.headMoved && !submitFlow.busy);
+  // A submit is sending this draft: it is read-only here and in the drafts window.
+  const locked = $derived(draftLocked());
 
   // Leaving the PR (or review mode) cancels an unanswered pending-review dialog.
   onDestroy(() => {
@@ -52,13 +54,13 @@
   </div>
 {/if}
 <div class="review-bar">
-  <button type="button" class="drafts" onclick={openDrafts} disabled={!reviewState.selectedKey}>
+  <button type="button" class="drafts" onclick={openDrafts} disabled={!reviewState.selectedKey || locked}>
     My draft: {record?.items.length ?? 0} comment{record?.items.length === 1 ? "" : "s"}
   </button>
   <span class="spacer"></span>
   <select
     value={record?.event ?? "COMMENT"}
-    disabled={!record}
+    disabled={!record || locked}
     onchange={(e) => chooseEvent(e.currentTarget.value as ReviewEvent)}
     aria-label="Review event"
   >

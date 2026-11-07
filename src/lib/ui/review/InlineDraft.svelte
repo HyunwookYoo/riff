@@ -1,11 +1,14 @@
 <script lang="ts">
   import { reviewState, writeRecord } from "$lib/review/reviewState.svelte";
   import { editItem, removeItem } from "$lib/review/draft";
+  import { draftLocked } from "$lib/review/submitFlow.svelte";
   import { textStash } from "./composerAt";
 
   let { itemId }: { itemId: string } = $props();
 
   const item = $derived(reviewState.record?.items.find((i) => i.id === itemId));
+  // No record, or a submit is sending it: the draft can't change.
+  const readOnly = $derived(!reviewState.record || draftLocked());
   // svelte-ignore state_referenced_locally
   const editKey = `edit:${itemId}`;
   // An open edit survives the widget being redrawn.
@@ -26,14 +29,14 @@
 
   async function save() {
     const r = reviewState.record;
-    if (!r || !text.trim()) return;
+    if (!r || readOnly || !text.trim()) return;
     stopEdit();
     await writeRecord(editItem(r, itemId, text));
   }
 
   async function remove() {
     const r = reviewState.record;
-    if (!r) return;
+    if (!r || readOnly) return;
     await writeRecord(removeItem(r, itemId));
   }
 </script>
@@ -47,15 +50,15 @@
       {/if}
       <span class="spacer"></span>
       {#if !editing}
-        <button type="button" onclick={startEdit} disabled={!reviewState.record}>Edit</button>
-        <button type="button" onclick={() => void remove()} disabled={!reviewState.record}>Delete</button>
+        <button type="button" onclick={startEdit} disabled={readOnly}>Edit</button>
+        <button type="button" onclick={() => void remove()} disabled={readOnly}>Delete</button>
       {/if}
     </div>
     {#if editing}
       <textarea bind:value={text} rows="4" oninput={(e) => textStash.set(editKey, e.currentTarget.value)}></textarea>
       <div class="actions">
         <button type="button" onclick={stopEdit}>Cancel</button>
-        <button type="button" onclick={() => void save()} disabled={!text.trim() || !reviewState.record}>
+        <button type="button" onclick={() => void save()} disabled={!text.trim() || readOnly}>
           Save
         </button>
       </div>

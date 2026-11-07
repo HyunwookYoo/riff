@@ -32,6 +32,10 @@ const d = {
   adopt: vi.fn<SubmitDeps["adopt"]>(),
   reloadDetail: vi.fn<SubmitDeps["reloadDetail"]>(),
   toast: vi.fn<SubmitDeps["toast"]>(),
+  prDetail: vi.fn<SubmitDeps["prDetail"]>(),
+  adoptDetail: vi.fn<SubmitDeps["adoptDetail"]>(),
+  lock: vi.fn<SubmitDeps["lock"]>(),
+  unlock: vi.fn<SubmitDeps["unlock"]>(),
 };
 
 beforeEach(() => {
@@ -46,6 +50,10 @@ beforeEach(() => {
   d.saveRecord.mockResolvedValue(undefined);
   d.submit.mockResolvedValue(rec([]));
   d.askPending.mockResolvedValue(null);
+  // GitHub agrees with what is displayed unless a test says otherwise.
+  d.prDetail.mockImplementation(async () => view.detail!);
+  d.lock.mockResolvedValue(undefined);
+  d.unlock.mockResolvedValue(undefined);
 });
 
 const run = () => runSubmitWith(flow, d, K, { event: "COMMENT", body: "" });
@@ -73,14 +81,64 @@ describe("runSubmitWith", () => {
     expect(d.submit).not.toHaveBeenCalled();
   });
 
+  it("refuses when the PR head moved since it was opened", async () => {
+    const fresh = detail({ headSha: "head2" });
+    d.prDetail.mockResolvedValueOnce(fresh);
+    const msg = await run();
+    expect(msg).toMatch(/New commits were pushed/);
+    expect(d.prDetail).toHaveBeenCalledWith("h", "PR1");
+    expect(d.adoptDetail).toHaveBeenCalledWith(K, fresh, H);
+    expect(d.loadRecord).not.toHaveBeenCalled();
+    expect(d.askPending).not.toHaveBeenCalled();
+    expect(d.submit).not.toHaveBeenCalled();
+    expect(flow.error).toBe(msg);
+    expect(d.unlock).toHaveBeenCalledWith(K);
+    expect(flow.busy).toBe(false);
+  });
+
+  it("uses fresh pending review state", async () => {
+    // Opened with no pending review; one was started on the web since.
+    view.detail = detail();
+    d.prDetail.mockResolvedValueOnce(detail({ pendingReviewId: "P2", pendingReviewCommit: H }));
+    d.askPending.mockResolvedValueOnce("add");
+    expect(await run()).toBe("Review submitted");
+    expect(d.askPending).toHaveBeenCalledWith(["add", "discard"]);
+    expect(d.submit.mock.calls[0][0]).toMatchObject({
+      existingPendingId: "P2",
+      existingPendingCommit: H,
+      choice: "add",
+    });
+  });
+
+  it("locks the draft before reading the snapshot and unlocks after the merge", async () => {
+    expect(await run()).toBe("Review submitted");
+    expect(d.lock).toHaveBeenCalledWith(K);
+    const order = (f: { mock: { invocationCallOrder: number[] } }) => f.mock.invocationCallOrder;
+    expect(order(d.lock)[0]).toBeLessThan(order(d.loadRecord)[0]);
+    expect(order(d.lock)[0]).toBeLessThan(order(d.prDetail)[0]);
+    expect(order(d.unlock)[0]).toBeGreaterThan(order(d.saveRecord)[0]);
+    expect(order(d.unlock)[0]).toBeGreaterThan(order(d.adopt)[0]);
+    expect(d.unlock).toHaveBeenCalledTimes(1);
+  });
+
+  it("unlocks on cancel and on failure", async () => {
+    view.detail = detail({ pendingReviewId: "P", pendingReviewCommit: "older" });
+    expect(await run()).toMatch(/cancelled/);
+    expect(d.unlock).toHaveBeenCalledTimes(1);
+    view.detail = detail();
+    d.submit.mockRejectedValueOnce(new Error("boom"));
+    await run();
+    expect(d.unlock).toHaveBeenCalledTimes(2);
+    expect(flow.busy).toBe(false);
+  });
+
   it("removes the snapshot's submitted ids from the re-loaded current record (edits made meanwhile survive)", async () => {
-    view.detail = detail({ headSha: "newer-not-displayed" });
     d.loadRecord
       .mockResolvedValueOnce(rec([line("1"), line("2")]))
       .mockResolvedValueOnce(rec([line("1"), line("2", "edited"), line("3")], { body: "typed", event: "APPROVE" }));
     expect(await runSubmitWith(flow, d, K, { event: "APPROVE", body: "sum" })).toBe("Review submitted");
     const args = d.submit.mock.calls[0][0];
-    expect(args.headSha).toBe(H); // the displayed head, not detail.headSha
+    expect(args.headSha).toBe(H); // the displayed head
     expect(args.record.event).toBe("APPROVE");
     expect(args.record.body).toBe("sum");
     expect(args.choice).toBeNull();

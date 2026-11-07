@@ -10,9 +10,11 @@
     onRecordChanged,
     REVEAL_EVENT,
     saveRecord,
+    SUBMIT_BUSY_EVENT,
     SUBMIT_REPLY_EVENT,
     SUBMIT_REQUEST_EVENT,
     type RevealPayload,
+    type SubmitBusy,
     type SubmitReply,
     type SubmitRequest,
   } from "$lib/review/draftStore";
@@ -31,6 +33,8 @@
   let saveError = $state<string | null>(null);
   let status = $state<string | null>(null);
   let sending = $state(false);
+  // The main window is submitting this draft: nothing here may save until it ends.
+  let locked = $state(false);
   // Typed but not yet saved: item bodies by id, and the review body.
   let edits = $state<Record<string, string>>({});
   let bodyEdit = $state<string | null>(null);
@@ -57,6 +61,7 @@
     status = null;
     edits = {};
     bodyEdit = null;
+    locked = false;
     let live = true;
     loadRecord(k).then(
       (r) => {
@@ -91,6 +96,7 @@
   onMount(() => {
     const offs = [
       listen<{ key: PrKey }>(DRAFTS_OPEN_EVENT, (e) => void switchTo(e.payload.key)),
+      listen<SubmitBusy>(SUBMIT_BUSY_EVENT, (e) => void onBusy(e.payload)),
       listen<SubmitReply>(SUBMIT_REPLY_EVENT, (e) => {
         if (e.payload.key !== key) return;
         sending = false;
@@ -104,6 +110,29 @@
     ];
     return () => offs.forEach((p) => void p.then((u) => u()));
   });
+
+  async function onBusy({ key: k, busy }: SubmitBusy) {
+    if (k !== key) return;
+    if (busy) {
+      // Unsaved typing stays here and is applied to the re-read draft afterwards.
+      clearTimeout(timer);
+      locked = true;
+      return;
+    }
+    // The submit may have removed items: take the draft from disk before editing again.
+    try {
+      const r = await loadRecord(k);
+      if (k !== key) return;
+      record = r;
+      loadError = null;
+    } catch (e) {
+      if (k !== key) return;
+      record = null;
+      loadError = isUnreadable(e) ? UNREADABLE : `Couldn't load the draft: ${e}`;
+    }
+    locked = false;
+    if (Object.keys(edits).length > 0 || bodyEdit !== null) scheduleFlush();
+  }
 
   async function switchTo(next: PrKey) {
     if (next === key) return;
@@ -131,11 +160,11 @@
     timer = setTimeout(() => void flush(), 500);
   }
 
-  /** Saves typed edits (blank item bodies stay unsaved). */
+  /** Saves typed edits (blank item bodies stay unsaved); nothing while locked. */
   async function flush(): Promise<boolean> {
     clearTimeout(timer);
     const r = record;
-    if (!r || loadError) return false;
+    if (!r || loadError || locked) return false;
     const { next, kept } = applyEdits(r, edits, bodyEdit);
     edits = kept;
     bodyEdit = null;
@@ -154,14 +183,16 @@
   }
 
   async function remove(id: string) {
+    if (locked) return;
     await flush();
-    if (record) await save(removeItem(record, id));
+    if (record && !locked) await save(removeItem(record, id));
     delete edits[id];
   }
 
   async function chooseEvent(event: ReviewEvent) {
+    if (locked) return;
     await flush();
-    if (record) await save(setEvent(record, event));
+    if (record && !locked) await save(setEvent(record, event));
   }
 
   function showInMain(itemId: string) {
@@ -170,7 +201,7 @@
   }
 
   async function requestSubmit() {
-    if (!(await flush()) || !record) return;
+    if (locked || !(await flush()) || !record) return;
     const req: SubmitRequest = { key, event: record.event, body: record.body };
     sending = true;
     status = "Submitting from the main window…";
@@ -204,7 +235,7 @@
             {/if}
             <span class="spacer"></span>
             <button type="button" onclick={() => showInMain(item.id)}>Show in main</button>
-            <button type="button" onclick={() => void remove(item.id)}>Delete</button>
+            <button type="button" onclick={() => void remove(item.id)} disabled={locked}>Delete</button>
           </div>
           {#if preview !== null}
             <div class="preview">{preview}</div>
@@ -212,6 +243,7 @@
           <textarea
             rows="3"
             value={edits[item.id] ?? item.body}
+            readonly={locked}
             oninput={(e) => onItemInput(item.id, e.currentTarget.value)}
             onblur={() => onItemBlur(item.id)}
           ></textarea>
@@ -229,6 +261,7 @@
       rows="4"
       placeholder="Review summary (optional)"
       disabled={!record}
+      readonly={locked}
       value={bodyEdit ?? record?.body ?? ""}
       oninput={(e) => {
         bodyEdit = e.currentTarget.value;
@@ -244,7 +277,7 @@
             name="review-event"
             value={ev.value}
             checked={record?.event === ev.value}
-            disabled={!record}
+            disabled={!record || locked}
             onchange={() => void chooseEvent(ev.value)}
           />
           {ev.label}
@@ -254,7 +287,7 @@
       <button
         type="button"
         class="primary"
-        disabled={!record || sending || empty}
+        disabled={!record || sending || locked || empty}
         onclick={() => void requestSubmit()}
       >
         {sending ? "Submitting…" : "Submit to GitHub"}
