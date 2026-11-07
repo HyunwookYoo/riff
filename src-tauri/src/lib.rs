@@ -731,6 +731,13 @@ pub fn run() {
                 .set_app(app.handle().clone());
             Ok(())
         })
+        // The PR Review drafts window can't work alone (the main window owns
+        // submit): closing the main window quits the app.
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                window.app_handle().exit(0);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             validate_repo,
             list_refs,

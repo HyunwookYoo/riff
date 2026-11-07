@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
+  "windows": ["main", "review-drafts"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -11,6 +11,8 @@
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-is-maximized",
     "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:webview:allow-create-webview-window",
     "opener:default",
     "dialog:default",
     "updater:default"

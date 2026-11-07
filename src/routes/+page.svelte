@@ -24,7 +24,10 @@
   import DiffView from "$lib/ui/DiffView.svelte";
   import BlameView from "$lib/ui/BlameView.svelte";
   import ReviewView from "$lib/ui/review/ReviewView.svelte";
+  import DraftsWindow from "$lib/ui/review/DraftsWindow.svelte";
   import { reviewState, sortedPaths } from "$lib/review/reviewState.svelte";
+  import { parseDraftsUrl } from "$lib/review/draftStore";
+  import { listenSubmitRequests } from "$lib/review/submitFlow.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
   import TabBar from "$lib/ui/TabBar.svelte";
   import ScopeBar from "$lib/ui/ScopeBar.svelte";
@@ -54,6 +57,10 @@
   import { diffRangeText } from "$lib/rangeText";
   import { repoTabMark } from "$lib/branchContainment";
 
+  // The PR Review drafts window loads this same page: it renders only
+  // DraftsWindow and skips repo loading, watchers, updates and shortcuts.
+  const draftsKey = parseDraftsUrl(location.search);
+
   let pendingUpdate: Awaited<ReturnType<typeof checkForUpdate>> = null;
 
   // Drag-resize the compare file picker, mirroring BlameView. Shares the same
@@ -61,10 +68,10 @@
   // width across blame / branch / worktree modes. Bounds match the backend clamp.
   const PICKER_MIN = 200;
   const PICKER_MAX = 600;
-  let bodyEl: HTMLDivElement;
+  let bodyEl = $state<HTMLDivElement | null>(null);
   let resizing = $state(false);
   function onResizeStart(e: PointerEvent) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !bodyEl) return;
     e.preventDefault();
     resizing = true;
     const rect = bodyEl.getBoundingClientRect();
@@ -191,6 +198,7 @@
     applyTheme();
     subscribeSystemTheme();
     applyFontSize();
+    if (draftsKey) return;
     preheatHighlighter();
 
     // Auto-restore the last opened main repo. Silent — if the folder was
@@ -215,9 +223,17 @@
   // external git ops, file edits, in-app or not — so we refresh live instead of
   // rescanning on every window refocus. The $effect below declares the roots.
   onMount(() => {
+    if (draftsKey) return;
     let unlisten: (() => void) | undefined;
     void initRepoWatch().then((u) => (unlisten = u));
     return () => unlisten?.();
+  });
+
+  // The drafts window's Submit is performed here, by the one submit owner.
+  onMount(() => {
+    if (draftsKey) return;
+    const un = listenSubmitRequests();
+    return () => void un.then((u) => u());
   });
 
   // Declare which roots the backend watches, re-sending whenever the workspace
@@ -225,6 +241,7 @@
   // Submodules live under the main worktree and share its `.git`, so the main
   // root's recursive watch already covers them — send main + manual only.
   $effect(() => {
+    if (draftsKey) return; // would replace the main window's watch set
     const roots = appState.repos
       .filter((r) => r.kind !== "submodule")
       .map((r) => r.path);
@@ -289,6 +306,7 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    if (draftsKey) return;
     // Ctrl/Cmd+Shift+P toggles the command palette — works whether it's open
     // (so the same chord closes it) or closed.
     if (
@@ -470,6 +488,7 @@
   // they win over WebView2's default browser-back behavior — without
   // preventDefault, Edge WebView2 may reload the dev server route.
   function onMouseDown(e: MouseEvent) {
+    if (draftsKey) return;
     if (e.button === 3) {
       if (appState.wipReturn && appState.appMode === "changes") {
         // Came from the graph's WIP node into Changes — go back to the graph,
@@ -500,6 +519,9 @@
 
 <svelte:window onkeydown={onKeyDown} onmousedown={onMouseDown} />
 
+{#if draftsKey}
+  <DraftsWindow initialKey={draftsKey} />
+{:else}
 <div class="app">
   <TitleBar />
   <InputBar />
@@ -742,6 +764,7 @@
     </div>
   </div>
 </div>
+{/if}
 
 <style>
   .app {

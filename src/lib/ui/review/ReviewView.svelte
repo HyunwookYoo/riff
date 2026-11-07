@@ -1,6 +1,8 @@
 <script lang="ts">
   import { mount, onMount, unmount, type Component } from "svelte";
-  import type { EditorView } from "@codemirror/view";
+  import { EditorView } from "@codemirror/view";
+  import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import type { Extension } from "@codemirror/state";
   import { appState } from "$lib/store.svelte";
   import {
@@ -8,10 +10,11 @@
     refreshList,
     startAutoRefresh,
     isInlineThread,
+    openPr,
     writeRecord,
     UNREADABLE,
   } from "$lib/review/reviewState.svelte";
-  import { onRecordChanged } from "$lib/review/draftStore";
+  import { onRecordChanged, REVEAL_EVENT, type RevealPayload } from "$lib/review/draftStore";
   import { addItem } from "$lib/review/draft";
   import { isCommentable } from "$lib/review/commentable";
   import type { FileHunks, Side } from "$lib/review/types";
@@ -23,6 +26,8 @@
   import InlineThread from "./InlineThread.svelte";
   import InlineDraft from "./InlineDraft.svelte";
   import Composer from "./Composer.svelte";
+  import ReviewBar from "./ReviewBar.svelte";
+  import NewSinceView from "./NewSinceView.svelte";
   import { reviewExtension, setInlineItems, trackView, type InlineItem } from "./cmReview";
   import { clickComposer, composerKey, textStash, type ComposerAt } from "./composerAt";
 
@@ -65,11 +70,16 @@
 
   let composer = $state.raw<ComposerAt | null>(null);
   let note = $state.raw<{ path: string; side: Side; line: number; text: string } | null>(null);
+  let newSinceOpen = $state(false);
+  // A "Show in main" target waiting for its file's editor.
+  let reveal = $state.raw<{ path: string; side: Side; line: number } | null>(null);
 
   $effect(() => {
     void reviewState.selectedKey;
     composer = null;
     note = null;
+    newSinceOpen = false;
+    reveal = null;
     textStash.clear();
   });
 
@@ -210,6 +220,48 @@
     });
   });
 
+  // The drafts window's "Show in main": open the PR if needed, select the file, scroll to the line.
+  async function onReveal({ key, itemId }: RevealPayload) {
+    if (reviewState.selectedKey !== key) {
+      if (!reviewState.prs.some((p) => p.key === key)) return;
+      await openPr(key);
+      if (reviewState.selectedKey !== key) return;
+    }
+    void getCurrentWebviewWindow().setFocus().catch(() => {});
+    const item = reviewState.record?.items.find((i) => i.id === itemId);
+    if (!item) return;
+    const t = item.target;
+    let at: { path: string; side: Side; line: number | null } | null = null;
+    if (t.kind === "line") at = { path: t.path, side: t.side, line: item.unplaced ? null : t.line };
+    else if (t.kind === "file") at = { path: t.path, side: "RIGHT", line: null };
+    else if (t.kind === "reply") {
+      const th = reviewState.detail?.threads.find((x) => x.id === t.threadId);
+      if (th) at = { path: th.path, side: th.side, line: isInlineThread(th) ? th.line : null };
+    }
+    if (!at || !fileHunks(at.path)) return;
+    newSinceOpen = false;
+    reviewState.selectedPath = at.path;
+    reveal = at.line !== null ? { path: at.path, side: at.side, line: at.line } : null;
+  }
+
+  onMount(() => {
+    const un = listen<RevealPayload>(REVEAL_EVENT, (e) => void onReveal(e.payload));
+    return () => void un.then((u) => u());
+  });
+
+  $effect(() => {
+    const r = reveal;
+    if (!r) return;
+    const t = r.side === "LEFT" ? viewA : viewB;
+    if (!t?.alive || t.path !== r.path) return; // the file's editor isn't built yet
+    reveal = null;
+    const view = t.view;
+    requestAnimationFrame(() => {
+      const n = Math.min(r.line, view.state.doc.lines);
+      view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(n).from, { y: "center" }) });
+    });
+  });
+
   // Another window changed this PR's draft: take it, or stop on an unreadable one.
   $effect(() => {
     const key = reviewState.selectedKey;
@@ -246,14 +298,19 @@
       {#if reviewState.error}
         <div class="banner">{reviewState.error}</div>
       {/if}
-      <PrOverview />
-      {#if source}
-        <DiffView {source} {sideExtensions} forceSideBySide />
-      {:else if !reviewState.headSha && !reviewState.error}
-        <div class="placeholder">Loading PR…</div>
+      {#if newSinceOpen}
+        <NewSinceView onclose={() => (newSinceOpen = false)} />
       {:else}
-        <div class="placeholder">No file selected</div>
+        <PrOverview />
+        {#if source}
+          <DiffView {source} {sideExtensions} forceSideBySide />
+        {:else if !reviewState.headSha && !reviewState.error}
+          <div class="placeholder">Loading PR…</div>
+        {:else}
+          <div class="placeholder">No file selected</div>
+        {/if}
       {/if}
+      <ReviewBar onnewsince={() => (newSinceOpen = true)} />
     {:else}
       <div class="placeholder">Select a PR</div>
     {/if}
