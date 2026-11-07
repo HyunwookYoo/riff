@@ -1,6 +1,6 @@
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { parseRecord } from "./draft";
+import { emptyRecord, isValidRecord } from "./draft";
 import { loadReview, saveReview } from "./gh";
 import type { PrKey, PrRecord } from "./types";
 
@@ -9,7 +9,10 @@ export const REVEAL_EVENT = "review-reveal";
 export interface RevealPayload { key: PrKey; itemId: string }
 
 export async function loadRecord(key: PrKey): Promise<PrRecord> {
-  return parseRecord(await loadReview(key), key);
+  const stored = await loadReview(key);
+  if (stored === null || stored === undefined) return emptyRecord(key);
+  if (!isValidRecord(stored)) throw new Error("unreadable-review-record");
+  return { ...stored, key };
 }
 
 export async function saveRecord(r: PrRecord): Promise<void> {

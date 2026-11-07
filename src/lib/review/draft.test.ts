@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emptyRecord, addItem, editItem, reanchorAll, submittable, parseRecord } from "./draft";
+import { emptyRecord, addItem, editItem, reanchorAll, submittable, parseRecord, isValidRecord } from "./draft";
 import type { FileHunks } from "./types";
 
 const K = "h/o/r#1";
@@ -43,5 +43,17 @@ describe("draft", () => {
     expect(parseRecord({ version: 2, key: K, items: [1] }, K)).toEqual(emptyRecord(K));
     const ok = { ...emptyRecord(K), body: "hi" };
     expect(parseRecord(ok, K).body).toBe("hi");
+  });
+
+  it("isValidRecord rejects version 2 and missing items", () => {
+    expect(isValidRecord(emptyRecord(K))).toBe(true);
+    expect(isValidRecord({ ...emptyRecord(K), version: 2 })).toBe(false);
+    const { items, ...noItems } = emptyRecord(K);
+    expect(isValidRecord(noItems)).toBe(false);
+    expect(isValidRecord(null)).toBe(false);
+  });
+
+  it("parseRecord returns empty for version-1 record without items array", () => {
+    expect(parseRecord({ version: 1, key: K, body: "x" }, K)).toEqual(emptyRecord(K));
   });
 });

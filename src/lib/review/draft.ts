@@ -54,7 +54,19 @@ export function submittable(r: PrRecord): DraftItem[] {
   return r.items.filter((i) => !i.unplaced);
 }
 
+const EVENTS = ["COMMENT", "APPROVE", "REQUEST_CHANGES"];
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object";
+const strOrNull = (v: unknown) => v === null || typeof v === "string";
+
+export function isValidRecord(v: unknown): v is PrRecord {
+  if (!isObj(v) || v.version !== 1 || typeof v.key !== "string") return false;
+  if (typeof v.body !== "string" || !EVENTS.includes(v.event as string)) return false;
+  if (!strOrNull(v.anchorHead) || !strOrNull(v.viewedHead)) return false;
+  return Array.isArray(v.items) && v.items.every((i) =>
+    isObj(i) && typeof i.id === "string" && typeof i.body === "string"
+    && isObj(i.target) && typeof i.target.kind === "string");
+}
+
 export function parseRecord(v: unknown, key: PrKey): PrRecord {
-  if (!v || typeof v !== "object" || (v as { version?: unknown }).version !== 1) return emptyRecord(key);
-  return { ...emptyRecord(key), ...(v as PrRecord), key };
+  return isValidRecord(v) ? { ...v, key } : emptyRecord(key);
 }

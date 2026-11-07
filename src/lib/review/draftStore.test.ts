@@ -13,7 +13,7 @@ vi.mock("@tauri-apps/api/event", () => ({ emit: m.emit, listen }));
 vi.mock("@tauri-apps/api/webviewWindow", () => ({ getCurrentWebviewWindow: () => ({ label: "main" }) }));
 vi.mock("./gh", () => ({ saveReview: m.saveReview, loadReview: m.loadReview }));
 
-import { saveRecord, onRecordChanged } from "./draftStore";
+import { saveRecord, onRecordChanged, loadRecord } from "./draftStore";
 import { emptyRecord } from "./draft";
 
 const K = "h/o/r#1";
@@ -35,5 +35,16 @@ describe("draftStore", () => {
     expect(cb).not.toHaveBeenCalled();
     await m.handler!({ payload: { key: K, origin: "drafts" } });
     expect(cb).toHaveBeenCalledWith(emptyRecord(K));
+  });
+
+  it("loadRecord throws unreadable-review-record for an invalid stored record and never calls saveReview", async () => {
+    loadReview.mockResolvedValueOnce({ version: 2, key: K });
+    await expect(loadRecord(K)).rejects.toThrow("unreadable-review-record");
+    expect(saveReview).not.toHaveBeenCalled();
+  });
+
+  it("loadRecord returns emptyRecord when nothing stored", async () => {
+    loadReview.mockResolvedValueOnce(null);
+    expect(await loadRecord(K)).toEqual(emptyRecord(K));
   });
 });
