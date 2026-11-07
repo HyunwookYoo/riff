@@ -1,5 +1,6 @@
 pub mod diff;
 pub mod git;
+pub mod github;
 pub mod store;
 pub mod watch;
 
@@ -477,6 +478,21 @@ async fn fetch_pr(
 }
 
 #[tauri::command]
+async fn gh_status(host: String) -> github::GhStatus {
+    github::status(&host)
+}
+
+#[tauri::command]
+async fn gh_api(
+    host: String,
+    method: String,
+    endpoint: String,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, github::GhError> {
+    github::api(&host, &method, &endpoint, body.as_ref())
+}
+
+#[tauri::command]
 async fn pr_hunks(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -731,6 +747,8 @@ pub fn run() {
             has_commit,
             git_remotes,
             fetch_pr,
+            gh_status,
+            gh_api,
             pr_hunks,
             pr_changed_files,
             mark_pr_seen,

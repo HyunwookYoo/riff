@@ -32,3 +32,23 @@ export function prChangedFiles(
 export function markPrSeen(path: string, number: number, sha: string): Promise<void> {
   return invoke("mark_pr_seen", { path, number, sha });
 }
+
+export type GhStatus = "ready" | "notinstalled" | "notloggedin";
+
+export function ghStatus(host: string): Promise<GhStatus> {
+  return invoke("gh_status", { host });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function ghApi(host: string, method: string, endpoint: string, body?: unknown): Promise<any> {
+  return invoke("gh_api", { host, method, endpoint, body: body ?? null });
+}
+
+export async function ghGraphql<T>(
+  host: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
+  const res = await ghApi(host, "POST", "graphql", { query, variables });
+  return res.data as T;
+}
