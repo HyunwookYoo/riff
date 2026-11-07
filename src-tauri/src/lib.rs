@@ -457,6 +457,57 @@ async fn has_commit(
 }
 
 #[tauri::command]
+async fn git_remotes(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+) -> Result<Vec<git::Remote>, GitError> {
+    state.remote_urls(Path::new(&path))
+}
+
+#[tauri::command]
+async fn fetch_pr(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    remote: String,
+    number: u32,
+    base_ref: String,
+    base_sha: String,
+) -> Result<String, GitError> {
+    state.fetch_pr(Path::new(&path), &remote, number, &base_ref, &base_sha)
+}
+
+#[tauri::command]
+async fn pr_hunks(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    base: String,
+    head: String,
+) -> Result<Vec<git::FileHunks>, GitError> {
+    state.pr_hunks(Path::new(&path), &base, &head)
+}
+
+#[tauri::command]
+async fn pr_changed_files(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    base: String,
+    old_head: String,
+    new_head: String,
+) -> Result<Vec<String>, GitError> {
+    state.pr_changed_files(Path::new(&path), &base, &old_head, &new_head)
+}
+
+#[tauri::command]
+async fn mark_pr_seen(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    number: u32,
+    sha: String,
+) -> Result<(), GitError> {
+    state.mark_pr_seen(Path::new(&path), number, &sha)
+}
+
+#[tauri::command]
 async fn read_file_at(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -678,6 +729,11 @@ pub fn run() {
             list_submodules,
             submodule_sha_at,
             has_commit,
+            git_remotes,
+            fetch_pr,
+            pr_hunks,
+            pr_changed_files,
+            mark_pr_seen,
             read_file_at,
             containment,
             commit_log_excluding,

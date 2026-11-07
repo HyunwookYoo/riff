@@ -14,6 +14,29 @@ pub use diff::Change;
 pub use error::GitError;
 pub use write::REBASE_TODO_FLAG;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Remote {
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Hunk {
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileHunks {
+    pub path: String,
+    pub old_path: Option<String>,
+    pub hunks: Vec<Hunk>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Branch {
     pub name: String,
@@ -642,6 +665,31 @@ pub trait GitLayer {
     ) -> Result<Option<String>, GitError>;
     /// Whether `rev` names a commit in the repo at `path`.
     fn has_commit(&self, path: &Path, rev: &str) -> Result<bool, GitError>;
+    /// Fetch remotes (`git remote -v`, fetch lines only).
+    fn remote_urls(&self, path: &Path) -> Result<Vec<Remote>, GitError>;
+    /// Fetch PR `number`'s head and its base branch into `refs/riff/pr/<N>/{head,base}`
+    /// without touching branches, HEAD or the working tree. Returns the head SHA.
+    fn fetch_pr(
+        &self,
+        path: &Path,
+        remote: &str,
+        number: u32,
+        base_ref: &str,
+        base_sha: &str,
+    ) -> Result<String, GitError>;
+    /// Per-file hunks of `base...head` (what the PR changes), renames detected.
+    fn pr_hunks(&self, path: &Path, base: &str, head: &str) -> Result<Vec<FileHunks>, GitError>;
+    /// Files whose PR patch differs between `old_head` and `new_head`, ignoring
+    /// changes that only come from rebasing onto a moved base. Sorted.
+    fn pr_changed_files(
+        &self,
+        path: &Path,
+        base: &str,
+        old_head: &str,
+        new_head: &str,
+    ) -> Result<Vec<String>, GitError>;
+    /// Record `sha` as the last-seen head of PR `number` (`refs/riff/pr/<N>/seen`).
+    fn mark_pr_seen(&self, path: &Path, number: u32, sha: &str) -> Result<(), GitError>;
     /// The content of `file_path` at `rev` (`git cat-file blob <rev>:<path>`),
     /// lossy UTF-8, capped like the working-copy read the blame view uses.
     /// Backs "Blame before this", which blames a parent revision.

@@ -13,8 +13,8 @@ use super::diff;
 use super::uasset;
 use super::{
     Branch, BranchKind, BranchStatus, ChangedFile, Commit, CommitFind, Containment, ContainmentDetail,
-    ConflictFile, ConflictVersions, DiffMode, FileDiff, FileStatus, GitError, GitLayer, RebaseAction,
-    RebaseCheck, RebaseStep, ReflogEntry,
+    ConflictFile, ConflictVersions, DiffMode, FileDiff, FileHunks, FileStatus, GitError, GitLayer,
+    Hunk, RebaseAction, RebaseCheck, RebaseStep, ReflogEntry, Remote,
     RepoStatus, SquashCheck, SquashVerdict, StatusEntry, SubmoduleCommit, SubmoduleInfo,
 };
 
@@ -340,6 +340,49 @@ pub(super) fn validate_ref(s: &str) -> Result<&str, GitError> {
         return Err(GitError::InvalidRef(s.to_string()));
     }
     Ok(s)
+}
+
+/// Per-file hunk ranges of a unified diff. Omitted counts mean 1; a rename
+/// carries `old_path`; a deletion keeps its old path as `path`.
+pub(super) fn parse_hunks(patch: &str) -> Vec<FileHunks> {
+    fn range(s: &str) -> Option<(u32, u32)> {
+        let s = s.trim_start_matches(['-', '+']);
+        match s.split_once(',') {
+            Some((a, b)) => Some((a.parse().ok()?, b.parse().ok()?)),
+            None => Some((s.parse().ok()?, 1)),
+        }
+    }
+    let mut files: Vec<FileHunks> = Vec::new();
+    for line in patch.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git a/") {
+            let path = rest.rsplit_once(" b/").map_or(rest, |(_, b)| b);
+            files.push(FileHunks { path: path.to_string(), old_path: None, hunks: Vec::new() });
+            continue;
+        }
+        let Some(f) = files.last_mut() else { continue };
+        if let Some(p) = line.strip_prefix("rename from ") {
+            f.old_path = Some(p.to_string());
+        } else if let Some(p) = line.strip_prefix("rename to ") {
+            f.path = p.to_string();
+        } else if let Some(h) = line.strip_prefix("@@ ") {
+            let mut parts = h.split(' ');
+            if let (Some(o), Some(n)) = (parts.next().and_then(range), parts.next().and_then(range)) {
+                f.hunks.push(Hunk { old_start: o.0, old_lines: o.1, new_start: n.0, new_lines: n.1 });
+            }
+        }
+    }
+    files
+}
+
+/// A patch with everything a rebase can shift removed: `index` lines and the
+/// `@@` numbers and section heading. What is left changes only when content does.
+pub(super) fn normalize_patch(patch: &str) -> String {
+    patch
+        .lines()
+        .filter(|l| !l.starts_with("index "))
+        .map(|l| if l.starts_with("@@ ") { "@@" } else { l })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A SHA prefix of 4 to 40 hex digits, lowercased (rev-list prints lowercase).
@@ -2202,6 +2245,121 @@ impl GitLayer for GitCli {
         Ok(gitlink_sha(path, &format!("{rev}^{{commit}}")).is_some())
     }
 
+    fn remote_urls(&self, path: &Path) -> Result<Vec<Remote>, GitError> {
+        let out = self.run(path, &["remote", "-v"])?;
+        Ok(String::from_utf8_lossy(&out)
+            .lines()
+            .filter_map(|l| {
+                let (name, rest) = l.split_once('\t')?;
+                let url = rest.strip_suffix(" (fetch)")?;
+                Some(Remote { name: name.to_string(), url: url.to_string() })
+            })
+            .collect())
+    }
+
+    fn fetch_pr(
+        &self,
+        path: &Path,
+        remote: &str,
+        number: u32,
+        base_ref: &str,
+        base_sha: &str,
+    ) -> Result<String, GitError> {
+        if number == 0 {
+            return Err(GitError::InvalidRef("0".to_string()));
+        }
+        let remote = validate_ref(remote)?;
+        let base_ref = validate_ref(base_ref)?;
+        let base_sha = validate_ref(base_sha)?;
+        let head_spec = format!("+refs/pull/{number}/head:refs/riff/pr/{number}/head");
+        let base_spec = format!("+refs/heads/{base_ref}:refs/riff/pr/{number}/base");
+        self.run_network(path, &["fetch", "--no-tags", remote, &head_spec, &base_spec])?;
+        if !self.has_commit(path, base_sha)?
+            && self
+                .run_network(path, &["fetch", "--no-tags", remote, base_sha])
+                .is_err()
+        {
+            return Err(GitError::CommandFailed(format!(
+                "PR base {base_sha} not available"
+            )));
+        }
+        let out = self.run(path, &["rev-parse", &format!("refs/riff/pr/{number}/head")])?;
+        Ok(String::from_utf8_lossy(&out).trim().to_string())
+    }
+
+    fn pr_hunks(&self, path: &Path, base: &str, head: &str) -> Result<Vec<FileHunks>, GitError> {
+        let base = validate_ref(base)?;
+        let head = validate_ref(head)?;
+        let out = self.run(
+            path,
+            &[
+                "-c",
+                "core.quotePath=false",
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "-M",
+                "-U3",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                &format!("{base}...{head}"),
+            ],
+        )?;
+        Ok(parse_hunks(&String::from_utf8_lossy(&out)))
+    }
+
+    fn pr_changed_files(
+        &self,
+        path: &Path,
+        base: &str,
+        old_head: &str,
+        new_head: &str,
+    ) -> Result<Vec<String>, GitError> {
+        let base = validate_ref(base)?;
+        let old_head = validate_ref(old_head)?;
+        let new_head = validate_ref(new_head)?;
+        let mb = |head: &str| -> Result<String, GitError> {
+            let out = self.run(path, &["merge-base", base, head])?;
+            Ok(String::from_utf8_lossy(&out).trim().to_string())
+        };
+        let (mb_old, mb_new) = (mb(old_head)?, mb(new_head)?);
+        let names = |from: &str, to: &str| -> Result<Vec<String>, GitError> {
+            let out = self.run(
+                path,
+                &["-c", "core.quotePath=false", "diff", "--name-only", from, to],
+            )?;
+            Ok(String::from_utf8_lossy(&out).lines().map(str::to_string).collect())
+        };
+        let mut files = names(&mb_old, old_head)?;
+        files.extend(names(&mb_new, new_head)?);
+        files.sort();
+        files.dedup();
+        let patch = |from: &str, to: &str, file: &str| -> Result<String, GitError> {
+            let out = self.run(
+                path,
+                &["diff", "--no-color", "--no-ext-diff", "-U3", from, to, "--", file],
+            )?;
+            Ok(normalize_patch(&String::from_utf8_lossy(&out)))
+        };
+        let mut changed = Vec::new();
+        for f in files {
+            if patch(&mb_old, old_head, &f)? != patch(&mb_new, new_head, &f)? {
+                changed.push(f);
+            }
+        }
+        Ok(changed)
+    }
+
+    fn mark_pr_seen(&self, path: &Path, number: u32, sha: &str) -> Result<(), GitError> {
+        if number == 0 {
+            return Err(GitError::InvalidRef("0".to_string()));
+        }
+        let sha = validate_ref(sha)?;
+        let _w = self.write_lock.lock().unwrap();
+        self.run(path, &["update-ref", &format!("refs/riff/pr/{number}/seen"), sha])?;
+        Ok(())
+    }
+
     fn read_file_at(&self, path: &Path, rev: &str, file_path: &str) -> Result<String, GitError> {
         let rev = validate_ref(rev)?;
         validate_path(file_path)?;
@@ -3302,6 +3460,176 @@ def456\x1fdef456\x1fBob\x1f1700000100\x1fSecond commit\0";
         assert!(out.status.success(), "init bare remote");
         git_in(repo, &["remote", "add", "origin", &bare.to_string_lossy()]);
         bare
+    }
+
+    fn hunk(a: u32, b: u32, c: u32, d: u32) -> Hunk {
+        Hunk { old_start: a, old_lines: b, new_start: c, new_lines: d }
+    }
+
+    #[test]
+    fn parse_hunks_reads_headers_renames_and_deletes() {
+        let patch = "\
+diff --git a/m.rs b/m.rs
+index 111..222 100644
+--- a/m.rs
++++ b/m.rs
+@@ -3,7 +3,8 @@ fn main() {
+ ctx
+@@ -40 +41,2 @@
+-x
++y
++z
+diff --git a/a.txt b/b.txt
+similarity index 80%
+rename from a.txt
+rename to b.txt
+index 333..444 100644
+--- a/a.txt
++++ b/b.txt
+@@ -1,2 +1,2 @@
+-a
++b
+diff --git a/gone.txt b/gone.txt
+deleted file mode 100644
+index 555..000
+--- a/gone.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-q
+-r
+";
+        let files = parse_hunks(patch);
+        assert_eq!(
+            files,
+            vec![
+                FileHunks {
+                    path: "m.rs".into(),
+                    old_path: None,
+                    hunks: vec![hunk(3, 7, 3, 8), hunk(40, 1, 41, 2)]
+                },
+                FileHunks {
+                    path: "b.txt".into(),
+                    old_path: Some("a.txt".into()),
+                    hunks: vec![hunk(1, 2, 1, 2)]
+                },
+                FileHunks {
+                    path: "gone.txt".into(),
+                    old_path: None,
+                    hunks: vec![hunk(1, 2, 0, 0)]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn normalize_patch_ignores_line_numbers_and_index() {
+        let a = "diff --git a/f b/f\nindex 1..2 100644\n--- a/f\n+++ b/f\n@@ -3,2 +3,2 @@ fn a\n-x\n+y\n";
+        let b = "diff --git a/f b/f\nindex 8..9 100644\n--- a/f\n+++ b/f\n@@ -30,2 +31,2 @@ fn b\n-x\n+y\n";
+        let c = b.replace("+y", "+z");
+        assert_eq!(normalize_patch(a), normalize_patch(b));
+        assert_ne!(normalize_patch(a), normalize_patch(&c));
+    }
+
+    /// `main` with a.txt/b.txt/c.txt, and `topic` editing a.txt on top.
+    fn pr_fixture(name: &str) -> PathBuf {
+        let repo = temp_repo(name);
+        git_in(&repo, &["branch", "-M", "main"]);
+        let body: String = (1..=20).map(|i| format!("line{i}\n")).collect();
+        for f in ["a.txt", "b.txt", "c.txt"] {
+            fs::write(repo.join(f), &body).unwrap();
+        }
+        git_in(&repo, &["add", "-A"]);
+        git_in(&repo, &["commit", "-qm", "files"]);
+        git_in(&repo, &["checkout", "-q", "-b", "topic"]);
+        commit_file(&repo, "a.txt", &body.replace("line10", "LINE10"), "edit a");
+        git_in(&repo, &["checkout", "-q", "main"]);
+        repo
+    }
+
+    #[test]
+    fn pr_hunks_match_git_headers() {
+        let repo = pr_fixture("pr-hunks");
+        let got = GitCli::new().pr_hunks(&repo, "main", "topic").unwrap();
+        let out = git_command()
+            .arg("-C")
+            .arg(&repo)
+            .args(["diff", "-U3", "main...topic"])
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        let header = text.lines().find(|l| l.starts_with("@@ ")).unwrap();
+        let h = got[0].hunks[0];
+        let want = format!("@@ -{},{} +{},{} @@", h.old_start, h.old_lines, h.new_start, h.new_lines);
+        assert!(header.starts_with(&want), "{header} vs {want}");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path, "a.txt");
+        assert_eq!(got[0].hunks, vec![hunk(7, 7, 7, 7)]);
+    }
+
+    #[test]
+    fn fetch_pr_fetches_pull_ref_without_touching_branches() {
+        let repo = pr_fixture("fetch-pr");
+        let bare = add_bare_remote(&repo, "fetch-pr");
+        git_in(&repo, &["push", "-q", "origin", "main", "topic"]);
+        let main_sha = rev_parse(&repo, "main");
+        let topic_sha = rev_parse(&repo, "topic");
+        git_in(&bare, &["update-ref", "refs/pull/7/head", &topic_sha]);
+        let branches = |r: &Path| {
+            let out = git_command().arg("-C").arg(r).args(["branch", "--list"]).output().unwrap();
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+        let (b0, h0) = (branches(&repo), rev_parse(&repo, "HEAD"));
+
+        let sha = GitCli::new().fetch_pr(&repo, "origin", 7, "main", &main_sha).unwrap();
+        assert_eq!(sha, topic_sha);
+        assert_eq!(rev_parse(&repo, "refs/riff/pr/7/head"), topic_sha);
+        assert_eq!(rev_parse(&repo, "refs/riff/pr/7/base"), main_sha);
+        assert_eq!(branches(&repo), b0);
+        assert_eq!(rev_parse(&repo, "HEAD"), h0);
+        let refs = GitCli::new().list_refs(&repo).unwrap();
+        assert!(refs.iter().all(|b| !b.name.contains("riff")), "{refs:?}");
+    }
+
+    #[test]
+    fn fetch_pr_rejects_bad_input() {
+        let repo = temp_repo("fetch-pr-bad");
+        let g = GitCli::new();
+        assert!(matches!(g.fetch_pr(&repo, "origin", 0, "main", "abcd"), Err(GitError::InvalidRef(_))));
+        assert!(matches!(
+            g.fetch_pr(&repo, "origin", 1, "--upload-pack=x", "abcd"),
+            Err(GitError::InvalidRef(_))
+        ));
+    }
+
+    #[test]
+    fn pr_changed_files_ignores_rebase_noise() {
+        let repo = pr_fixture("pr-changed");
+        let body: String = (1..=20).map(|i| format!("line{i}\n")).collect();
+        let old_head = rev_parse(&repo, "topic");
+        // main moves (b.txt), topic is rebased onto it and also edits c.txt.
+        commit_file(&repo, "b.txt", &body.replace("line2\n", "line2 changed\n"), "main b");
+        git_in(&repo, &["checkout", "-q", "-b", "topic2", "main"]);
+        git_in(&repo, &["cherry-pick", &old_head]);
+        commit_file(&repo, "c.txt", &body.replace("line15", "LINE15"), "edit c");
+        let new_head = rev_parse(&repo, "topic2");
+        let got = GitCli::new().pr_changed_files(&repo, "main", &old_head, &new_head).unwrap();
+        assert_eq!(got, vec!["c.txt".to_string()]);
+    }
+
+    #[test]
+    fn mark_pr_seen_writes_seen_ref() {
+        let repo = temp_repo("pr-seen");
+        let sha = rev_parse(&repo, "HEAD");
+        GitCli::new().mark_pr_seen(&repo, 3, &sha).unwrap();
+        assert_eq!(rev_parse(&repo, "refs/riff/pr/3/seen"), sha);
+    }
+
+    #[test]
+    fn remote_urls_lists_fetch_remotes() {
+        let repo = temp_repo("remote-urls");
+        let bare = add_bare_remote(&repo, "remote-urls");
+        let got = GitCli::new().remote_urls(&repo).unwrap();
+        assert_eq!(got, vec![Remote { name: "origin".into(), url: bare.to_string_lossy().into() }]);
     }
 
     fn current_branch(dir: &Path) -> String {
