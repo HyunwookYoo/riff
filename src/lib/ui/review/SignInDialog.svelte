@@ -8,7 +8,7 @@
 
   let device = $state<{ code: string; url: string } | null>(null);
   let error = $state<string | null>(null);
-  let run: { cancel: () => void } | null = null;
+  let run: ReturnType<typeof ghLogin> | null = null;
   let dialogEl = $state<HTMLDivElement>();
 
   function start() {
@@ -31,12 +31,17 @@
         error = String(e);
       },
     );
+    // Retry removes the focused button; keep Escape going to the dialog.
+    queueMicrotask(() => dialogEl?.focus());
   }
 
   function close() {
-    run?.cancel();
+    const r = run;
     run = null;
+    r?.cancel();
     onclose();
+    // A cancel can race gh finishing the login: refresh once gh has stopped.
+    void (r ? r.done.catch(() => {}) : Promise.resolve()).then(() => refreshList());
   }
 
   function copyAndOpen() {
@@ -45,10 +50,7 @@
     void openUrl(device.url).catch(() => {});
   }
 
-  onMount(() => {
-    start();
-    queueMicrotask(() => dialogEl?.focus());
-  });
+  onMount(start);
   onDestroy(() => run?.cancel());
 
   function onKey(e: KeyboardEvent) {

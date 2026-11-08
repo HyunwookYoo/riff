@@ -30,6 +30,8 @@ pub fn resolve_gh(
     let on_path = path_var
         .into_iter()
         .flat_map(std::env::split_paths)
+        // Empty (`;;`) or relative entries would resolve against riff's cwd.
+        .filter(|d| d.is_absolute())
         .map(|d| d.join(GH_EXE));
     let installed = program_files.map(|p| p.join("GitHub CLI").join(GH_EXE));
     on_path
@@ -465,6 +467,25 @@ mod tests {
             None
         );
         assert_eq!(resolve_gh(None, None, None, &|_| true), None);
+    }
+
+    #[test]
+    fn resolve_gh_skips_empty_and_relative_path_entries() {
+        let path_var = std::ffi::OsString::from(r"C:\a;;rel;C:\b;");
+        let b_gh = PathBuf::from(r"C:\b").join(GH_EXE);
+        let planted = [
+            PathBuf::from(GH_EXE),
+            PathBuf::from("rel").join(GH_EXE),
+            b_gh.clone(),
+        ];
+        assert_eq!(
+            resolve_gh(Some(&path_var), None, None, &exists_in(&planted)),
+            Some(b_gh)
+        );
+        assert_eq!(
+            resolve_gh(Some(&path_var), None, None, &exists_in(&planted[..2])),
+            None
+        );
     }
 
     #[test]
