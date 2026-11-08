@@ -25,3 +25,6 @@ Desktop.ini
 # src-tauri/resources/uassetgui/README.md). The folder + placeholder stay.
 src-tauri/resources/uassetgui/*.exe
 src-tauri/resources/uassetgui/UAssetGUI-LICENSE.txt
+# Bundled GitHub CLI (fetched at release time, see src-tauri/resources/gh/README.md).
+src-tauri/resources/gh/*.exe
+src-tauri/resources/gh/gh-LICENSE.txt

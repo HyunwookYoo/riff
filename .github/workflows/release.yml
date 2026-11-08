@@ -53,6 +53,23 @@ jobs:
             Copy-Item "$env:RUNNER_TEMP\uassetgui-src\LICENSE" src-tauri\resources\uassetgui\UAssetGUI-LICENSE.txt -Force
           }
 
+      # Bundle the GitHub CLI so PR Review works without a separate install
+      # (see src-tauri/resources/gh). Pinned and checksum-verified.
+      - name: Fetch GitHub CLI
+        shell: pwsh
+        env:
+          GH_VERSION: 2.93.0
+          GH_SHA256: 77aa01ed7317295ad550de0ad04f3f276b1ef0e9272e3d002ac28dd99853d211
+        run: |
+          $zip = "$env:RUNNER_TEMP\gh.zip"
+          Invoke-WebRequest "https://github.com/cli/cli/releases/download/v$env:GH_VERSION/gh_$($env:GH_VERSION)_windows_amd64.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:GH_SHA256) { throw "gh zip SHA256 mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\gh" -Force
+          New-Item -ItemType Directory -Force -Path src-tauri\resources\gh | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\gh\bin\gh.exe" src-tauri\resources\gh\gh.exe -Force
+          Copy-Item "$env:RUNNER_TEMP\gh\LICENSE" src-tauri\resources\gh\gh-LICENSE.txt -Force
+
       # Use the top section of CHANGELOG.md as the release body. Falls back to a
       # generic line if the file is missing/empty so the build can't break here.
       - name: Extract release notes
