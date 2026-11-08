@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type { PrHunks } from "./types";
 
 export function gitRemotes(path: string): Promise<{ name: string; url: string }[]> {
@@ -37,6 +37,28 @@ export type GhStatus = "ready" | "notinstalled" | "notloggedin";
 
 export function ghStatus(host: string): Promise<GhStatus> {
   return invoke("gh_status", { host });
+}
+
+type LoginEvent = { kind: "code"; code: string; url: string };
+
+// Random start: the backend's cancelled set outlives a webview reload (see rebaseCheck.ts).
+let nextLoginId = crypto.getRandomValues(new Uint32Array(1))[0] >>> 1;
+
+/**
+ * `gh auth login --web` for `host`. `onCode` gets the device code to enter at
+ * `url`; `done` rejects with gh's message, or "cancelled" after `cancel()`.
+ */
+export function ghLogin(
+  host: string,
+  onCode: (c: { code: string; url: string }) => void,
+): { done: Promise<void>; cancel: () => void } {
+  const id = nextLoginId++;
+  const channel = new Channel<LoginEvent>();
+  channel.onmessage = (e) => {
+    if (e.kind === "code") onCode({ code: e.code, url: e.url });
+  };
+  const done = invoke<void>("gh_login", { host, onEvent: channel, id });
+  return { done, cancel: () => void invoke("cancel_gh_login", { id }).catch(() => {}) };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

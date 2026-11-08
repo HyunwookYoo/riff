@@ -19,6 +19,11 @@ use tauri::Manager;
 #[derive(Default)]
 struct RebaseChecks(std::sync::Mutex<std::collections::HashSet<u32>>);
 
+/// Ids of gh logins the frontend has asked to stop; same protocol as
+/// `RebaseChecks` (the running login polls and kills gh).
+#[derive(Default)]
+struct GhLogins(std::sync::Mutex<std::collections::HashSet<u32>>);
+
 #[derive(Clone, serde::Serialize)]
 struct RebaseCheckProgress {
     done: u32,
@@ -135,6 +140,14 @@ fn bundled_uassetgui_path(app: &tauri::AppHandle) -> Option<String> {
         .join("uassetgui")
         .join("UAssetGUI.exe");
     exe.is_file().then(|| exe.to_string_lossy().into_owned())
+}
+
+/// The gh bundled as a Tauri resource by the release CI (absent in dev
+/// builds, which use the system gh).
+fn bundled_gh_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let dir = app.path().resource_dir().ok()?;
+    let exe = dir.join("resources").join("gh").join("gh.exe");
+    exe.is_file().then_some(exe)
 }
 
 #[tauri::command]
@@ -493,6 +506,29 @@ async fn gh_api(
 }
 
 #[tauri::command]
+async fn gh_login(
+    logins: tauri::State<'_, GhLogins>,
+    host: String,
+    on_event: tauri::ipc::Channel<github::LoginEvent>,
+    id: u32,
+) -> Result<(), github::GhError> {
+    let result = github::login(
+        &host,
+        &mut |ev| {
+            let _ = on_event.send(ev);
+        },
+        &mut || logins.0.lock().unwrap().remove(&id),
+    );
+    logins.0.lock().unwrap().remove(&id);
+    result
+}
+
+#[tauri::command]
+fn cancel_gh_login(logins: tauri::State<'_, GhLogins>, id: u32) {
+    logins.0.lock().unwrap().insert(id);
+}
+
+#[tauri::command]
 async fn pr_hunks(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -725,10 +761,14 @@ pub fn run() {
         .manage(GitCli::new())
         .manage(watch::RepoWatch::new())
         .manage(RebaseChecks::default())
+        .manage(GhLogins::default())
         .setup(|app| {
             // The watcher needs an AppHandle to emit events; it only exists now.
             app.state::<watch::RepoWatch>()
                 .set_app(app.handle().clone());
+            if let Some(gh) = bundled_gh_path(app.handle()) {
+                github::set_bundled_gh(gh);
+            }
             Ok(())
         })
         // The PR Review drafts window can't work alone (the main window owns
@@ -794,6 +834,8 @@ pub fn run() {
             fetch_pr,
             gh_status,
             gh_api,
+            gh_login,
+            cancel_gh_login,
             pr_hunks,
             pr_changed_files,
             mark_pr_seen,

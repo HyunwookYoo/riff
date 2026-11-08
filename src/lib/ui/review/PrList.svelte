@@ -1,14 +1,21 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { reviewState, refreshList, openPr } from "$lib/review/reviewState.svelte";
-  import { loginHint } from "$lib/review/prList";
+  import { hostProblemText, listEmptyState, loginHint } from "$lib/review/prList";
   import { listReviews } from "$lib/review/gh";
   import { loadRecord } from "$lib/review/draftStore";
   import type { PrKey, PrSummary } from "$lib/review/types";
+  import SignInDialog from "./SignInDialog.svelte";
 
   const requested = $derived(reviewState.prs.filter((p) => p.section === "requested"));
   const reviewed = $derived(reviewState.prs.filter((p) => p.section === "reviewed"));
   const problemHosts = $derived(reviewState.hosts.filter((h) => h.status !== "ready"));
+  const emptyState = $derived(
+    reviewState.githubRepos === null
+      ? null
+      : listEmptyState(reviewState.githubRepos, reviewState.hosts, reviewState.prs.length),
+  );
+  let signInHost = $state<string | null>(null);
 
   // Draft counts per listed key; absent = no stored record or unreadable (unknown).
   let draftCounts = $state<Record<PrKey, number>>({});
@@ -107,23 +114,36 @@
   </div>
   <div class="scroll">
     {#each problemHosts as h (h.host)}
+      {@const t = hostProblemText(h)}
       <div class="host-error">
-        <div>
-          {h.host}: {h.status}{h.message ? ` — ${h.message}` : ""}
-        </div>
-        <div class="hint">
-          <code>{loginHint(h.host)}</code>
-          <button type="button" onclick={() => copy(loginHint(h.host))}>Copy</button>
-        </div>
+        <div class="problem-title">{t.title}</div>
+        {#if t.detail}
+          <div class="detail">{t.detail}</div>
+        {/if}
+        {#if t.canSignIn}
+          <button type="button" class="sign-in" onclick={() => (signInHost = h.host)}>Sign in</button>
+          <div class="hint">
+            or run: <code>{loginHint(h.host)}</code>
+            <button type="button" onclick={() => copy(loginHint(h.host))}>Copy</button>
+          </div>
+        {/if}
       </div>
     {/each}
     {#if reviewState.error}
       <div class="host-error">{reviewState.error}</div>
     {/if}
+    {#if emptyState === "no-github-repos"}
+      <div class="empty">None of the open repositories has a GitHub remote.</div>
+    {:else if emptyState === "no-prs"}
+      <div class="empty">No review requests right now.</div>
+    {/if}
     {@render section("Review requested", requested)}
     {@render section("Reviewed", reviewed)}
   </div>
 </aside>
+{#if signInHost}
+  <SignInDialog host={signInHost} onclose={() => (signInHost = null)} />
+{/if}
 
 <style>
   .pr-list {
@@ -219,11 +239,29 @@
     border-bottom: 1px solid var(--border);
     font-size: 0.85em;
   }
+  .problem-title {
+    font-weight: 600;
+  }
+  .detail {
+    margin-top: 2px;
+    color: var(--muted);
+    word-break: break-word;
+  }
+  .sign-in {
+    margin-top: 6px;
+  }
   .hint {
     display: flex;
     align-items: center;
     gap: 6px;
     margin-top: 4px;
+    color: var(--muted);
+    font-size: 0.9em;
+  }
+  .empty {
+    padding: 12px 8px;
+    color: var(--muted);
+    font-size: 0.85em;
   }
   .hint code {
     font-family: var(--mono);

@@ -12,6 +12,8 @@ export const UNREADABLE = "This PR's saved draft can't be read; riff won't overw
 class ReviewState {
   prs = $state<PrSummary[]>([]);
   hosts = $state<HostState[]>([]);
+  /** Open repos with a GitHub-like remote at the last list load; null before one. */
+  githubRepos = $state<number | null>(null);
   loadingList = $state(false);
   selectedKey = $state<PrKey | null>(null);
   /** The head sha actually displayed; the only sha viewedHead/seen may be set to. */
@@ -45,6 +47,7 @@ export async function refreshList(): Promise<void> {
     const s = reviewState;
     s.prs = r.prs;
     s.hosts = r.hosts;
+    s.githubRepos = r.githubRepos;
     // A push since the PR was opened. A list requested before the displayed
     // head was set may predate it, so it can't tell.
     const moved = shown === shownSeq ? listedHeadMove(r.prs, s.selectedKey, s.headSha, s.headMoved) : null;

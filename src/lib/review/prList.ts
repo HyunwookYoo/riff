@@ -49,22 +49,17 @@ export async function collectRepos(
   return out;
 }
 
+/** `githubRepos`: open repos with a GitHub-like remote. */
 export async function loadPrList(
   repos: { path: string }[],
   remotesOf: RemotesOf = gitRemotes,
-): Promise<{ prs: PrSummary[]; hosts: HostState[] }> {
+): Promise<{ prs: PrSummary[]; hosts: HostState[]; githubRepos: number }> {
   const byHost = await collectRepos(repos, remotesOf);
   const results = await Promise.all(
     [...byHost].map(async ([host, entries]): Promise<{ state: HostState; prs: PrSummary[] }> => {
       try {
         const status = await ghStatus(host);
-        if (status !== "ready") {
-          const message =
-            status === "notinstalled"
-              ? `The gh CLI is not installed. Install it, then run ${loginHint(host)}`
-              : `Not logged in to ${host}. Run ${loginHint(host)}`;
-          return { state: { host, status, message }, prs: [] };
-        }
+        if (status !== "ready") return { state: { host, status, message: null }, prs: [] };
         const login = await viewerLogin(host);
         const prs = await searchPrs(host, entries, login);
         return { state: { host, status: "ready", message: null }, prs };
@@ -73,7 +68,43 @@ export async function loadPrList(
       }
     }),
   );
-  return { prs: results.flatMap((r) => r.prs), hosts: results.map((r) => r.state) };
+  return {
+    prs: results.flatMap((r) => r.prs),
+    hosts: results.map((r) => r.state),
+    githubRepos: [...byHost.values()].reduce((n, e) => n + e.length, 0),
+  };
+}
+
+/** The PR list's row for a host that isn't ready. */
+export function hostProblemText(h: HostState): {
+  title: string;
+  detail: string | null;
+  canSignIn: boolean;
+} {
+  switch (h.status) {
+    case "notloggedin":
+      return { title: `Not signed in to ${h.host}`, detail: null, canSignIn: true };
+    case "notinstalled":
+      return {
+        title: "GitHub CLI (gh) not found",
+        detail: "Install it from https://cli.github.com, then press Refresh.",
+        canSignIn: false,
+      };
+    default:
+      return { title: `Couldn't load pull requests from ${h.host}`, detail: h.message, canSignIn: false };
+  }
+}
+
+export type ListEmptyState = "no-github-repos" | "no-prs";
+
+export function listEmptyState(
+  githubRepoCount: number,
+  hosts: HostState[],
+  prCount: number,
+): ListEmptyState | null {
+  if (githubRepoCount === 0) return "no-github-repos";
+  if (prCount === 0 && hosts.some((h) => h.status === "ready")) return "no-prs";
+  return null;
 }
 
 /** The unseen head move: viewed head differs from the displayed head. */

@@ -8,7 +8,9 @@ import { searchPrs, viewerLogin } from "./github";
 import {
   collectRepos,
   headMoveFor,
+  hostProblemText,
   keysToDelete,
+  listEmptyState,
   listedHeadMove,
   loadPrList,
   loginHint,
@@ -64,8 +66,59 @@ describe("loadPrList", () => {
     expect(r.prs).toHaveLength(1);
     const bad = r.hosts.find((h) => h.host === "ghe.corp")!;
     expect(bad.status).toBe("notloggedin");
-    expect(bad.message).toContain(loginHint("ghe.corp"));
+    expect(bad.message).toBeNull();
     expect(r.hosts.find((h) => h.host === "github.com")!.status).toBe("ready");
+    expect(r.githubRepos).toBe(2);
+  });
+
+  it("carries only the raw error for status error and counts GitHub repos", async () => {
+    vi.mocked(ghStatus).mockRejectedValue("boom");
+    const r = await loadPrList(
+      [{ path: "a" }, { path: "b" }],
+      remotes({ a: [{ name: "origin", url: "https://github.com/o/a.git" }], b: [] }),
+    );
+    expect(r.hosts).toEqual([{ host: "github.com", status: "error", message: "boom" }]);
+    expect(r.githubRepos).toBe(1);
+  });
+});
+
+describe("hostProblemText", () => {
+  it("offers sign-in for a logged-out host", () => {
+    expect(hostProblemText({ host: "ghe.corp", status: "notloggedin", message: null })).toEqual({
+      title: "Not signed in to ghe.corp",
+      detail: null,
+      canSignIn: true,
+    });
+  });
+  it("tells how to install gh", () => {
+    expect(hostProblemText({ host: "github.com", status: "notinstalled", message: null })).toEqual({
+      title: "GitHub CLI (gh) not found",
+      detail: "Install it from https://cli.github.com, then press Refresh.",
+      canSignIn: false,
+    });
+  });
+  it("shows the raw error", () => {
+    expect(hostProblemText({ host: "github.com", status: "error", message: "HTTP 502" })).toEqual({
+      title: "Couldn't load pull requests from github.com",
+      detail: "HTTP 502",
+      canSignIn: false,
+    });
+  });
+});
+
+describe("listEmptyState", () => {
+  const ready: HostState = { host: "github.com", status: "ready", message: null };
+  const out: HostState = { host: "ghe.corp", status: "notloggedin", message: null };
+  it("no GitHub repos", () => {
+    expect(listEmptyState(0, [], 0)).toBe("no-github-repos");
+  });
+  it("no PRs once a host is ready", () => {
+    expect(listEmptyState(2, [ready, out], 0)).toBe("no-prs");
+  });
+  it("null when PRs are listed or no host is ready", () => {
+    expect(listEmptyState(1, [ready], 3)).toBeNull();
+    expect(listEmptyState(1, [out], 0)).toBeNull();
+    expect(listEmptyState(1, [{ ...ready, status: "error", message: "x" }], 0)).toBeNull();
   });
 });
 
