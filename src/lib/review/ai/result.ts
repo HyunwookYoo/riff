@@ -26,7 +26,7 @@ export function normalizeFind(raw: unknown, files: FileHunks[]): { chapters: AiC
   const seen = new Set<string>();
   const chapters: AiChapter[] = [];
   for (const c of raw.chapters) {
-    if (!isObj(c) || !isStr(c.title) || !Array.isArray(c.paths)) throw bad("chapter shape");
+    if (!isObj(c) || !isStr(c.title) || !Array.isArray(c.paths)) continue;
     const paths: string[] = [];
     for (const p of c.paths) {
       if (!isStr(p) || !known.has(p) || seen.has(p)) continue;
@@ -40,9 +40,9 @@ export function normalizeFind(raw: unknown, files: FileHunks[]): { chapters: AiC
 
   const candidates: Candidate[] = [];
   for (const f of raw.findings) {
-    if (!isObj(f) || !isStr(f.path) || !isStr(f.body)) throw bad("finding shape");
-    if ((f.side !== "LEFT" && f.side !== "RIGHT") || !Number.isInteger(f.line) || (f.line as number) < 1) throw bad("finding position");
-    if (f.severity !== "high" && f.severity !== "medium" && f.severity !== "low") throw bad("finding severity");
+    if (!isObj(f) || !isStr(f.path) || !isStr(f.body)) continue;
+    if ((f.side !== "LEFT" && f.side !== "RIGHT") || !Number.isInteger(f.line) || (f.line as number) < 1) continue;
+    if (f.severity !== "high" && f.severity !== "medium" && f.severity !== "low") continue;
     const evidence = evidenceOf(f.evidence);
     if (!evidence.length) continue;
     if (!known.has(f.path) && !evidence.some((e) => known.has(e.path))) continue;
@@ -76,7 +76,7 @@ export function fillQuotes(findings: AiFinding[], texts: Map<string, string>): A
   for (const f of findings) {
     const text = texts.get(`${f.path}|${f.side}`);
     if (text === undefined) continue;
-    const lines = text.split("\n");
+    const lines = text.replace(/\r?\n$/, "").split(/\r?\n/);
     const from = f.startLine ?? f.line;
     if (from < 1 || from > f.line || f.line > lines.length) continue;
     out.push({ ...f, quote: lines.slice(from - 1, f.line) });

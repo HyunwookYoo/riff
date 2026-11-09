@@ -87,3 +87,26 @@ describe("chapterOf", () => {
     expect(chapterOf(r, "x")).toBeNull();
   });
 });
+
+describe("tolerant normalization", () => {
+  it("one invalid finding is dropped, others kept", () => {
+    const r = normalizeFind({ chapters: [], findings: [finding({ side: "MIDDLE" } as never), finding({ body: 5 } as never), finding()] }, files);
+    expect(r.candidates).toHaveLength(1);
+  });
+  it("invalid chapter dropped", () => {
+    const r = normalizeFind({ chapters: [{ title: 3, summary: "", paths: ["a.ts"] }, "junk", { title: "T", summary: "", paths: ["b.ts"] }], findings: [] }, files);
+    expect(r.chapters.map((c) => c.title)).toEqual(["T", "Other"]);
+    expect(r.chapters[1].paths).toEqual(["a.ts", "c.ts"]);
+  });
+});
+
+describe("fillQuotes line endings", () => {
+  const f: AiFinding = { id: "f0", path: "a.ts", side: "RIGHT", line: 3, startLine: null, severity: "low", body: "", evidence: [], status: "confirmed", quote: [] };
+  it("drops a line past a trailing newline", () => {
+    expect(fillQuotes([f], new Map([["a.ts|RIGHT", "1\n2\n3\n"]]))[0].quote).toEqual(["3"]);
+    expect(fillQuotes([{ ...f, line: 4 }], new Map([["a.ts|RIGHT", "1\n2\n3\n"]]))).toEqual([]);
+  });
+  it("strips CR from CRLF text", () => {
+    expect(fillQuotes([{ ...f, startLine: 2 }], new Map([["a.ts|RIGHT", "1\r\n2\r\n3\r\n"]]))[0].quote).toEqual(["2", "3"]);
+  });
+});
