@@ -8,6 +8,7 @@
   import { textStash } from "./composerAt";
   import { aiState } from "$lib/review/ai/aiState.svelte";
   import { verdictLabel } from "$lib/review/ai/rereview";
+  import { recordReaction, threadReaction } from "$lib/review/ai/memory";
 
   let { threadId, onevidence }: {
     threadId: string;
@@ -47,12 +48,13 @@
 
   async function toggleResolved() {
     const t = thread;
-    const host = reviewState.prs.find((p) => p.key === reviewState.selectedKey)?.repo.host;
-    if (!t || !host) return;
+    const repo = reviewState.prs.find((p) => p.key === reviewState.selectedKey)?.repo;
+    if (!t || !repo) return;
     busy = true;
     error = null;
     try {
-      await setThreadResolved(host, t.id, !t.isResolved);
+      await setThreadResolved(repo.host, t.id, !t.isResolved);
+      if (!t.isResolved) recordReaction(threadReaction(t, "resolved", repo));
       await reloadDetail();
     } catch (e) {
       error = String(e);

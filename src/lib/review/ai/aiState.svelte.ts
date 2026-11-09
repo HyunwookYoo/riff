@@ -5,6 +5,7 @@ import { prDetail } from "../github";
 import type { PrKey, PrSummary } from "../types";
 import { loadAiResult, saveAiResult } from "./aiStore";
 import { cancelJob, createRunner, requestJob, requestRereview, runJob } from "./job";
+import { recordReaction } from "./memory";
 import { notifyReady } from "./notify";
 import { emptyQueue, type Queue } from "./queue";
 import { runRereview, withRereview } from "./rereview";
@@ -76,6 +77,7 @@ const runner = createRunner({
   save: saveResult,
   saveRereview,
   notify: notifyReady,
+  remember: recordReaction,
 });
 
 /** Queues an AI review of `pr` (only ever on the user's request). */

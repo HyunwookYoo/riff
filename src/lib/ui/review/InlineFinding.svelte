@@ -3,6 +3,7 @@
   import { addItem } from "$lib/review/draft";
   import { draftLocked } from "$lib/review/submitFlow.svelte";
   import { setHandled } from "$lib/review/ai/aiState.svelte";
+  import { findingReaction, recordReaction } from "$lib/review/ai/memory";
   import type { ShownFinding } from "$lib/review/ai/result";
   import type { PrKey } from "$lib/review/types";
   import { textStash } from "./composerAt";
@@ -54,10 +55,17 @@
       reviewState.error = `AI result not saved: ${e}`;
     });
 
+  // Built before awaiting: an added finding hides, which can unmount this widget.
+  function reaction(how: "added" | "edited" | "discarded") {
+    const repo = reviewState.prs.find((p) => p.key === prKey)?.repo;
+    return repo ? findingReaction(f, how, repo) : null;
+  }
+
   async function add(body: string, edited: boolean) {
     const r = reviewState.record;
     if (!r || blocked || busy || !body.trim()) return;
     busy = true;
+    const memo = reaction(edited ? "edited" : "added");
     try {
       const origin = unconfirmed ? "ai-unconfirmed" : edited ? "ai-edited" : "ai";
       // Both in this tick: the finding hides with the draft appearing, so it can't be added twice
@@ -67,6 +75,7 @@
       textStash.delete(editKey);
       await w;
       await h;
+      if (memo) recordReaction(memo);
     } finally {
       busy = false;
     }
@@ -74,8 +83,10 @@
 
   async function discard() {
     if (blocked || busy) return;
+    const memo = reaction("discarded");
     textStash.delete(editKey);
     await handle("discarded");
+    if (memo) recordReaction(memo);
   }
 
   const where = (path: string, line: number | null) => (line !== null ? `${path}:${line}` : path);

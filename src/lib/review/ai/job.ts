@@ -1,6 +1,7 @@
 import type { FileCompare } from "../gh";
-import type { FileHunks, PrDetail, PrHunks, PrKey, PrSummary } from "../types";
+import type { FileHunks, PrDetail, PrHunks, PrKey, PrSummary, ReviewThread } from "../types";
 import type { aiRun } from "./run";
+import { verdictReactions, type Reaction } from "./memory";
 import { FIND_SCHEMA, VERIFY_SCHEMA, findPrompt, verifyPrompt } from "./prompts";
 import { fillQuotes, mergeVerdicts, normalizeFind } from "./result";
 import { cancel, enqueue, finish, type JobKind, type Queue, type QueueEntry } from "./queue";
@@ -113,6 +114,8 @@ export interface RunnerDeps {
   /** Stores `rr` into `key`'s result, keeping the review in it, and updates `ctx.results`. */
   saveRereview: (key: PrKey, rr: RereviewResult) => Promise<void>;
   notify: (number: number, title: string, findings: number) => Promise<void>;
+  /** Records a review memory (best effort, never throws). */
+  remember: (r: Reaction) => void;
 }
 
 interface Active { entry: QueueEntry; cancelled: boolean; cancel: () => void }
@@ -187,8 +190,14 @@ async function runOne(r: Runner, entry: QueueEntry): Promise<void> {
   r.specs.delete(specKey(entry));
   const a: Active = { entry, cancelled: false, cancel: () => {} };
   r.active = a;
+  let threads: ReviewThread[] = []; // the PR's threads as the job last fetched them
   const jobDeps: JobDeps = {
     ...r.jobDeps,
+    prDetail: async (host, nodeId) => {
+      const detail = await r.jobDeps.prDetail(host, nodeId);
+      threads = detail.threads;
+      return detail;
+    },
     aiRun: (path, prompt, schema, onActivity, instructions) => {
       if (a.cancelled) return { done: Promise.reject(new Error("cancelled")), cancel: () => {} };
       const run = r.jobDeps.aiRun(path, prompt, schema, onActivity, instructions);
@@ -206,6 +215,7 @@ async function runOne(r: Runner, entry: QueueEntry): Promise<void> {
       await r.saveRereview(key, rr);
       if (a.cancelled) return;
       setJob(r, entry, { kind: "done" });
+      for (const m of verdictReactions(rr, threads, spec.pr.repo)) r.remember(m);
       return;
     }
     const result = await r.runJob(jobDeps, spec.pr, spec.repoPath, onState);

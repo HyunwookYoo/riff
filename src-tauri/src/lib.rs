@@ -2,6 +2,7 @@ pub mod ai;
 pub mod diff;
 pub mod git;
 pub mod github;
+pub mod memory;
 pub mod store;
 pub mod watch;
 
@@ -572,6 +573,22 @@ fn cancel_ai_run(runs: tauri::State<'_, AiRuns>, id: u32) {
     runs.0.lock().unwrap().insert(id);
 }
 
+/// Best effort: agentmemory not running (or refusing) is logged, never
+/// reported to the UI.
+#[tauri::command]
+async fn record_review_memory(content: String, project: String, concepts: Vec<String>) {
+    let url = std::env::var("AGENTMEMORY_URL").unwrap_or_else(|_| "http://localhost:3111".into());
+    let secret = std::env::var("AGENTMEMORY_SECRET").ok().filter(|s| !s.is_empty());
+    let body = memory::remember_body(&content, &project, &concepts);
+    let sent = tauri::async_runtime::spawn_blocking(move || memory::remember(&url, secret.as_deref(), &body))
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r);
+    if let Err(e) = sent {
+        eprintln!("riff: review memory not recorded: {e}");
+    }
+}
+
 #[tauri::command]
 async fn pr_hunks(
     state: tauri::State<'_, GitCli>,
@@ -926,6 +943,7 @@ pub fn run() {
             cancel_gh_login,
             ai_run,
             cancel_ai_run,
+            record_review_memory,
             pr_hunks,
             pr_diff_text,
             pr_commit_subjects,

@@ -65,7 +65,8 @@ function withMyThread(d: ReturnType<typeof deps>["d"]): void {
 
 /** Runner deps with no-op re-review plumbing; tests override what they check. */
 const runnerDeps = (o: Partial<RunnerDeps> & Pick<RunnerDeps, "ctx" | "jobDeps">): RunnerDeps => ({
-  runJob, runRereview, save: vi.fn(async (x: AiResult) => x), saveRereview: vi.fn(async () => {}), notify: vi.fn(async () => {}), ...o,
+  runJob, runRereview, save: vi.fn(async (x: AiResult) => x), saveRereview: vi.fn(async () => {}), notify: vi.fn(async () => {}),
+  remember: vi.fn(), ...o,
 });
 
 describe("runJob", () => {
@@ -259,6 +260,22 @@ describe("runner", () => {
     expect(saveRereview).toHaveBeenCalledTimes(1);
   });
 
+  it("a finished re-review records one memory per verdict, after saving", async () => {
+    const { d } = deps({ chapters: [], findings: [] });
+    withMyThread(d);
+    const order: string[] = [];
+    const saveRereview = vi.fn(async () => { order.push("save"); });
+    const remember = vi.fn(() => { order.push("remember"); });
+    const r = createRunner(runnerDeps({ ctx: ctx(), jobDeps: d, saveRereview, remember }));
+    requestRereview(r, summary(1, { myLastReviewSha: "R1" }), "/repo", "me");
+    await flush();
+    expect(order).toEqual(["save", "remember"]);
+    expect(remember).toHaveBeenCalledWith({
+      content: `riff review: reviewer's comment thread in "a.ts" was judged unclear`,
+      project: "o/r", concepts: ["riff-review", "thread-unclear"],
+    });
+  });
+
   it("a failed re-review stores nothing", async () => {
     const { d } = deps({ chapters: [], findings: [] });
     withMyThread(d);
@@ -269,6 +286,7 @@ describe("runner", () => {
     requestRereview(r, summary(1, { myLastReviewSha: "R1" }), "/repo", "me");
     await flush();
     expect(saveRereview).not.toHaveBeenCalled();
+    expect(r.remember).not.toHaveBeenCalled();
     const s = c.rereviewJobs[summary(1).key];
     expect(s?.kind === "failed" && s.message).toMatch(/isn't available/);
     expect(c.jobs).toEqual({});

@@ -29,6 +29,8 @@ thiserror = "2"
 notify = "8"
 ignore = "0.4"
 similar = "2"
+# Plain-HTTP POSTs to the local agentmemory server (memory::); no TLS.
+ureq = { version = "3", default-features = false }
 
 
 [target.'cfg(windows)'.dependencies]

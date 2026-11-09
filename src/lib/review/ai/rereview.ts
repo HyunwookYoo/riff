@@ -1,7 +1,7 @@
 import type { FileCompare } from "../gh";
 import type { PrKey, PrSummary, ReviewThread } from "../types";
 import { baseInstructions, type JobDeps } from "./job";
-import { MAX_DIFF_CHARS, UNTRUSTED_END, UNTRUSTED_START, evidenceItem, fenced, gitRules } from "./prompts";
+import { MAX_DIFF_CHARS, MEMORY_HINT, UNTRUSTED_END, UNTRUSTED_START, evidenceItem, fenced, gitRules } from "./prompts";
 import { evidenceOf } from "./result";
 import type { AiJobState, AiResult, RereviewResult, ThreadVerdict, Verdict } from "./types";
 
@@ -100,6 +100,8 @@ export function rereviewPrompt(a: { head: string; oldHead: string; threads: Revi
     "",
     "Rules for reading code:",
     ...gitRules("- Read a file with `git show <head>:<path>` (the code now) or `git show <oldHead>:<path>` (the code at the last review), using the SHAs given above."),
+    "",
+    MEMORY_HINT,
     "",
     "Each patch below is PR-only: the file's diff from the PR's merge-base to that commit, so base-branch changes (from a rebase or merge) are not in it. Compare the patch at oldHead with the patch at head to see what the author changed, and read the code at head before deciding.",
     "",
