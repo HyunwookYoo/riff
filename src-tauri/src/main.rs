@@ -21,5 +21,20 @@ fn main() {
             }
         });
     }
+    // AI runs register riff's own executable as Claude Code's Bash PreToolUse
+    // hook (see ai::claude_args): the hook JSON comes on stdin, and exit 2
+    // blocks the call with the stderr reason shown to the model. Unreadable
+    // stdin fails closed through guard_decision.
+    if args.len() == 2 && args[1] == riff_lib::ai::AI_BASH_GUARD_FLAG {
+        let mut input = String::new();
+        let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input);
+        std::process::exit(match riff_lib::ai::guard_decision(&input) {
+            Ok(()) => 0,
+            Err(reason) => {
+                eprintln!("{reason}");
+                2
+            }
+        });
+    }
     riff_lib::run()
 }

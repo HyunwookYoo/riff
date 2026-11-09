@@ -1,7 +1,11 @@
 //! Claude Code CLI runs for PR analysis. The run is read-only toward the
 //! repo by CLI flags, not by prompt wording: only Bash is available, only
 //! read-only git subcommands are pre-approved, `dontAsk` denies everything
-//! else, and `--strict-mcp-config` loads agentmemory alone.
+//! else, and `--strict-mcp-config` loads agentmemory alone. The allow/deny
+//! lists can't stop the CLI's own auto-approval of commands like `cat`, or
+//! allow rules in the user's settings, so a PreToolUse hook (riff.exe in
+//! `AI_BASH_GUARD_FLAG` mode, `guard_allows`) hard-denies every other Bash
+//! command; the lists stay as defense in depth.
 
 use serde_json::{json, Value};
 use std::ffi::OsStr;
@@ -85,7 +89,14 @@ pub fn agentmemory_mcp_config(claude_json: &Value) -> Value {
     }
 }
 
-pub fn claude_args(schema_json: &str, mcp_config_path: &Path, model: Option<&str>) -> Vec<String> {
+/// `guard_exe` is riff's own executable, run as the Bash PreToolUse hook in
+/// `AI_BASH_GUARD_FLAG` mode (see `guard_decision`).
+pub fn claude_args(
+    schema_json: &str,
+    mcp_config_path: &Path,
+    guard_exe: &Path,
+    model: Option<&str>,
+) -> Vec<String> {
     let mut args: Vec<String> = [
         "-p",
         "--output-format",
@@ -115,11 +126,122 @@ pub fn claude_args(schema_json: &str, mcp_config_path: &Path, model: Option<&str
         .map(|s| s.to_string()),
     );
     args.push(mcp_config_path.to_string_lossy().into_owned());
+    let guard = format!("\"{}\" {AI_BASH_GUARD_FLAG}", guard_exe.display());
+    let settings = json!({ "hooks": { "PreToolUse": [{
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": guard }]
+    }]}});
+    args.push("--settings".into());
+    args.push(settings.to_string());
     if let Some(m) = model {
         args.push("--model".into());
         args.push(m.into());
     }
     args
+}
+
+/// argv[1] that makes riff.exe act as the Bash PreToolUse hook (handled in
+/// main.rs before Tauri starts).
+pub const AI_BASH_GUARD_FLAG: &str = "--ai-bash-guard";
+
+/// Words of `command` as bash would split them, or None when bash could
+/// expand something (unquoted `\ $ { } * ? [`, or `\ $` in double quotes)
+/// or a quote is unterminated: expansion could produce words the guard
+/// never saw (`${IFS}--output=x`, `\-\-output`, `{--output=x,}`).
+fn shell_words(command: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut quote: Option<char> = None;
+    for c in command.chars() {
+        match quote {
+            Some('\'') if c == '\'' => quote = None,
+            Some('"') if c == '"' => quote = None,
+            Some('"') if matches!(c, '\\' | '$') => return None,
+            Some(_) => word.get_or_insert_with(String::new).push(c),
+            None if c.is_whitespace() => words.extend(word.take()),
+            None if c == '\'' || c == '"' => {
+                quote = Some(c);
+                word.get_or_insert_with(String::new);
+            }
+            None if matches!(c, '\\' | '$' | '{' | '}' | '*' | '?' | '[') => return None,
+            None => word.get_or_insert_with(String::new).push(c),
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    words.extend(word);
+    Some(words)
+}
+
+/// Whether the AI's Bash call is one read-only git command: `git <sub>` with
+/// an allowed subcommand right after `git` (so no `-c`/`-C`/`--git-dir`), no
+/// shell operators, and no option that writes a file or runs a program.
+/// Long options also match by prefix both ways, because git accepts
+/// abbreviations (`--out=x` is `--output=x`).
+pub fn guard_allows(command: &str) -> bool {
+    const SUBCOMMANDS: &[&str] = &[
+        "show",
+        "grep",
+        "log",
+        "ls-tree",
+        "cat-file",
+        "merge-base",
+        "rev-parse",
+    ];
+    const OPERATORS: &[&str] = &[";", "&", "|", ">", "<", "`", "$(", "\n", "\r"];
+    const UNSAFE_LONG: &[&str] = &["output", "ext-diff", "textconv", "open-files-in-pager"];
+    if OPERATORS.iter().any(|op| command.contains(op)) {
+        return false;
+    }
+    let Some(words) = shell_words(command) else {
+        return false;
+    };
+    let [git, sub, rest @ ..] = words.as_slice() else {
+        return false;
+    };
+    if git != "git" || !SUBCOMMANDS.contains(&sub.as_str()) {
+        return false;
+    }
+    rest.iter().all(|w| {
+        if let Some(long) = w.strip_prefix("--") {
+            let name = long.split('=').next().unwrap_or_default();
+            name.is_empty()
+                || !UNSAFE_LONG
+                    .iter()
+                    .any(|u| u.starts_with(name) || name.starts_with(u))
+        } else if let Some(short) = w.strip_prefix('-') {
+            // `-O<cmd>` opens matches in a pager command; grep bundles short
+            // flags (`-nO`).
+            !(short.starts_with('O') || (sub == "grep" && short.contains('O')))
+        } else {
+            true
+        }
+    })
+}
+
+/// The `AI_BASH_GUARD_FLAG` hook on its PreToolUse stdin JSON: Err (exit 2,
+/// the reason goes to the model) blocks the call. Other tools pass; `--tools`
+/// already limits them. Input it can't read is blocked.
+pub fn guard_decision(hook_json: &str) -> Result<(), String> {
+    let v: Value = serde_json::from_str(hook_json)
+        .map_err(|e| format!("riff AI guard: unreadable hook input: {e}"))?;
+    if v.get("tool_name").and_then(Value::as_str) != Some("Bash") {
+        return Ok(());
+    }
+    let command = v
+        .pointer("/tool_input/command")
+        .and_then(Value::as_str)
+        .ok_or("riff AI guard: no Bash command in hook input")?;
+    if guard_allows(command) {
+        return Ok(());
+    }
+    Err(format!(
+        "Blocked by riff: run exactly one read-only git command per call \
+         (git show, grep, log, ls-tree, cat-file, merge-base or rev-parse) with no pipes, \
+         redirects, chaining, options before the subcommand, unquoted globs or $. \
+         Quote patterns with single quotes. Blocked: {command}"
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -221,9 +343,10 @@ pub fn run(
     let path_var = std::env::var_os("PATH");
     let program = resolve_claude(path_var.as_deref(), home_dir().as_deref(), &|p| p.is_file())
         .ok_or(AiError::NotInstalled)?;
+    let guard_exe = std::env::current_exe().map_err(|e| AiError::Failed(e.to_string()))?;
     let mcp_config = write_mcp_config()?;
     let mut cmd = Command::new(program);
-    cmd.args(claude_args(schema_json, &mcp_config.0, model))
+    cmd.args(claude_args(schema_json, &mcp_config.0, &guard_exe, model))
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -419,14 +542,117 @@ mod tests {
             "--strict-mcp-config",
             "--mcp-config",
             r"C:\tmp\riff-ai-mcp-1-0.json",
+            "--settings",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect();
-        assert_eq!(claude_args(schema, &cfg, None), base);
-        let mut with_model = base.clone();
-        with_model.extend(["--model".to_string(), "sonnet".to_string()]);
-        assert_eq!(claude_args(schema, &cfg, Some("sonnet")), with_model);
+        let exe = PathBuf::from(r"C:\Program Files\riff\riff.exe");
+        let settings = json!({"hooks": {"PreToolUse": [{
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": r#""C:\Program Files\riff\riff.exe" --ai-bash-guard"#}]
+        }]}});
+        let split = |args: Vec<String>| {
+            let at = base.len();
+            let parsed: Value = serde_json::from_str(&args[at]).unwrap();
+            (args[..at].to_vec(), parsed, args[at + 1..].to_vec())
+        };
+        assert_eq!(
+            split(claude_args(schema, &cfg, &exe, None)),
+            (base.clone(), settings.clone(), vec![])
+        );
+        assert_eq!(
+            split(claude_args(schema, &cfg, &exe, Some("sonnet"))),
+            (
+                base.clone(),
+                settings,
+                vec!["--model".into(), "sonnet".into()]
+            )
+        );
+    }
+
+    #[test]
+    fn guard_allows_single_read_only_git_commands() {
+        for ok in [
+            "git show abc:src/a.rs",
+            "git grep -n foo abc -- a.rs",
+            "git log --format=%s a..b",
+            r#"git grep -n "a b" 0123abc"#,
+            "git grep -n 'x' HEAD -- 'src/*.rs'",
+            "git ls-tree -r --name-only HEAD",
+            "git cat-file -p HEAD",
+            "git merge-base a b",
+            "git rev-parse HEAD",
+            "git log --oneline -5 --no-ext-diff",
+            "  git show HEAD  ",
+        ] {
+            assert!(guard_allows(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "   ",
+            "git",
+            "cat x",
+            "ls",
+            "npm install",
+            "git diff --output=x",
+            "git status",
+            "git -c core.pager=cat log",
+            "git -C .. log",
+            "git --git-dir=x log",
+            "git --work-tree=x show HEAD",
+            "git --exec-path=x log",
+            "git show x > f",
+            "git show x>f",
+            "git show x < f",
+            "git log | head",
+            "git grep -O foo",
+            "git grep -Ovim foo",
+            "git grep -nO foo",
+            "git grep --open-files-in-pager foo",
+            "git grep --open foo",
+            "git log --output=x",
+            "git log --out=x",
+            "git log -p --ext-diff",
+            "git show --textconv HEAD:a",
+            "git show x; rm y",
+            "git show x && rm y",
+            "git show x & rm y",
+            "git show x\nrm y",
+            "git show $(rm y)",
+            "git show `rm y`",
+            r#"git show HEAD "--out"'put=x'"#,
+            "git show HEAD ${IFS}--output=x",
+            r"git show HEAD \-\-output=x",
+            "git show {--output=x,HEAD}",
+            "git ls-tree HEAD src/*",
+            r#"git grep "unterminated"#,
+            "FOO=1 git show HEAD",
+            "/usr/bin/git show HEAD",
+            "git showx HEAD",
+        ] {
+            assert!(!guard_allows(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn guard_decision_blocks_only_bad_bash() {
+        let bash = |cmd: &str| {
+            json!({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": cmd}})
+                .to_string()
+        };
+        assert_eq!(guard_decision(&bash("git show HEAD:a.rs")), Ok(()));
+        let err = guard_decision(&bash("cat package.json")).unwrap_err();
+        assert!(err.contains("cat package.json"), "{err}");
+        assert_eq!(
+            guard_decision(
+                r#"{"tool_name":"mcp__agentmemory__memory_recall","tool_input":{"query":"x"}}"#
+            ),
+            Ok(())
+        );
+        // Fail closed on input the guard can't read.
+        assert!(guard_decision("not json").is_err());
+        assert!(guard_decision(r#"{"tool_name":"Bash","tool_input":{}}"#).is_err());
     }
 
     // Trimmed from a real `claude -p --output-format stream-json --verbose` run
