@@ -177,11 +177,125 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
     Some(words)
 }
 
+/// How many words the option `w` takes in `git <sub>` (1, or 2 with a
+/// separate value `next`), or None when it isn't on the allowlist. Only
+/// exact spellings pass: no abbreviations, no `=value` unless listed.
+fn option_words(sub: &str, w: &str, next: Option<&str>) -> Option<usize> {
+    let num = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    // `%G…` asks gpg to verify the signature; `%(…)` runs describe and the
+    // like. Signing programs are also disabled in `child_env`.
+    let format = |s: &str| !s.contains("%G") && !s.contains("%(");
+    let (flags, bundle): (&[&str], &str) = match sub {
+        "show" => (
+            &[
+                "--stat",
+                "--name-only",
+                "--name-status",
+                "-s",
+                "--no-patch",
+                "--oneline",
+                "--no-color",
+                "-M",
+            ],
+            "",
+        ),
+        "grep" => (
+            &["--line-number", "--ignore-case", "--word-regexp"],
+            "niwEFlchI",
+        ),
+        "log" => (
+            &[
+                "--oneline",
+                "--name-only",
+                "--name-status",
+                "--stat",
+                "-p",
+                "--follow",
+                "--no-merges",
+                "--first-parent",
+                "--reverse",
+            ],
+            "",
+        ),
+        "ls-tree" => (&["--name-only", "--full-tree"], "rltd"),
+        "cat-file" => (&["-t", "-s", "-p", "-e"], ""),
+        "merge-base" => (&["--is-ancestor", "--all"], ""),
+        "rev-parse" => (&["--verify", "--short"], ""),
+        _ => return None,
+    };
+    if flags.contains(&w) {
+        return Some(1);
+    }
+    if let Some(letters) = w.strip_prefix('-') {
+        if !bundle.is_empty() && !letters.is_empty() && letters.chars().all(|c| bundle.contains(c))
+        {
+            return Some(1);
+        }
+    }
+    if let Some((name, value)) = w.split_once('=') {
+        let ok = match (sub, name) {
+            ("show" | "log", "--format" | "--pretty") => format(value),
+            ("show", "--unified") | ("grep" | "log", "--max-count") | ("rev-parse", "--short") => {
+                num(value)
+            }
+            ("log", "--since" | "--until" | "--author" | "--grep") => !value.is_empty(),
+            _ => false,
+        };
+        if ok {
+            return Some(1);
+        }
+    }
+    let attached = |prefix: &str| w.strip_prefix(prefix);
+    let ok = match sub {
+        "show" => attached("-U").is_some_and(num),
+        "grep" => ["-A", "-B", "-C"]
+            .iter()
+            .any(|p| attached(p).is_some_and(num)),
+        "log" => {
+            attached("-n").is_some_and(num)
+                || attached("-").is_some_and(num)
+                || attached("-S").is_some_and(|v| !v.is_empty())
+                || attached("-G").is_some_and(|v| !v.is_empty())
+        }
+        _ => false,
+    };
+    if ok {
+        return Some(1);
+    }
+    match (sub, w) {
+        ("log", "-n") if next.is_some_and(num) => Some(2),
+        ("grep", "-e") if next.is_some() => Some(2),
+        _ => None,
+    }
+}
+
+/// A rev, path or `rev:path` word: repo-relative only. Absolute, drive,
+/// home, UNC (in any slash mix, which Windows git sends to SMB) and `..`
+/// paths are refused, as is pathspec magic `:(…)`; a rev range `a..b` is
+/// fine because its `..` touches no separator.
+fn positional_ok(w: &str) -> bool {
+    let path_ok = |p: &str| {
+        let b = p.as_bytes();
+        let drive = b.len() >= 3
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && matches!(b[2], b'/' | b'\\');
+        !(p.starts_with(['/', '\\', '~'])
+            || p.starts_with(":(")
+            || drive
+            || p == ".."
+            || ["//", "\\\\", "/\\", "\\/", "../", "/..", "\\..", "..\\"]
+                .iter()
+                .any(|s| p.contains(s)))
+    };
+    path_ok(w) && w.split_once(':').is_none_or(|(_, path)| path_ok(path))
+}
+
 /// Whether the AI's Bash call is one read-only git command: `git <sub>` with
 /// an allowed subcommand right after `git` (so no `-c`/`-C`/`--git-dir`), no
-/// shell operators, and no option that writes a file, runs a program or
-/// reads a file outside git objects. Long options also match by prefix both
-/// ways, because git accepts abbreviations (`--out=x` is `--output=x`).
+/// shell operators or expansions, only allowlisted options (`option_words`),
+/// and repo-relative positionals (`positional_ok`). grep's pattern (the
+/// first positional, or each `-e` value) is free text.
 pub fn guard_allows(command: &str) -> bool {
     const SUBCOMMANDS: &[&str] = &[
         "show",
@@ -193,21 +307,6 @@ pub fn guard_allows(command: &str) -> bool {
         "rev-parse",
     ];
     const OPERATORS: &[&str] = &[";", "&", "|", ">", "<", "`", "$(", "\n", "\r"];
-    const UNSAFE_LONG: &[&str] = &[
-        // write a file
-        "output",
-        // run a program (configured diff driver, filter, gpg)
-        "ext-diff",
-        "textconv",
-        "filters",
-        "show-signature",
-        "open-files-in-pager",
-        // read a file outside git objects
-        "file",
-        "no-index",
-        "untracked",
-        "resolve-git-dir",
-    ];
     if OPERATORS.iter().any(|op| command.contains(op)) {
         return false;
     }
@@ -217,28 +316,36 @@ pub fn guard_allows(command: &str) -> bool {
     let [git, sub, rest @ ..] = words.as_slice() else {
         return false;
     };
-    if git != "git" || !SUBCOMMANDS.contains(&sub.as_str()) {
+    let sub = sub.as_str();
+    if git != "git" || !SUBCOMMANDS.contains(&sub) {
         return false;
     }
-    rest.iter().all(|w| {
-        // UNC paths (`//host/x`) reach the network on Windows; `~` is home.
-        if w.starts_with("//") || w.starts_with("\\\\") || w.starts_with('~') {
+    let mut pattern_pending = sub == "grep" && !rest.iter().any(|w| w == "-e");
+    let mut after_dashdash = false;
+    let mut i = 0;
+    while i < rest.len() {
+        let w = rest[i].as_str();
+        if w == "--" && !after_dashdash && matches!(sub, "show" | "grep" | "log") {
+            after_dashdash = true;
+            i += 1;
+            continue;
+        }
+        if w.starts_with('-') {
+            let next = rest.get(i + 1).map(String::as_str);
+            match option_words(sub, w, next) {
+                Some(n) if !after_dashdash => i += n,
+                _ => return false,
+            }
+            continue;
+        }
+        if pattern_pending && !after_dashdash {
+            pattern_pending = false;
+        } else if !positional_ok(w) {
             return false;
         }
-        if let Some(long) = w.strip_prefix("--") {
-            let name = long.split('=').next().unwrap_or_default();
-            name.is_empty()
-                || !UNSAFE_LONG
-                    .iter()
-                    .any(|u| u.starts_with(name) || name.starts_with(u))
-        } else if let Some(short) = w.strip_prefix('-') {
-            // Short flags bundle (`-nO`, `-pOx`): `O` is grep's pager command
-            // and log/show's orderfile, `f` grep's pattern file.
-            !(short.contains('O') || short == "f" || (sub == "grep" && short.contains('f')))
-        } else {
-            true
-        }
-    })
+        i += 1;
+    }
+    true
 }
 
 /// The `AI_BASH_GUARD_FLAG` hook on its PreToolUse stdin JSON: Err (exit 2,
@@ -271,10 +378,20 @@ pub fn guard_decision(hook_json: &str) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "Blocked by riff: run exactly one read-only git command per call \
-         (git show, grep, log, ls-tree, cat-file, merge-base or rev-parse) with no pipes, \
-         redirects, chaining, options before the subcommand, unquoted globs or $. \
-         Quote patterns with single quotes. Blocked: {command}"
+        "Blocked by riff: run exactly one read-only git command per call, using only these \
+         options: \
+         git show [--stat --name-only --name-status -s --oneline --format=<f> -U<n> -M] <rev>[:<path>]; \
+         git grep [-n -i -w -E -F -l -c -h -I -A<n> -B<n> -C<n> --max-count=<n> -e <pattern>] \
+         <pattern> <rev> [-- <path>]; \
+         git log [--oneline --format=<f> -n <N> --stat --name-only -p --follow --since=<d> \
+         --author=<a> --grep=<re> -S<s> -G<re> --no-merges --first-parent --reverse] \
+         [<range>] [-- <path>]; \
+         git ls-tree [-r -l -t -d --name-only --full-tree] <rev> [<path>]; \
+         git cat-file -t|-s|-p|-e <object>; git merge-base [--is-ancestor --all] <a> <b>; \
+         git rev-parse [--verify --short] <rev>. \
+         Paths are repo-relative (no absolute, ~, .. or // paths); formats can't use %G or %(; \
+         no pipes, redirects, chaining, unquoted globs or $. Quote patterns with single quotes. \
+         Blocked: {command}"
     ))
 }
 
@@ -286,10 +403,10 @@ pub fn guard_decision(hook_json: &str) -> Result<(), String> {
 /// its exit code.
 fn verify_guard(exe: &Path, run_guard: &dyn Fn(&Path, &str) -> Option<i32>) -> Result<(), AiError> {
     let unavailable = || AiError::Failed("AI guard unavailable".into());
-    if exe
-        .to_string_lossy()
-        .contains(|c| matches!(c, '"' | '$' | '`'))
-    {
+    // Inside the hook's bash double quotes these expand, and a leading `\\`
+    // (UNC install) collapses to one backslash.
+    let path = exe.to_string_lossy();
+    if path.contains(['"', '$', '`']) || path.starts_with("\\\\") {
         return Err(unavailable());
     }
     let probe = json!({
@@ -303,7 +420,8 @@ fn verify_guard(exe: &Path, run_guard: &dyn Fn(&Path, &str) -> Option<i32>) -> R
     }
 }
 
-/// `exe --ai-bash-guard` with `input` on stdin; None if it can't be run.
+/// `exe --ai-bash-guard` with `input` on stdin; None if it can't be run or
+/// takes over 5 s.
 fn run_guard_exe(exe: &Path, input: &str) -> Option<i32> {
     let mut cmd = Command::new(exe);
     cmd.arg(AI_BASH_GUARD_FLAG)
@@ -320,15 +438,74 @@ fn run_guard_exe(exe: &Path, input: &str) -> Option<i32> {
     let mut stdin = child.stdin.take()?;
     let _ = stdin.write_all(input.as_bytes());
     drop(stdin);
-    child.wait().ok()?.code()
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().ok()? {
+            return status.code();
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// Variables a parent Claude Code session sets for its children; inherited,
-/// they would make the run a nested session. `CLAUDE_CODE_GIT_BASH_PATH` is
-/// user configuration (where Git Bash lives on Windows), not session state.
+/// they would make the run a nested session. Other `CLAUDE_CODE_*` are user
+/// configuration (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_GIT_BASH_PATH`, …)
+/// and stay.
 fn is_nested_session_var(key: &str) -> bool {
     let key = key.to_ascii_uppercase();
-    key == "CLAUDECODE" || (key.starts_with("CLAUDE_CODE_") && key != "CLAUDE_CODE_GIT_BASH_PATH")
+    matches!(
+        key.as_str(),
+        "CLAUDECODE" | "CLAUDE_CODE_ENTRYPOINT" | "CLAUDE_CODE_SSE_PORT"
+    ) || (key.starts_with("CLAUDE_CODE_") && key.contains("SESSION_ID"))
+}
+
+/// Env changes for the claude child, given riff's env: `Some` sets, `None`
+/// removes. Command-scope git config (`GIT_CONFIG_COUNT`, above repo and
+/// user config) disables what a read could still trigger: gpg (signature
+/// placeholders, `log.showSignature`), fsmonitor, and any transport (lazy
+/// fetch in a partial clone). Entries go after any the user already set.
+fn child_env(parent: &[(String, String)]) -> Vec<(String, Option<String>)> {
+    const GIT_CONFIG: &[(&str, &str)] = &[
+        ("gpg.program", "riff-gpg-disabled"),
+        ("gpg.ssh.program", "riff-gpg-disabled"),
+        ("gpg.x509.program", "riff-gpg-disabled"),
+        ("core.fsmonitor", "false"),
+        ("protocol.allow", "never"),
+    ];
+    let mut env: Vec<(String, Option<String>)> = parent
+        .iter()
+        .filter(|(k, _)| is_nested_session_var(k))
+        .map(|(k, _)| (k.clone(), None))
+        .collect();
+    let base: usize = parent
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("GIT_CONFIG_COUNT"))
+        .and_then(|(_, v)| v.trim().parse().ok())
+        .unwrap_or(0);
+    for (i, (key, value)) in GIT_CONFIG.iter().enumerate() {
+        env.push((
+            format!("GIT_CONFIG_KEY_{}", base + i),
+            Some(key.to_string()),
+        ));
+        env.push((
+            format!("GIT_CONFIG_VALUE_{}", base + i),
+            Some(value.to_string()),
+        ));
+    }
+    let set = |k: &str, v: String| (k.to_string(), Some(v));
+    env.extend([
+        set("GIT_CONFIG_COUNT", (base + GIT_CONFIG.len()).to_string()),
+        set("GIT_NO_LAZY_FETCH", "1".into()),
+        set("GIT_TERMINAL_PROMPT", "0".into()),
+        set("GIT_PAGER", "cat".into()),
+        ("GIT_EXTERNAL_DIFF".to_string(), None),
+    ]);
+    env
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -434,10 +611,15 @@ pub fn run(
     verify_guard(&guard_exe, &run_guard_exe)?;
     let mcp_config = write_mcp_config()?;
     let mut cmd = Command::new(program);
-    for (key, _) in std::env::vars_os() {
-        if key.to_str().is_some_and(is_nested_session_var) {
-            cmd.env_remove(key);
-        }
+    // `vars()` would panic on a non-Unicode variable; those can't be ours.
+    let parent: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
+        .collect();
+    for (key, value) in child_env(&parent) {
+        match value {
+            Some(v) => cmd.env(key, v),
+            None => cmd.env_remove(key),
+        };
     }
     cmd.args(claude_args(schema_json, &mcp_config.0, &guard_exe, model))
         .current_dir(cwd)
@@ -676,11 +858,34 @@ mod tests {
             "git cat-file -p HEAD",
             "git merge-base a b",
             "git rev-parse HEAD",
-            "git log --oneline -5 --no-ext-diff",
+            "git log --oneline -5",
             "git log --follow --first-parent --format=%s -- a.rs",
-            "git rev-parse --show-toplevel",
             "git grep -n -e foo HEAD",
             "  git show HEAD  ",
+            // Typical AI reads.
+            "git show abc123:src/a.rs",
+            r#"git grep -n -e "foo(" abc -- src"#,
+            "git log --oneline -n 20 a..b -- src/x.rs",
+            "git log --format=%h%x20%s a..b",
+            "git ls-tree -r --name-only abc",
+            "git cat-file -p abc",
+            "git rev-parse --short HEAD",
+            "git rev-parse --verify --short=12 HEAD",
+            "git show --stat --format=%H%n%an -U5 abc",
+            "git show -s --oneline --no-color -M abc",
+            "git show --unified=10 --name-status a...b",
+            "git grep -nIiw -A3 -B2 -C1 --max-count=5 foo HEAD -- src",
+            "git grep -e foo -e '-x' HEAD",
+            "git grep -lc --line-number --ignore-case --word-regexp foo HEAD",
+            "git log -p -n5 -3 --max-count=4 --stat --reverse --no-merges HEAD",
+            "git log --since=2.weeks --until=2026-01-01 --author=bob '--grep=fix this' HEAD",
+            "git log -Sneedle -G'a.*b' --name-only HEAD..",
+            "git ls-tree -rtd --full-tree HEAD src",
+            "git cat-file -t abc",
+            "git cat-file blob abc",
+            "git merge-base --is-ancestor a b",
+            "git merge-base --all a b",
+            "git grep -n '//host/x' HEAD",
         ] {
             assert!(guard_allows(ok), "{ok}");
         }
@@ -744,6 +949,43 @@ mod tests {
             r"git show HEAD -- '\\host\s'",
             "git show ~/x",
             "git show '~/x'",
+            // UNC spellings that reached SMB, gpg via placeholders, other paths.
+            r"git show HEAD -- '/\host\s'",
+            r"git grep foo HEAD -- '\/host/s'",
+            "git grep foo HEAD -- ':(literal)//host/s'",
+            "git log --format=%GG -1",
+            "git log --pretty=%GS",
+            "git log --format='%G?'",
+            "git log --format=%(describe)",
+            "git log --format",
+            "git show C:/x",
+            r"git show 'C:\x'",
+            "git show HEAD:C:/x",
+            "git show HEAD:/etc/passwd",
+            "git log -- ../x",
+            "git log -- a/../b",
+            r"git log -- 'a\..\b'",
+            "git log ..",
+            "git log -- /etc/passwd",
+            "git log --exec=x",
+            "git log --upload-pack=x",
+            "git log --no-ext-diff",
+            "git rev-parse --show-toplevel",
+            "git rev-parse --git-path x",
+            "git log -n x",
+            "git log -n",
+            "git show -U",
+            "git show -Ux",
+            "git grep -A foo HEAD",
+            "git grep -e",
+            "git log -S",
+            "git ls-tree -rx HEAD",
+            "git cat-file --batch",
+            "git cat-file -tp abc",
+            "git merge-base --octopus a b",
+            "git rev-parse -- x",
+            "git ls-tree HEAD -- src",
+            "git show HEAD -- --stat",
         ] {
             assert!(!guard_allows(bad), "{bad:?}");
         }
@@ -802,7 +1044,12 @@ mod tests {
             Some(2)
         })
         .unwrap();
-        for bad in [r#"C:\a"b\riff.exe"#, r"C:\$x\riff.exe", r"C:\`x`\riff.exe"] {
+        for bad in [
+            r#"C:\a"b\riff.exe"#,
+            r"C:\$x\riff.exe",
+            r"C:\`x`\riff.exe",
+            r"\\server\share\riff.exe",
+        ] {
             assert!(
                 verify_guard(Path::new(bad), &exits(Some(2))).is_err(),
                 "{bad}"
@@ -815,19 +1062,72 @@ mod tests {
         for k in [
             "CLAUDECODE",
             "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_SSE_PORT",
             "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_PARENT_SESSION_ID_X",
             "claudecode",
         ] {
             assert!(is_nested_session_var(k), "{k}");
         }
         for k in [
             "CLAUDE_CODE_GIT_BASH_PATH",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CODE_USE_POWERSHELL_TOOL",
             "PATH",
             "ANTHROPIC_API_KEY",
             "CLAUDE_CONFIG_DIR",
         ] {
             assert!(!is_nested_session_var(k), "{k}");
         }
+    }
+
+    #[test]
+    fn child_env_neutralizes_git_config_and_drops_session_vars() {
+        let set = |k: &str, v: &str| (k.to_string(), Some(v.to_string()));
+        let unset = |k: &str| (k.to_string(), None);
+        let parent = |vars: &[(&str, &str)]| -> Vec<(String, String)> {
+            vars.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let env = child_env(&parent(&[
+            ("PATH", "C:\\bin"),
+            ("CLAUDECODE", "1"),
+            ("CLAUDE_CODE_SESSION_ID", "s"),
+            ("CLAUDE_CODE_USE_BEDROCK", "1"),
+        ]));
+        let mut want = vec![unset("CLAUDECODE"), unset("CLAUDE_CODE_SESSION_ID")];
+        for (i, (k, v)) in [
+            ("gpg.program", "riff-gpg-disabled"),
+            ("gpg.ssh.program", "riff-gpg-disabled"),
+            ("gpg.x509.program", "riff-gpg-disabled"),
+            ("core.fsmonitor", "false"),
+            ("protocol.allow", "never"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            want.push(set(&format!("GIT_CONFIG_KEY_{i}"), k));
+            want.push(set(&format!("GIT_CONFIG_VALUE_{i}"), v));
+        }
+        want.extend([
+            set("GIT_CONFIG_COUNT", "5"),
+            set("GIT_NO_LAZY_FETCH", "1"),
+            set("GIT_TERMINAL_PROMPT", "0"),
+            set("GIT_PAGER", "cat"),
+            unset("GIT_EXTERNAL_DIFF"),
+        ]);
+        assert_eq!(env, want);
+
+        // The user's own GIT_CONFIG_* entries stay; riff's follow them.
+        let env = child_env(&parent(&[("GIT_CONFIG_COUNT", "2")]));
+        assert!(env.contains(&set("GIT_CONFIG_KEY_2", "gpg.program")));
+        assert!(env.contains(&set("GIT_CONFIG_KEY_6", "protocol.allow")));
+        assert!(env.contains(&set("GIT_CONFIG_COUNT", "7")));
+        assert!(!env
+            .iter()
+            .any(|(k, _)| k == "GIT_CONFIG_KEY_0" || k == "GIT_CONFIG_KEY_1"));
     }
 
     // Trimmed from a real `claude -p --output-format stream-json --verbose` run
