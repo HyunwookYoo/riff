@@ -114,6 +114,10 @@ const PROBES = [
   { cmd: "git grep foo HEAD -- '\\/host/s'", mustDeny: true },
   { cmd: "git grep foo HEAD -- ':(literal)//host/s'", mustDeny: true },
   { cmd: "git log --format=%GG -1", mustDeny: true },
+  { cmd: "git log --format=%+GG -1", mustDeny: true },
+  // git skips the colon inside ^{...}, then stats a real filesystem path.
+  { cmd: "git show 'HEAD^{/:}:C:/Windows/win.ini'", mustDeny: true },
+  { cmd: "git log -- 'Q:x'", mustDeny: true },
   { cmd: "git show HEAD:package.json", mustSucceed: true },
   { cmd: "git grep -n riff HEAD -- package.json", mustSucceed: true },
   {
@@ -190,7 +194,9 @@ function toolCalls(stdout) {
 // with child_env's git settings.
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
-    ([k]) => !/^CLAUDE(CODE|_CODE_|_PID$|_SHELL$|_EFFORT$)/.test(k) && k !== "GIT_EXTERNAL_DIFF",
+    ([k]) => !/^CLAUDE(CODE|_CODE_|_PID$|_SHELL$|_EFFORT$)/.test(k) &&
+      k !== "GIT_EXTERNAL_DIFF" &&
+      k !== "GIT_CONFIG_PARAMETERS",
   ),
 );
 {
@@ -201,6 +207,7 @@ const env = Object.fromEntries(
     ["gpg.x509.program", "riff-gpg-disabled"],
     ["core.fsmonitor", "false"],
     ["protocol.allow", "never"],
+    ["core.attributesFile", "riff-no-attributes"],
   ];
   config.forEach(([k, v], i) => {
     env[`GIT_CONFIG_KEY_${base + i}`] = k;
@@ -211,6 +218,8 @@ const env = Object.fromEntries(
     GIT_NO_LAZY_FETCH: "1",
     GIT_TERMINAL_PROMPT: "0",
     GIT_PAGER: "cat",
+    GIT_ATTR_SOURCE: "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+    GIT_ATTR_NOSYSTEM: "1",
   });
 }
 

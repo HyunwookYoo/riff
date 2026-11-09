@@ -150,8 +150,16 @@ pub const AI_BASH_GUARD_FLAG: &str = "--ai-bash-guard";
 /// Words of `command` as bash would split them, or None when bash could
 /// expand something (unquoted `\ $ { } * ? [`, or `\ $` in double quotes)
 /// or a quote is unterminated: expansion could produce words the guard
-/// never saw (`${IFS}--output=x`, `\-\-output`, `{--output=x,}`).
+/// never saw (`${IFS}--output=x`, `\-\-output`, `{--output=x,}`). Words
+/// split on space and tab only, as bash does; any other whitespace (NBSP,
+/// VT, FF, …) is refused because the guard and bash would disagree on it.
 fn shell_words(command: &str) -> Option<Vec<String>> {
+    if command
+        .chars()
+        .any(|c| c.is_whitespace() && c != ' ' && c != '\t')
+    {
+        return None;
+    }
     let mut words = Vec::new();
     let mut word: Option<String> = None;
     let mut quote: Option<char> = None;
@@ -161,7 +169,7 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
             Some('"') if c == '"' => quote = None,
             Some('"') if matches!(c, '\\' | '$') => return None,
             Some(_) => word.get_or_insert_with(String::new).push(c),
-            None if c.is_whitespace() => words.extend(word.take()),
+            None if c == ' ' || c == '\t' => words.extend(word.take()),
             None if c == '\'' || c == '"' => {
                 quote = Some(c);
                 word.get_or_insert_with(String::new);
@@ -183,8 +191,15 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
 fn option_words(sub: &str, w: &str, next: Option<&str>) -> Option<usize> {
     let num = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     // `%G…` asks gpg to verify the signature; `%(…)` runs describe and the
-    // like. Signing programs are also disabled in `child_env`.
-    let format = |s: &str| !s.contains("%G") && !s.contains("%(");
+    // like; either may carry a `+`/`-`/` ` line flag after the `%`. Signing
+    // programs are also disabled in `child_env`.
+    let format = |s: &str| {
+        !s.match_indices('%').any(|(i, _)| {
+            let rest = &s[i + 1..];
+            let rest = rest.strip_prefix(['+', '-', ' ']).unwrap_or(rest);
+            rest.starts_with(['G', '('])
+        })
+    };
     let (flags, bundle): (&[&str], &str) = match sub {
         "show" => (
             &[
@@ -269,17 +284,20 @@ fn option_words(sub: &str, w: &str, next: Option<&str>) -> Option<usize> {
     }
 }
 
-/// A rev, path or `rev:path` word: repo-relative only. Absolute, drive,
+/// A rev, path or `rev:path` word: repo-relative only. Absolute, drive
+/// (`C:/x`, and drive-relative `C:x`, which git also treats as absolute),
 /// home, UNC (in any slash mix, which Windows git sends to SMB) and `..`
 /// paths are refused, as is pathspec magic `:(…)`; a rev range `a..b` is
-/// fine because its `..` touches no separator.
+/// fine because its `..` touches no separator. `{`/`}` are refused outright:
+/// git skips colons inside `^{…}`/`@{…}`, so its `rev:path` split would
+/// differ from the one checked here.
 fn positional_ok(w: &str) -> bool {
+    if w.contains(['{', '}']) {
+        return false;
+    }
     let path_ok = |p: &str| {
         let b = p.as_bytes();
-        let drive = b.len() >= 3
-            && b[0].is_ascii_alphabetic()
-            && b[1] == b':'
-            && matches!(b[2], b'/' | b'\\');
+        let drive = b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':';
         !(p.starts_with(['/', '\\', '~'])
             || p.starts_with(":(")
             || drive
@@ -389,7 +407,8 @@ pub fn guard_decision(hook_json: &str) -> Result<(), String> {
          git ls-tree [-r -l -t -d --name-only --full-tree] <rev> [<path>]; \
          git cat-file -t|-s|-p|-e <object>; git merge-base [--is-ancestor --all] <a> <b>; \
          git rev-parse [--verify --short] <rev>. \
-         Paths are repo-relative (no absolute, ~, .. or // paths); formats can't use %G or %(; \
+         Paths are repo-relative (no absolute, drive, ~, .. or // paths); revs are names or \
+         SHAs (no ^{{...}} or @{{...}}); formats can't use %G or %(; \
          no pipes, redirects, chaining, unquoted globs or $. Quote patterns with single quotes. \
          Blocked: {command}"
     ))
@@ -468,14 +487,20 @@ fn is_nested_session_var(key: &str) -> bool {
 /// removes. Command-scope git config (`GIT_CONFIG_COUNT`, above repo and
 /// user config) disables what a read could still trigger: gpg (signature
 /// placeholders, `log.showSignature`), fsmonitor, and any transport (lazy
-/// fetch in a partial clone). Entries go after any the user already set.
+/// fetch in a partial clone). Entries go after any the user already set;
+/// `GIT_CONFIG_PARAMETERS` (a parent's `git -c`) would override them, so it
+/// goes. Attributes come from the empty tree only (no working-tree,
+/// system or global `.gitattributes`), so no textconv or filter driver is
+/// ever selected.
 fn child_env(parent: &[(String, String)]) -> Vec<(String, Option<String>)> {
+    const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
     const GIT_CONFIG: &[(&str, &str)] = &[
         ("gpg.program", "riff-gpg-disabled"),
         ("gpg.ssh.program", "riff-gpg-disabled"),
         ("gpg.x509.program", "riff-gpg-disabled"),
         ("core.fsmonitor", "false"),
         ("protocol.allow", "never"),
+        ("core.attributesFile", "riff-no-attributes"),
     ];
     let mut env: Vec<(String, Option<String>)> = parent
         .iter()
@@ -503,7 +528,10 @@ fn child_env(parent: &[(String, String)]) -> Vec<(String, Option<String>)> {
         set("GIT_NO_LAZY_FETCH", "1".into()),
         set("GIT_TERMINAL_PROMPT", "0".into()),
         set("GIT_PAGER", "cat".into()),
+        set("GIT_ATTR_SOURCE", EMPTY_TREE.into()),
+        set("GIT_ATTR_NOSYSTEM", "1".into()),
         ("GIT_EXTERNAL_DIFF".to_string(), None),
+        ("GIT_CONFIG_PARAMETERS".to_string(), None),
     ]);
     env
 }
@@ -886,6 +914,8 @@ mod tests {
             "git merge-base --is-ancestor a b",
             "git merge-base --all a b",
             "git grep -n '//host/x' HEAD",
+            "git log\t--oneline\tHEAD",
+            "git log --format='%h %s' -1",
         ] {
             assert!(guard_allows(ok), "{ok}");
         }
@@ -986,6 +1016,27 @@ mod tests {
             "git rev-parse -- x",
             "git ls-tree HEAD -- src",
             "git show HEAD -- --stat",
+            // P2-R7: format flag variants, whitespace bash doesn't split on,
+            // {} rev syntax (git skips colons inside it), drive-relative paths.
+            "git log --format=%+GG -1",
+            "git log --format=%-GG -1",
+            "git log '--format=% GG' -1",
+            "git log '--format=%+G?' -1",
+            "git log --format=%+(describe) -1",
+            "git log --pretty=%-(describe) -1",
+            "git log --format=%s\u{a0}%GG -1",
+            "git log --format=%s\u{a0}x -1",
+            "git show HEAD\u{b}x",
+            "git show HEAD\u{c}x",
+            "git show HEAD\u{3000}x",
+            "git show 'HEAD^{/:}:C:/x'",
+            "git show 'HEAD^{/:}:/Windows'",
+            "git show 'HEAD@{1}'",
+            "git show 'abc^{tree}'",
+            "git log -- 'Q:x'",
+            "git log -- 'C:Windows'",
+            "git show 'abc:C:x'",
+            "git show Q:",
         ] {
             assert!(!guard_allows(bad), "{bad:?}");
         }
@@ -1104,6 +1155,7 @@ mod tests {
             ("gpg.x509.program", "riff-gpg-disabled"),
             ("core.fsmonitor", "false"),
             ("protocol.allow", "never"),
+            ("core.attributesFile", "riff-no-attributes"),
         ]
         .into_iter()
         .enumerate()
@@ -1112,11 +1164,17 @@ mod tests {
             want.push(set(&format!("GIT_CONFIG_VALUE_{i}"), v));
         }
         want.extend([
-            set("GIT_CONFIG_COUNT", "5"),
+            set("GIT_CONFIG_COUNT", "6"),
             set("GIT_NO_LAZY_FETCH", "1"),
             set("GIT_TERMINAL_PROMPT", "0"),
             set("GIT_PAGER", "cat"),
+            set(
+                "GIT_ATTR_SOURCE",
+                "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            ),
+            set("GIT_ATTR_NOSYSTEM", "1"),
             unset("GIT_EXTERNAL_DIFF"),
+            unset("GIT_CONFIG_PARAMETERS"),
         ]);
         assert_eq!(env, want);
 
@@ -1124,7 +1182,8 @@ mod tests {
         let env = child_env(&parent(&[("GIT_CONFIG_COUNT", "2")]));
         assert!(env.contains(&set("GIT_CONFIG_KEY_2", "gpg.program")));
         assert!(env.contains(&set("GIT_CONFIG_KEY_6", "protocol.allow")));
-        assert!(env.contains(&set("GIT_CONFIG_COUNT", "7")));
+        assert!(env.contains(&set("GIT_CONFIG_KEY_7", "core.attributesFile")));
+        assert!(env.contains(&set("GIT_CONFIG_COUNT", "8")));
         assert!(!env
             .iter()
             .any(|(k, _)| k == "GIT_CONFIG_KEY_0" || k == "GIT_CONFIG_KEY_1"));
