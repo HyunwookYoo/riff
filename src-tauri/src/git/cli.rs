@@ -2350,6 +2350,42 @@ impl GitLayer for GitCli {
         Ok(PrHunks { merge_base, files: parse_hunks(&String::from_utf8_lossy(&out)) })
     }
 
+    fn pr_diff_text(&self, path: &Path, merge_base: &str, head: &str) -> Result<String, GitError> {
+        let merge_base = validate_ref(merge_base)?;
+        let head = validate_ref(head)?;
+        let out = self.run(
+            path,
+            &[
+                "-c",
+                "core.quotePath=false",
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "-M",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                merge_base,
+                head,
+            ],
+        )?;
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    }
+
+    fn pr_commit_subjects(
+        &self,
+        path: &Path,
+        merge_base: &str,
+        head: &str,
+    ) -> Result<Vec<String>, GitError> {
+        let merge_base = validate_ref(merge_base)?;
+        let head = validate_ref(head)?;
+        let out = self.run(
+            path,
+            &["log", "--no-color", "--format=%s", &format!("{merge_base}..{head}")],
+        )?;
+        Ok(String::from_utf8_lossy(&out).lines().map(str::to_string).collect())
+    }
+
     fn pr_changed_files(
         &self,
         path: &Path,
@@ -3721,6 +3757,35 @@ new3
         let new_head = rev_parse(&repo, "topic2");
         let got = GitCli::new().pr_changed_files(&repo, "main", &old_head, &new_head).unwrap();
         assert_eq!(got, vec!["c.txt".to_string()]);
+    }
+
+    #[test]
+    fn pr_diff_text_matches_git_diff() {
+        let repo = pr_fixture("pr-diff-text");
+        let mb = rev_parse(&repo, "main");
+        let head = rev_parse(&repo, "topic");
+        let got = GitCli::new().pr_diff_text(&repo, &mb, &head).unwrap();
+        let out = git_command()
+            .arg("-C")
+            .arg(&repo)
+            .args(["diff", "--no-color", "-M", &mb, &head])
+            .output()
+            .unwrap();
+        assert_eq!(got, String::from_utf8_lossy(&out.stdout));
+        assert!(got.contains("+LINE10"), "{got}");
+        assert!(GitCli::new().pr_diff_text(&repo, "--output=x", &head).is_err());
+    }
+
+    #[test]
+    fn pr_commit_subjects_lists_range() {
+        let repo = pr_fixture("pr-subjects");
+        let mb = rev_parse(&repo, "main");
+        git_in(&repo, &["checkout", "-q", "topic"]);
+        commit_file(&repo, "b.txt", "changed\n", "edit b");
+        let head = rev_parse(&repo, "topic");
+        let got = GitCli::new().pr_commit_subjects(&repo, &mb, &head).unwrap();
+        assert_eq!(got, vec!["edit b".to_string(), "edit a".to_string()]);
+        assert!(GitCli::new().pr_commit_subjects(&repo, &mb, "-n1").is_err());
     }
 
     #[test]

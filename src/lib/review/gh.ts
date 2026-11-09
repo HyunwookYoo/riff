@@ -20,6 +20,16 @@ export function prHunks(path: string, base: string, head: string): Promise<PrHun
   return invoke("pr_hunks", { path, base, head });
 }
 
+/** `git diff <mergeBase> <head>` with renames detected. */
+export function prDiffText(path: string, mergeBase: string, head: string): Promise<string> {
+  return invoke("pr_diff_text", { path, mergeBase, head });
+}
+
+/** Commit subjects of `mergeBase..head`, newest first. */
+export function prCommitSubjects(path: string, mergeBase: string, head: string): Promise<string[]> {
+  return invoke("pr_commit_subjects", { path, mergeBase, head });
+}
+
 export function prChangedFiles(
   path: string,
   base: string,

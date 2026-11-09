@@ -688,6 +688,15 @@ pub trait GitLayer {
     /// Per-file hunks of `base...head` (what the PR changes), renames detected,
     /// with the merge-base the old side (and GitHub's LEFT lines) refers to.
     fn pr_hunks(&self, path: &Path, base: &str, head: &str) -> Result<PrHunks, GitError>;
+    /// The unified diff `merge_base..head` (renames detected), as the AI review reads it.
+    fn pr_diff_text(&self, path: &Path, merge_base: &str, head: &str) -> Result<String, GitError>;
+    /// Subjects of the commits in `merge_base..head`, newest first.
+    fn pr_commit_subjects(
+        &self,
+        path: &Path,
+        merge_base: &str,
+        head: &str,
+    ) -> Result<Vec<String>, GitError>;
     /// Files whose PR patch differs between `old_head` and `new_head`, ignoring
     /// changes that only come from rebasing onto a moved base. Sorted.
     fn pr_changed_files(

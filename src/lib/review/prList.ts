@@ -1,3 +1,4 @@
+import { isAiKey } from "./ai/aiStore";
 import { ghStatus, gitRemotes } from "./gh";
 import { searchPrs, viewerLogin, type SearchRepo } from "./github";
 import { parseRemote } from "./remote";
@@ -139,7 +140,7 @@ export function keysToDelete(
 ): string[] {
   const ready = new Set(hosts.filter((h) => h.status === "ready").map((h) => h.host));
   return keys.filter((k) => {
-    if (listed.has(k)) return false;
+    if (isAiKey(k) || listed.has(k)) return false;
     if (!ready.has(k.slice(0, k.indexOf("/")))) return false;
     const r = records.get(k);
     return !!r && r.items.length === 0 && r.body.trim() === "";

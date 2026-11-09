@@ -1,5 +1,6 @@
 import { appState } from "../store.svelte";
 import { readFileAt } from "../git";
+import { isAiKey } from "./ai/aiStore";
 import { reanchorAll } from "./draft";
 import { loadRecord, saveRecord } from "./draftStore";
 import { deleteReview, fetchPr, listReviews, markPrSeen, prChangedFiles, prHunks } from "./gh";
@@ -244,7 +245,7 @@ export function startAutoRefresh(): () => void {
 
 /** Deletes stored records for unlisted PRs that hold no draft, on ready hosts only. */
 export async function cleanupRecords(): Promise<void> {
-  const keys = await listReviews();
+  const keys = (await listReviews()).filter((k) => !isAiKey(k));
   const records = new Map<string, PrRecord | null>();
   for (const key of keys) {
     try {

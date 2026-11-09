@@ -167,6 +167,10 @@ describe("keysToDelete", () => {
     const m = new Map([[a, rec(a, " hi ")], [b, rec(b, "", 1)], [c, rec(c)], [d, null]]);
     expect(keysToDelete([a, b, c, d], m, new Set([c]), ready)).toEqual([]);
   });
+  it("never deletes AI result keys", () => {
+    const k = "github.com/o/a#1@ai";
+    expect(keysToDelete([k], new Map([[k, rec(k)]]), new Set(), ready)).toEqual([]);
+  });
   it("keeps records of a host that is not ready", () => {
     const k = "ghe.corp/o/a#1";
     const hosts: HostState[] = [...ready, { host: "ghe.corp", status: "notloggedin", message: "x" }];

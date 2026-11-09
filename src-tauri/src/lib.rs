@@ -581,6 +581,26 @@ async fn pr_hunks(
 }
 
 #[tauri::command]
+async fn pr_diff_text(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    merge_base: String,
+    head: String,
+) -> Result<String, GitError> {
+    state.pr_diff_text(Path::new(&path), &merge_base, &head)
+}
+
+#[tauri::command]
+async fn pr_commit_subjects(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    merge_base: String,
+    head: String,
+) -> Result<Vec<String>, GitError> {
+    state.pr_commit_subjects(Path::new(&path), &merge_base, &head)
+}
+
+#[tauri::command]
 async fn pr_changed_files(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -883,6 +903,8 @@ pub fn run() {
             ai_run,
             cancel_ai_run,
             pr_hunks,
+            pr_diff_text,
+            pr_commit_subjects,
             pr_changed_files,
             mark_pr_seen,
             read_file_at,
