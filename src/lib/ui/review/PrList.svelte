@@ -5,6 +5,9 @@
   import { listReviews } from "$lib/review/gh";
   import { loadRecord } from "$lib/review/draftStore";
   import type { PrKey, PrSummary } from "$lib/review/types";
+  import { aiState, loadResultFor } from "$lib/review/ai/aiState.svelte";
+  import { aiBadge, aiErrorText } from "$lib/review/ai/badge";
+  import AiButton from "./AiButton.svelte";
   import SignInDialog from "./SignInDialog.svelte";
 
   const requested = $derived(reviewState.prs.filter((p) => p.section === "requested"));
@@ -68,6 +71,20 @@
     return m === 0 ? "updated just now" : `updated ${m} min ago`;
   });
 
+  // Results load lazily for every listed PR.
+  $effect(() => {
+    for (const p of reviewState.prs) void loadResultFor(p.key);
+  });
+  // Tick each second only while a job runs, so "analysing m:ss" advances.
+  let aiNow = $state(Date.now());
+  const anyRunning = $derived(Object.values(aiState.jobs).some((j) => j.kind === "running"));
+  $effect(() => {
+    if (!anyRunning) return;
+    aiNow = Date.now();
+    const id = setInterval(() => (aiNow = Date.now()), 1000);
+    return () => clearInterval(id);
+  });
+
   const newCommits = (p: PrSummary) =>
     p.section === "reviewed" && p.myLastReviewSha !== p.headSha;
   const copy = (text: string) => void navigator.clipboard.writeText(text);
@@ -76,32 +93,41 @@
 {#snippet section(title: string, prs: PrSummary[])}
   <div class="section-head">{title} <span class="count">{prs.length}</span></div>
   {#each prs as p (p.key)}
-    <button
-      type="button"
-      class="row"
-      class:selected={reviewState.selectedKey === p.key}
-      onclick={() => void openPr(p.key)}
-    >
-      <div class="title">
-        <span class="num">#{p.number}</span>
-        {p.title}
-      </div>
-      <div class="meta">
-        {p.author} · {p.repo.owner}/{p.repo.name} ·
-        <span class="add">+{p.additions}</span>
-        <span class="del">−{p.deletions}</span>
-      </div>
-      {#if draftCounts[p.key] || newCommits(p)}
-        <div class="badges">
-          {#if draftCounts[p.key]}
-            <span class="badge">draft {draftCounts[p.key]}</span>
-          {/if}
-          {#if newCommits(p)}
-            <span class="badge warn">new commits</span>
-          {/if}
+    {@const badge = aiBadge(aiState.jobs[p.key], aiState.results[p.key], p.headSha, aiNow)}
+    <div class="row" class:selected={reviewState.selectedKey === p.key}>
+      <button type="button" class="row-main" onclick={() => void openPr(p.key)}>
+        <div class="title">
+          <span class="num">#{p.number}</span>
+          {p.title}
         </div>
-      {/if}
-    </button>
+        <div class="meta">
+          {p.author} · {p.repo.owner}/{p.repo.name} ·
+          <span class="add">+{p.additions}</span>
+          <span class="del">−{p.deletions}</span>
+        </div>
+        {#if draftCounts[p.key] || newCommits(p)}
+          <div class="badges">
+            {#if draftCounts[p.key]}
+              <span class="badge">draft {draftCounts[p.key]}</span>
+            {/if}
+            {#if newCommits(p)}
+              <span class="badge warn">new commits</span>
+            {/if}
+          </div>
+        {/if}
+      </button>
+      <div class="ai-row">
+        <AiButton pr={p} />
+        {#if badge.kind !== "none"}
+          {@const job = aiState.jobs[p.key]}
+          <span
+            class="badge"
+            class:warn={badge.kind === "stale" || badge.kind === "failed"}
+            title={job?.kind === "failed" ? aiErrorText(job.message) : undefined}>{badge.text}</span
+          >
+        {/if}
+      </div>
+    </div>
   {/each}
 {/snippet}
 
@@ -179,15 +205,23 @@
     font-weight: 400;
   }
   .row {
+    border-bottom: 1px solid var(--border);
+  }
+  .row-main {
     display: block;
     width: 100%;
     text-align: left;
-    padding: 6px 8px;
+    padding: 6px 8px 2px;
     border: none;
-    border-bottom: 1px solid var(--border);
     border-radius: 0;
     background: transparent;
     cursor: pointer;
+  }
+  .ai-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px 6px;
   }
   .row:hover {
     background: var(--hover);

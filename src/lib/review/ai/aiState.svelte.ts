@@ -11,6 +11,7 @@ import { aiRun } from "./run";
 import type { AiJobState, AiResult } from "./types";
 
 export { isStale } from "./aiStore";
+export { aiBadge, aiErrorText } from "./badge";
 
 class AiState {
   queue = $state<Queue>(emptyQueue());
