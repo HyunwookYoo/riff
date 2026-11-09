@@ -423,8 +423,8 @@ pub fn guard_decision(hook_json: &str) -> Result<(), String> {
 /// exit other than 0/2 as non-blocking, so a guard that can't run would
 /// silently allow everything; `|| exit 2` in the hook command covers a
 /// crash, this covers a path the hook command can't quote and a guard that
-/// doesn't block. `run_guard` feeds `input` to `exe` on stdin and returns
-/// its exit code.
+/// doesn't block, or blocks what a run needs (a read, the schema answer).
+/// `run_guard` feeds `input` to `exe` on stdin and returns its exit code.
 fn verify_guard(exe: &Path, run_guard: &dyn Fn(&Path, &str) -> Option<i32>) -> Result<(), AiError> {
     let unavailable = || AiError::Failed("AI guard unavailable".into());
     // Inside the hook's bash double quotes these expand, and a leading `\\`
@@ -433,15 +433,22 @@ fn verify_guard(exe: &Path, run_guard: &dyn Fn(&Path, &str) -> Option<i32>) -> R
     if path.contains(['"', '$', '`']) || path.starts_with("\\\\") {
         return Err(unavailable());
     }
-    let probe = json!({
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_input": { "command": "cat x" }
-    });
-    match run_guard(exe, &probe.to_string()) {
-        Some(2) => Ok(()),
-        _ => Err(unavailable()),
+    let probes = [
+        ("Bash", json!({ "command": "cat x" }), 2),
+        ("Bash", json!({ "command": "git rev-parse HEAD" }), 0),
+        ("StructuredOutput", json!({}), 0),
+    ];
+    for (tool, input, want) in probes {
+        let probe = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": tool,
+            "tool_input": input
+        });
+        if run_guard(exe, &probe.to_string()) != Some(want) {
+            return Err(unavailable());
+        }
     }
+    Ok(())
 }
 
 /// `exe --ai-bash-guard` with `input` on stdin; None if it can't be run or
@@ -1139,33 +1146,52 @@ mod tests {
     }
 
     #[test]
-    fn verify_guard_needs_a_quotable_path_and_a_blocking_guard() {
+    fn verify_guard_needs_a_quotable_path_and_a_guard_that_decides() {
         let exe = Path::new(r"C:\Program Files\riff\riff.exe");
+        let unavailable = Err(AiError::Failed("AI guard unavailable".into()));
+        let real = |_: &Path, input: &str| Some(if guard_decision(input).is_ok() { 0 } else { 2 });
+        assert_eq!(verify_guard(exe, &real), Ok(()));
         let exits = |code: Option<i32>| move |_: &Path, _: &str| code;
-        assert_eq!(verify_guard(exe, &exits(Some(2))), Ok(()));
-        for broken in [Some(0), Some(1), Some(101), None] {
-            assert_eq!(
-                verify_guard(exe, &exits(broken)),
-                Err(AiError::Failed("AI guard unavailable".into())),
-                "{broken:?}"
-            );
+        for broken in [Some(0), Some(1), Some(2), Some(101), None] {
+            assert_eq!(verify_guard(exe, &exits(broken)), unavailable, "{broken:?}");
         }
-        // The self-test input is a Bash call the guard has to block.
-        verify_guard(exe, &|_, input| {
-            assert!(guard_decision(input).is_err(), "{input}");
-            Some(2)
+        // It probes a blocked Bash call, an allowed one and an allowed
+        // non-Bash tool; a guard wrong on any of them is unavailable.
+        let seen = std::cell::RefCell::new(Vec::new());
+        verify_guard(exe, &|_, input: &str| {
+            let v: Value = serde_json::from_str(input).unwrap();
+            seen.borrow_mut().push((
+                v["tool_name"].as_str().unwrap().to_string(),
+                v.pointer("/tool_input/command")
+                    .and_then(Value::as_str)
+                    .map(String::from),
+            ));
+            real(exe, input)
         })
         .unwrap();
+        let cmd = |c: &str| Some(c.to_string());
+        assert_eq!(
+            seen.into_inner(),
+            vec![
+                ("Bash".to_string(), cmd("cat x")),
+                ("Bash".to_string(), cmd("git rev-parse HEAD")),
+                ("StructuredOutput".to_string(), None),
+            ]
+        );
+        for wrong_on in ["cat x", "git rev-parse", "StructuredOutput"] {
+            let flipped = |_: &Path, input: &str| {
+                let code = real(exe, input)?;
+                Some(if input.contains(wrong_on) { 2 - code } else { code })
+            };
+            assert_eq!(verify_guard(exe, &flipped), unavailable, "{wrong_on}");
+        }
         for bad in [
             r#"C:\a"b\riff.exe"#,
             r"C:\$x\riff.exe",
             r"C:\`x`\riff.exe",
             r"\\server\share\riff.exe",
         ] {
-            assert!(
-                verify_guard(Path::new(bad), &exits(Some(2))).is_err(),
-                "{bad}"
-            );
+            assert!(verify_guard(Path::new(bad), &real).is_err(), "{bad}");
         }
     }
 
