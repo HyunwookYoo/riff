@@ -26,7 +26,8 @@ const CLAUDE_EXE: &str = if cfg!(windows) {
 
 /// Pre-approved; with `dontAsk` anything else is denied, not prompted.
 /// `scripts/ai-guard-probe.mjs` mirrors these lists and checks them against
-/// the real CLI; change both together.
+/// the real CLI; change both together. agentmemory is recall-only: the run
+/// reads PR text, so it must not be able to plant memories (`memory_save`).
 const ALLOWED_TOOLS: &[&str] = &[
     "Bash(git show:*)",
     "Bash(git grep:*)",
@@ -37,7 +38,6 @@ const ALLOWED_TOOLS: &[&str] = &[
     "Bash(git rev-parse:*)",
     "mcp__agentmemory__memory_recall",
     "mcp__agentmemory__memory_smart_search",
-    "mcp__agentmemory__memory_save",
 ];
 
 /// Deny wins over allow, and over the CLI's own auto-approval of commands it
@@ -388,7 +388,6 @@ pub fn guard_decision(hook_json: &str) -> Result<(), String> {
         "StructuredOutput",
         "mcp__agentmemory__memory_recall",
         "mcp__agentmemory__memory_smart_search",
-        "mcp__agentmemory__memory_save",
     ];
     let v: Value = serde_json::from_str(hook_json)
         .map_err(|e| format!("riff AI guard: unreadable hook input: {e}"))?;
@@ -1094,7 +1093,6 @@ mod tests {
             "Bash(git rev-parse:*)",
             "mcp__agentmemory__memory_recall",
             "mcp__agentmemory__memory_smart_search",
-            "mcp__agentmemory__memory_save",
             "--disallowedTools",
             "Bash(*--output*)",
             "Bash(*--open-files-in-pager*)",
@@ -1343,11 +1341,12 @@ mod tests {
             "StructuredOutput",
             "mcp__agentmemory__memory_recall",
             "mcp__agentmemory__memory_smart_search",
-            "mcp__agentmemory__memory_save",
         ] {
             assert_eq!(guard_decision(&tool(ok)), Ok(()), "{ok}");
         }
         for bad in [
+            // Recall only: the run reads PR text, so it must not plant memories.
+            "mcp__agentmemory__memory_save",
             "mcp__agentmemory__memory_governance_delete",
             "Read",
             "Write",
