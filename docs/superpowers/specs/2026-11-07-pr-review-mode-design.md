@@ -84,8 +84,9 @@ the anti-goal everything below is built around.
   refuted is shown only in the separate "Unconfirmed" area.
 - **The AI or the analysis changing the repo.** It must never touch the
   working tree, index, HEAD, branches or the user's refs. The only write to
-  the repo is riff's own fetch into a riff-private ref namespace. (Writes to
-  agentmemory are allowed; see "AI analysis".)
+  the repo is riff's own fetch into a riff-private ref namespace. (The AI
+  never writes to agentmemory; riff itself records structured review
+  reactions there — see "Review memory".)
 - **Anything reaching GitHub without an explicit user action.** Only Submit
   (and resolve/unresolve, which are immediate by nature) talk to GitHub's
   write APIs.
@@ -184,17 +185,39 @@ How much of the user's own Claude Code setup the run gets (the user decided:
 keep their context):
 
 - **Loaded:** the user's global and the repo's `CLAUDE.md`, the user's
-  settings and hooks (so agentmemory's session capture runs), and the
-  agentmemory MCP server, so the run can recall past decisions and save
-  observations as the user's sessions normally do.
+  (not the working tree's project) settings and hooks, and the agentmemory
+  MCP server for **recall only** (`memory_recall`, `memory_smart_search`).
+  *(Revised 2026-11-09, user decision: the AI reads PR-author-controlled
+  text, so it must not be able to plant memories; `memory_save` is denied.
+  riff writes structured reactions instead — see "Review memory".)*
 - **Blocked:** every other MCP server (Slack, Atlassian, paseo and any added
   later), via an explicit MCP config that lists agentmemory only.
   *(My call: an allowlist, so a new server is blocked by default.)*
 - **Forced:** a non-interactive permission mode with an explicit tool
-  allowlist (read-only git commands plus agentmemory's tools), regardless of
-  the user's default mode such as auto.
-- Consequence the user accepted: review runs leave records in agentmemory,
-  outside the repo. The repo itself stays untouched.
+  allowlist (read-only git commands plus agentmemory's recall tools),
+  regardless of the user's default mode such as auto.
+
+### Review memory
+
+riff records how reviews actually went, so later AI runs can recall the
+team's real preferences (which kinds of findings get discarded, which get
+accepted, which comments authors fix). *(User decision, 2026-11-09.)*
+
+- **Who writes:** riff itself, never the AI. Every memory is built from
+  structured data riff already holds — never from PR text, comment bodies or
+  AI-written prose.
+- **What is recorded** (one short memory per event, project = the repo's
+  `owner/name`):
+  - AI finding added to the draft (as is / edited) or discarded: severity,
+    file path, and the finding's category if the schema has one.
+  - The user's review thread resolved, or a re-review verdict (addressed /
+    not addressed / unclear) for it: file path and verdict.
+- **Where:** agentmemory's REST API (`AGENTMEMORY_URL`, default
+  `http://localhost:3111`, `/agentmemory/remember`, bearer
+  `AGENTMEMORY_SECRET` when set). Best effort: if agentmemory isn't running,
+  nothing is recorded and nothing is shown.
+- **Read back:** the find and verify prompts tell the AI it may recall past
+  review reactions for this repo with `memory_smart_search`.
 
 Two passes:
 
