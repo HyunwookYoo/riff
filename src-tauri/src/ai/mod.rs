@@ -1191,7 +1191,11 @@ mod tests {
         for wrong_on in ["cat x", "git rev-parse", "StructuredOutput"] {
             let flipped = |_: &Path, input: &str| {
                 let code = real(exe, input)?;
-                Some(if input.contains(wrong_on) { 2 - code } else { code })
+                Some(if input.contains(wrong_on) {
+                    2 - code
+                } else {
+                    code
+                })
             };
             assert_eq!(verify_guard(exe, &flipped), unavailable, "{wrong_on}");
         }
@@ -1363,7 +1367,10 @@ mod tests {
             failure(LOGGED_OUT_RESULT).as_deref(),
             Some("Not logged in · Please run /login")
         );
-        assert_eq!(failure(MAX_TURNS_RESULT).as_deref(), Some("error_max_turns"));
+        assert_eq!(
+            failure(MAX_TURNS_RESULT).as_deref(),
+            Some("error_max_turns")
+        );
         let with_text =
             MAX_TURNS_RESULT.replace(r#""num_turns""#, r#""result":"stopped","num_turns""#);
         assert_eq!(
@@ -1373,7 +1380,10 @@ mod tests {
         // A clean result without structured output leaves it to stderr.
         let no_output = SUCCESS_RESULT.replace(r#""structured_output":{"ok":true},"#, "");
         assert_eq!(failure(&no_output), None);
-        assert_eq!(result_failure(&AiEvent::Activity { text: "x".into() }), None);
+        assert_eq!(
+            result_failure(&AiEvent::Activity { text: "x".into() }),
+            None
+        );
     }
 
     #[test]
