@@ -54,6 +54,11 @@ describe("aiBadge", () => {
   it("stale when head moved", () => {
     expect(aiBadge(undefined, result("old"), "new", 0)).toEqual({ text: "PR updated · re-analyse", kind: "stale" });
   });
+  it("a result holding only a re-review is no AI review", () => {
+    const rereview = { fromHead: "o", toHead: "h", createdAt: "", verdicts: [] };
+    expect(aiBadge(undefined, { ...result(""), rereview }, "h", 0)).toEqual({ text: "", kind: "none" });
+    expect(aiBadge({ kind: "failed", message: "x" }, { ...result(""), rereview }, "h", 0).kind).toBe("failed");
+  });
 });
 
 describe("aiErrorText", () => {

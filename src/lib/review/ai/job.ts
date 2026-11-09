@@ -1,9 +1,11 @@
+import type { FileCompare } from "../gh";
 import type { FileHunks, PrDetail, PrHunks, PrKey, PrSummary } from "../types";
 import type { aiRun } from "./run";
 import { FIND_SCHEMA, VERIFY_SCHEMA, findPrompt, verifyPrompt } from "./prompts";
 import { fillQuotes, mergeVerdicts, normalizeFind } from "./result";
-import { cancel, enqueue, finish, type Queue } from "./queue";
-import type { AiFinding, AiJobState, AiResult } from "./types";
+import { cancel, enqueue, finish, type JobKind, type Queue, type QueueEntry } from "./queue";
+import type { runRereview } from "./rereview";
+import type { AiFinding, AiJobState, AiResult, RereviewResult } from "./types";
 
 export interface JobDeps {
   fetchPr: (path: string, remote: string, number: number, baseRef: string, baseSha: string) => Promise<string>;
@@ -12,8 +14,18 @@ export interface JobDeps {
   prDiffText: (path: string, mergeBase: string, head: string) => Promise<string>;
   prCommitSubjects: (path: string, mergeBase: string, head: string) => Promise<string[]>;
   readFileAt: (path: string, rev: string, filePath: string) => Promise<string>;
+  prFileCompare: (path: string, base: string, oldHead: string, newHead: string, files: string[]) => Promise<FileCompare[]>;
+  fetchCommit: (path: string, remote: string, sha: string) => Promise<void>;
   aiRun: typeof aiRun;
   now: () => number;
+}
+
+/**
+ * The `instructions` for `aiRun`: the base branch's CLAUDE.md at the merge-base, which the PR
+ * can't change (the checkout may be the PR branch); null if it is missing or unreadable.
+ */
+export function baseInstructions(d: JobDeps, repoPath: string, mergeBase: string): Promise<string | null> {
+  return d.readFileAt(repoPath, mergeBase, "CLAUDE.md").catch(() => null);
 }
 
 /** Full text per `${path}|${side}` of the findings: RIGHT at head, LEFT at the merge-base. */
@@ -52,9 +64,7 @@ export async function runJob(
   const [diff, commits, instructions] = await Promise.all([
     d.prDiffText(repoPath, mergeBase, head),
     d.prCommitSubjects(repoPath, mergeBase, head),
-    // The base branch's, which the PR can't change (the checkout may be the
-    // PR branch); none if it is missing or unreadable.
-    d.readFileAt(repoPath, mergeBase, "CLAUDE.md").catch(() => null),
+    baseInstructions(d, repoPath, mergeBase),
   ]);
 
   const pass = async (which: "find" | "verify", prompt: string, schema: object): Promise<unknown> => {
@@ -82,10 +92,14 @@ export async function runJob(
   };
 }
 
-/** The state the runner drives; in the app, the `aiState` rune object. */
+/**
+ * The state the runner drives; in the app, the `aiState` rune object. `jobs` holds review
+ * jobs only (the PR list's AI badge reads it); re-review jobs are in `rereviewJobs`.
+ */
 export interface AiCtx {
   queue: Queue;
   jobs: Record<PrKey, AiJobState>;
+  rereviewJobs: Record<PrKey, AiJobState>;
   results: Record<PrKey, AiResult | null>;
 }
 
@@ -93,14 +107,22 @@ export interface RunnerDeps {
   ctx: AiCtx;
   jobDeps: JobDeps;
   runJob: typeof runJob;
-  save: (r: AiResult) => Promise<void>;
+  runRereview: typeof runRereview;
+  /** Saves a new review; resolves to what was stored (the PR's re-review is kept in it). */
+  save: (r: AiResult) => Promise<AiResult>;
+  /** Stores `rr` into `key`'s result, keeping the review in it, and updates `ctx.results`. */
+  saveRereview: (key: PrKey, rr: RereviewResult) => Promise<void>;
   notify: (number: number, title: string, findings: number) => Promise<void>;
 }
 
-interface Active { key: PrKey; cancelled: boolean; cancel: () => void }
+interface Active { entry: QueueEntry; cancelled: boolean; cancel: () => void }
+interface Spec { pr: PrSummary; repoPath: string; login: string }
+
+const specKey = (e: QueueEntry): string => `${e.key}|${e.kind}`;
 
 export interface Runner extends RunnerDeps {
-  specs: Map<PrKey, { pr: PrSummary; repoPath: string }>;
+  /** By `specKey`. `login` is whose threads a re-review checks ("" for a review). */
+  specs: Map<string, Spec>;
   /** The job holding the slot; only it may free the slot when it settles. */
   active: Active | null;
 }
@@ -109,34 +131,45 @@ export function createRunner(d: RunnerDeps): Runner {
   return { ...d, specs: new Map(), active: null };
 }
 
-function setJob(r: Runner, key: PrKey, s: AiJobState | null): void {
-  const { [key]: _, ...rest } = r.ctx.jobs;
-  r.ctx.jobs = s ? { ...rest, [key]: s } : rest;
+function setJob(r: Runner, e: QueueEntry, s: AiJobState | null): void {
+  const field = e.kind === "review" ? "jobs" : "rereviewJobs";
+  const { [e.key]: _, ...rest } = r.ctx[field];
+  r.ctx[field] = s ? { ...rest, [e.key]: s } : rest;
 }
 
-/** Queues `pr` (no-op if already queued or running) and starts it if the slot is free. */
-export function requestJob(r: Runner, pr: PrSummary, repoPath: string): void {
-  const q = enqueue(r.ctx.queue, pr.key);
+/** Queues `e` (no-op if already queued or running) and starts it if the slot is free. */
+function request(r: Runner, e: QueueEntry, spec: Spec): void {
+  const q = enqueue(r.ctx.queue, e);
   if (q === r.ctx.queue) return;
-  r.specs.set(pr.key, { pr, repoPath });
+  r.specs.set(specKey(e), spec);
   r.ctx.queue = q;
-  setJob(r, pr.key, { kind: "queued" });
+  setJob(r, e, { kind: "queued" });
   if (q.running === null) startNext(r);
 }
 
-export function cancelJob(r: Runner, key: PrKey): void {
-  const { q, killRunning } = cancel(r.ctx.queue, key);
+export function requestJob(r: Runner, pr: PrSummary, repoPath: string): void {
+  request(r, { key: pr.key, kind: "review" }, { pr, repoPath, login: "" });
+}
+
+/** Queues a check of whether `pr`'s new commits address `login`'s open threads. */
+export function requestRereview(r: Runner, pr: PrSummary, repoPath: string, login: string): void {
+  request(r, { key: pr.key, kind: "rereview" }, { pr, repoPath, login });
+}
+
+export function cancelJob(r: Runner, key: PrKey, kind: JobKind = "review"): void {
+  const e: QueueEntry = { key, kind };
+  const { q, killRunning } = cancel(r.ctx.queue, e);
   r.ctx.queue = q;
   if (!killRunning) {
-    if (r.specs.delete(key)) setJob(r, key, null);
+    if (r.specs.delete(specKey(e))) setJob(r, e, null);
     return;
   }
   const a = r.active;
-  if (a && a.key === key) {
+  if (a && specKey(a.entry) === specKey(e)) {
     a.cancelled = true;
     a.cancel();
   }
-  setJob(r, key, null);
+  setJob(r, e, null);
   startNext(r);
 }
 
@@ -148,10 +181,11 @@ export function startNext(r: Runner): void {
   if (next !== null) void runOne(r, next);
 }
 
-async function runOne(r: Runner, key: PrKey): Promise<void> {
-  const spec = r.specs.get(key)!;
-  r.specs.delete(key);
-  const a: Active = { key, cancelled: false, cancel: () => {} };
+async function runOne(r: Runner, entry: QueueEntry): Promise<void> {
+  const { key } = entry;
+  const spec = r.specs.get(specKey(entry))!;
+  r.specs.delete(specKey(entry));
+  const a: Active = { entry, cancelled: false, cancel: () => {} };
   r.active = a;
   const jobDeps: JobDeps = {
     ...r.jobDeps,
@@ -162,19 +196,28 @@ async function runOne(r: Runner, key: PrKey): Promise<void> {
       return run;
     },
   };
+  const onState = (s: AiJobState) => {
+    if (!a.cancelled) setJob(r, entry, s);
+  };
   try {
-    const result = await r.runJob(jobDeps, spec.pr, spec.repoPath, (s) => {
-      if (!a.cancelled) setJob(r, key, s);
-    });
+    if (entry.kind === "rereview") {
+      const rr = await r.runRereview(jobDeps, spec.pr, spec.repoPath, spec.login, onState);
+      if (a.cancelled) return;
+      await r.saveRereview(key, rr);
+      if (a.cancelled) return;
+      setJob(r, entry, { kind: "done" });
+      return;
+    }
+    const result = await r.runJob(jobDeps, spec.pr, spec.repoPath, onState);
     if (a.cancelled) return;
-    await r.save(result);
-    r.ctx.results = { ...r.ctx.results, [key]: result }; // saved: keep memory in step with disk
+    const saved = await r.save(result);
+    r.ctx.results = { ...r.ctx.results, [key]: saved }; // keep memory in step with disk
     if (a.cancelled) return;
-    setJob(r, key, { kind: "done" });
+    setJob(r, entry, { kind: "done" });
     const confirmed = result.findings.filter((f) => f.status === "confirmed").length;
     void r.notify(spec.pr.number, spec.pr.title, confirmed);
   } catch (e) {
-    if (!a.cancelled) setJob(r, key, { kind: "failed", message: e instanceof Error ? e.message : String(e) });
+    if (!a.cancelled) setJob(r, entry, { kind: "failed", message: e instanceof Error ? e.message : String(e) });
   } finally {
     if (r.active === a) startNext(r);
   }

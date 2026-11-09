@@ -1,12 +1,14 @@
 <script lang="ts">
   import { aiState, requestAi, cancelAi } from "$lib/review/ai/aiState.svelte";
+  import { hasReview } from "$lib/review/ai/rereview";
   import type { PrSummary } from "$lib/review/types";
 
   let { pr }: { pr: PrSummary } = $props();
 
   const job = $derived(aiState.jobs[pr.key]);
   const busy = $derived(job?.kind === "queued" || job?.kind === "running");
-  const label = $derived(busy ? "Cancel" : aiState.results[pr.key] ? "Re-analyse" : "AI review");
+  const result = $derived(aiState.results[pr.key]);
+  const label = $derived(busy ? "Cancel" : result && hasReview(result) ? "Re-analyse" : "AI review");
 
   function click(e: MouseEvent) {
     e.stopPropagation();

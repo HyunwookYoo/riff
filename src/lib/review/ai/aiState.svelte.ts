@@ -1,15 +1,16 @@
 import { appState } from "../../store.svelte";
 import { readFileAt } from "../../git";
-import { fetchPr, prCommitSubjects, prDiffText, prHunks } from "../gh";
+import { fetchCommit, fetchPr, prCommitSubjects, prDiffText, prFileCompare, prHunks } from "../gh";
 import { prDetail } from "../github";
 import type { PrKey, PrSummary } from "../types";
 import { loadAiResult, saveAiResult } from "./aiStore";
-import { cancelJob, createRunner, requestJob, runJob } from "./job";
+import { cancelJob, createRunner, requestJob, requestRereview, runJob } from "./job";
 import { notifyReady } from "./notify";
 import { emptyQueue, type Queue } from "./queue";
+import { runRereview, withRereview } from "./rereview";
 import { aiRun } from "./run";
 import { applyHandled } from "./result";
-import type { AiJobState, AiResult } from "./types";
+import type { AiJobState, AiResult, RereviewResult } from "./types";
 
 export { isStale } from "./aiStore";
 export { aiBadge, aiErrorText, shouldLoad } from "./badge";
@@ -17,7 +18,9 @@ import { shouldLoad } from "./badge";
 
 class AiState {
   queue = $state<Queue>(emptyQueue());
+  /** Review jobs (the PR list's AI badge); re-review jobs are in `rereviewJobs`. */
   jobs = $state<Record<PrKey, AiJobState>>({});
+  rereviewJobs = $state<Record<PrKey, AiJobState>>({});
   /** Loaded lazily per PR; null = nothing cached (or unreadable). */
   results = $state<Record<PrKey, AiResult | null>>({});
 }
@@ -34,18 +37,44 @@ function queueWrite(key: PrKey, step: () => Promise<void>): Promise<void> {
   return p;
 }
 
-function saveResult(r: AiResult): Promise<void> {
-  return queueWrite(r.key, async () => {
-    await saveAiResult(r);
-    written.set(r.key, r);
+/** In a write step: `key`'s result as it is now. Memory leads the disk once loaded. */
+async function current(key: PrKey): Promise<AiResult | null> {
+  return key in aiState.results ? aiState.results[key] : loadAiResult(key);
+}
+
+/** Saves a new review, keeping the PR's re-review (it is about the threads, not this review). */
+async function saveResult(r: AiResult): Promise<AiResult> {
+  let saved = r;
+  await queueWrite(r.key, async () => {
+    const rr = (await current(r.key).catch(() => null))?.rereview;
+    saved = rr ? { ...r, rereview: rr } : r;
+    await saveAiResult(saved);
+    written.set(r.key, saved);
+  });
+  return saved;
+}
+
+/** Stores `rr` into `key`'s result without dropping the review in it (or creates one). */
+function saveRereview(key: PrKey, rr: RereviewResult): Promise<void> {
+  return queueWrite(key, async () => {
+    // Not caught: if the store can't be read, failing beats overwriting a review.
+    const next = withRereview(await current(key), key, rr);
+    await saveAiResult(next);
+    written.set(key, next);
+    aiState.results = { ...aiState.results, [key]: next };
   });
 }
 
 const runner = createRunner({
   ctx: aiState,
-  jobDeps: { fetchPr, prDetail, prHunks, prDiffText, prCommitSubjects, readFileAt, aiRun, now: Date.now },
+  jobDeps: {
+    fetchPr, prDetail, prHunks, prDiffText, prCommitSubjects, readFileAt, prFileCompare, fetchCommit, aiRun,
+    now: Date.now,
+  },
   runJob,
+  runRereview,
   save: saveResult,
+  saveRereview,
   notify: notifyReady,
 });
 
@@ -56,6 +85,15 @@ export function requestAi(pr: PrSummary): void {
 
 export function cancelAi(key: PrKey): void {
   cancelJob(runner, key);
+}
+
+/** Queues a re-review of `login`'s open threads on `pr` (only ever on the user's request). */
+export function requestRereviewAi(pr: PrSummary, login: string): void {
+  requestRereview(runner, pr, appState.repos[pr.repoIdx].path, login);
+}
+
+export function cancelRereviewAi(key: PrKey): void {
+  cancelJob(runner, key, "rereview");
 }
 
 /**
@@ -69,8 +107,11 @@ export function setHandled(key: PrKey, createdAt: string, id: string, how: "adde
   return queueWrite(key, async () => {
     // A newer run saved first: don't put the older result back on disk.
     if (written.get(key) && written.get(key)!.createdAt !== next.createdAt) return;
-    await saveAiResult(next);
-    written.set(key, next);
+    // Memory has this mark and any re-review stored since; save that, not the snapshot.
+    const now = aiState.results[key];
+    const toSave = now && now.createdAt === next.createdAt ? now : next;
+    await saveAiResult(toSave);
+    written.set(key, toSave);
   });
 }
 

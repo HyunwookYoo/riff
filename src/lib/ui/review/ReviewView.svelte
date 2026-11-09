@@ -17,6 +17,7 @@
   } from "$lib/review/reviewState.svelte";
   import { aiState, isStale, requestAi } from "$lib/review/ai/aiState.svelte";
   import { chaptersFor, findingsToShow } from "$lib/review/ai/result";
+  import { hasReview } from "$lib/review/ai/rereview";
   import { onRecordChanged, REVEAL_EVENT, type RevealPayload } from "$lib/review/draftStore";
   import { addItem } from "$lib/review/draft";
   import { isCommentable } from "$lib/review/commentable";
@@ -73,7 +74,11 @@
       : undefined,
   );
 
-  const aiResult = $derived(reviewState.selectedKey ? (aiState.results[reviewState.selectedKey] ?? null) : null);
+  // The AI review only: a record holding just a re-review has none.
+  const aiResult = $derived.by(() => {
+    const r = reviewState.selectedKey ? (aiState.results[reviewState.selectedKey] ?? null) : null;
+    return r && hasReview(r) ? r : null;
+  });
   // A stale result is re-placed against the displayed head's texts, read once per (result, head).
   const staleFor = $derived.by(() => {
     const r = aiResult;

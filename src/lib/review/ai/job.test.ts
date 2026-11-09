@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { cancelJob, createRunner, requestJob, runJob, type AiCtx, type JobDeps } from "./job";
+import { cancelJob, createRunner, requestJob, requestRereview, runJob, type AiCtx, type JobDeps, type RunnerDeps } from "./job";
 import { FIND_SCHEMA, VERIFY_SCHEMA } from "./prompts";
 import { emptyQueue } from "./queue";
-import type { AiResult } from "./types";
+import { REREVIEW_SCHEMA, runRereview } from "./rereview";
+import type { AiResult, RereviewResult } from "./types";
 import type { PrDetail, PrSummary } from "../types";
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -40,14 +41,32 @@ function deps(find: unknown, verify: unknown = { verdicts: [] }) {
     aiRun: vi.fn((_p: string, _prompt: string, schema: object, _a: (t: string) => void, instructions: string | null) => {
       const cancel = vi.fn();
       runs.push({ schema, instructions, cancel });
-      return { done: Promise.resolve(schema === FIND_SCHEMA ? find : verify), cancel };
+      const answer = schema === FIND_SCHEMA ? find : schema === REREVIEW_SCHEMA ? { verdicts: [] } : verify;
+      return { done: Promise.resolve(answer), cancel };
     }),
+    prFileCompare: vi.fn(async (_p: string, _b: string, _o: string, _n: string, files: string[]) =>
+      files.map((path) => ({ path, oldPatch: "", newPatch: "" }))),
+    fetchCommit: vi.fn(async () => {}),
     now: () => Date.UTC(2026, 10, 9),
   } satisfies JobDeps;
   return { d, runs };
 }
 
-const ctx = (): AiCtx => ({ queue: emptyQueue(), jobs: {}, results: {} });
+const ctx = (): AiCtx => ({ queue: emptyQueue(), jobs: {}, rereviewJobs: {}, results: {} });
+
+/** Gives every PR one open thread started by "me". */
+function withMyThread(d: ReturnType<typeof deps>["d"]): void {
+  d.prDetail.mockImplementation(async (_h: string, node: string) => ({
+    ...detail(`H${node.slice(1)}`, `B${node.slice(1)}`),
+    threads: [{ id: "t1", path: "a.ts", side: "RIGHT", line: 1, startLine: null, originalLine: 1, isResolved: false,
+      isOutdated: false, subjectType: "LINE", comments: [{ id: "c", author: "me", body: "b", createdAt: "" }] }],
+  }));
+}
+
+/** Runner deps with no-op re-review plumbing; tests override what they check. */
+const runnerDeps = (o: Partial<RunnerDeps> & Pick<RunnerDeps, "ctx" | "jobDeps">): RunnerDeps => ({
+  runJob, runRereview, save: vi.fn(async (x: AiResult) => x), saveRereview: vi.fn(async () => {}), notify: vi.fn(async () => {}), ...o,
+});
 
 describe("runJob", () => {
   it("job runs find then verify and returns confirmed+unconfirmed", async () => {
@@ -124,10 +143,10 @@ describe("runner", () => {
     const find = { chapters: [], findings: [cand({})] };
     const verify = { verdicts: [{ index: 0, verdict: "confirmed", reason: "r", evidence: [] }] };
     const { d } = deps(find, verify);
-    const save = vi.fn(async (_r: AiResult) => {});
+    const save = vi.fn(async (x: AiResult) => x);
     const notify = vi.fn(async () => {});
     const c = ctx();
-    const r = createRunner({ ctx: c, jobDeps: d, runJob, save, notify });
+    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d, save, notify }));
     requestJob(r, summary(1), "/repo");
     requestJob(r, summary(2), "/repo");
     expect(c.jobs[summary(2).key]).toEqual({ kind: "queued" });
@@ -145,9 +164,9 @@ describe("runner", () => {
 
   it("malformed find output fails the job and stores nothing", async () => {
     const { d } = deps({ findings: [] });
-    const save = vi.fn(async () => {});
+    const save = vi.fn(async (x: AiResult) => x);
     const c = ctx();
-    const r = createRunner({ ctx: c, jobDeps: d, runJob, save, notify: vi.fn(async () => {}) });
+    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d, save }));
     requestJob(r, summary(1), "/repo");
     await flush();
     expect(save).not.toHaveBeenCalled();
@@ -167,9 +186,9 @@ describe("runner", () => {
       return { done: new Promise((_, rej) => (rejectFirst = rej)), cancel };
     });
     const runJobSpy = vi.fn(runJob);
-    const save = vi.fn(async (_r: AiResult) => {});
+    const save = vi.fn(async (x: AiResult) => x);
     const c = ctx();
-    const r = createRunner({ ctx: c, jobDeps: d, runJob: runJobSpy, save, notify: vi.fn(async () => {}) });
+    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d, runJob: runJobSpy, save }));
     const [a, b] = [summary(1), summary(2)];
     requestJob(r, a, "/repo");
     requestJob(r, b, "/repo");
@@ -180,7 +199,7 @@ describe("runner", () => {
     cancelJob(r, a.key);
     expect(runs[0].cancel).toHaveBeenCalled();
     expect(c.jobs[a.key]).toBeUndefined();
-    expect(c.queue.running).toBe(b.key);
+    expect(c.queue.running).toEqual({ key: b.key, kind: "review" });
     expect(runJobSpy).toHaveBeenCalledTimes(2);
     await flush();
     await flush();
@@ -193,7 +212,7 @@ describe("runner", () => {
   it("cancel of a waiting job drops it without touching the running one", async () => {
     const { d } = deps({ chapters: [], findings: [] });
     const c = ctx();
-    const r = createRunner({ ctx: c, jobDeps: d, runJob, save: vi.fn(async () => {}), notify: vi.fn(async () => {}) });
+    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d }));
     requestJob(r, summary(1), "/repo");
     requestJob(r, summary(2), "/repo");
     cancelJob(r, summary(2).key);
@@ -201,5 +220,57 @@ describe("runner", () => {
     await flush();
     expect(c.jobs[summary(1).key]).toEqual({ kind: "done" });
     expect(d.prDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it("a re-review shares the queue but is tracked and saved apart from the review", async () => {
+    const { d } = deps({ chapters: [], findings: [] });
+    withMyThread(d);
+    const save = vi.fn(async (x: AiResult) => x);
+    const saveRereview = vi.fn(async (_k: string, _r: RereviewResult) => {});
+    const notify = vi.fn(async () => {});
+    const c = ctx();
+    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d, save, saveRereview, notify }));
+    const pr = summary(1, { myLastReviewSha: "R1" });
+    requestJob(r, pr, "/repo");
+    requestRereview(r, pr, "/repo", "me");
+    requestRereview(r, pr, "/repo", "me"); // already queued: no-op
+    expect(c.jobs[pr.key]?.kind).toBe("running");
+    expect(c.rereviewJobs[pr.key]).toEqual({ kind: "queued" });
+    expect(c.queue.waiting).toEqual([{ key: pr.key, kind: "rereview" }]);
+    await flush();
+    await flush();
+    expect(c.jobs[pr.key]).toEqual({ kind: "done" });
+    expect(c.rereviewJobs[pr.key]).toEqual({ kind: "done" });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(saveRereview).toHaveBeenCalledWith(pr.key, {
+      fromHead: "R1", toHead: "H1", createdAt: "2026-11-09T00:00:00.000Z",
+      verdicts: [{ threadId: "t1", verdict: "unclear", reason: "no answer", evidence: [] }],
+    });
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(c.queue).toEqual(emptyQueue());
+
+    // Cancelling the waiting re-review leaves the review alone.
+    requestJob(r, pr, "/repo");
+    requestRereview(r, pr, "/repo", "me");
+    cancelJob(r, pr.key, "rereview");
+    expect(c.rereviewJobs[pr.key]).toBeUndefined();
+    expect(c.jobs[pr.key]?.kind).not.toBeUndefined();
+    await flush();
+    expect(saveRereview).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed re-review stores nothing", async () => {
+    const { d } = deps({ chapters: [], findings: [] });
+    withMyThread(d);
+    d.fetchCommit.mockRejectedValueOnce(new Error("gone"));
+    const saveRereview = vi.fn(async () => {});
+    const c = ctx();
+    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d, saveRereview }));
+    requestRereview(r, summary(1, { myLastReviewSha: "R1" }), "/repo", "me");
+    await flush();
+    expect(saveRereview).not.toHaveBeenCalled();
+    const s = c.rereviewJobs[summary(1).key];
+    expect(s?.kind === "failed" && s.message).toMatch(/isn't available/);
+    expect(c.jobs).toEqual({});
   });
 });

@@ -9,7 +9,7 @@ const bad = (what: string) => new Error(`ai-malformed: ${what}`);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isStr = (v: unknown): v is string => typeof v === "string";
 
-function evidenceOf(v: unknown): AiEvidence[] {
+export function evidenceOf(v: unknown): AiEvidence[] {
   if (!Array.isArray(v)) return [];
   const out: AiEvidence[] = [];
   for (const e of v) {

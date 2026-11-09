@@ -20,6 +20,11 @@ const result = (): AiResult => ({
   handled: { f0: "added" },
 });
 
+const rereview = () => ({
+  fromHead: "r1", toHead: "h1", createdAt: "2026-11-09T00:00:00.000Z",
+  verdicts: [{ threadId: "t", verdict: "addressed", reason: "ok", evidence: [{ path: "a.ts", line: null, quote: "q" }] }],
+});
+
 beforeEach(() => vi.clearAllMocks());
 
 describe("aiStore", () => {
@@ -37,6 +42,14 @@ describe("aiStore", () => {
     expect(m.loadReview).toHaveBeenCalledWith(`${K}@ai`);
   });
 
+  it("a stored result with or without a re-review loads", async () => {
+    const withRr = { ...result(), rereview: rereview() };
+    m.loadReview.mockResolvedValueOnce(withRr);
+    expect(await loadAiResult(K)).toEqual(withRr);
+    m.loadReview.mockResolvedValueOnce(result());
+    expect(await loadAiResult(K)).toEqual(result());
+  });
+
   it("invalid stored result loads as null", async () => {
     const bad: unknown[] = [
       null, "x", { version: 2 },
@@ -46,6 +59,10 @@ describe("aiStore", () => {
       { ...result(), findings: [{ ...result().findings[0], side: "UP" }] },
       { ...result(), findings: [{ ...result().findings[0], quote: "x" }] },
       { ...result(), handled: { f0: "maybe" } },
+      { ...result(), rereview: null },
+      { ...result(), rereview: { ...rereview(), toHead: 1 } },
+      { ...result(), rereview: { ...rereview(), verdicts: [{ threadId: "t", verdict: "maybe", reason: "", evidence: [] }] } },
+      { ...result(), rereview: { ...rereview(), verdicts: [{ threadId: "t", verdict: "addressed", reason: "", evidence: [{}] }] } },
     ];
     for (const v of bad) {
       m.loadReview.mockResolvedValueOnce(v);

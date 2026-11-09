@@ -1,3 +1,4 @@
+import { hasReview } from "./rereview";
 import type { AiJobState, AiResult } from "./types";
 
 export type AiBadgeKind = "none" | "queued" | "running" | "ready" | "stale" | "failed";
@@ -16,7 +17,7 @@ export function aiBadge(
   // A failed re-run doesn't hide a result that is still current; PrList's
   // tooltip still shows the failure.
   if (job?.kind === "failed" && result?.headSha !== headSha) return { text: "AI failed", kind: "failed" };
-  if (!result) return { text: "", kind: "none" };
+  if (!result || !hasReview(result)) return { text: "", kind: "none" };
   if (result.headSha !== headSha) return { text: "PR updated · re-analyse", kind: "stale" };
   const open = result.findings.filter((f) => f.status === "confirmed" && !result.handled[f.id]).length;
   return { text: `AI ready · ⚠${open}`, kind: "ready" };

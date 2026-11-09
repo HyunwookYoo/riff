@@ -1,24 +1,29 @@
 import type { PrKey } from "../types";
 
+export type JobKind = "review" | "rereview";
+export interface QueueEntry { key: PrKey; kind: JobKind }
+
 /** AI jobs run one at a time: `running` holds the slot, `waiting` is FIFO. */
-export type Queue = { running: PrKey | null; waiting: PrKey[] };
+export type Queue = { running: QueueEntry | null; waiting: QueueEntry[] };
 
 export const emptyQueue = (): Queue => ({ running: null, waiting: [] });
 
-export function enqueue(q: Queue, key: PrKey): Queue {
-  if (q.running === key || q.waiting.includes(key)) return q;
-  return { ...q, waiting: [...q.waiting, key] };
+const same = (a: QueueEntry | null, b: QueueEntry): boolean => a !== null && a.key === b.key && a.kind === b.kind;
+
+export function enqueue(q: Queue, e: QueueEntry): Queue {
+  if (same(q.running, e) || q.waiting.some((w) => same(w, e))) return q;
+  return { ...q, waiting: [...q.waiting, e] };
 }
 
-/** A running key stays in the slot (the caller kills it, then calls `finish`). */
-export function cancel(q: Queue, key: PrKey): { q: Queue; killRunning: boolean } {
-  if (q.running === key) return { q, killRunning: true };
-  if (!q.waiting.includes(key)) return { q, killRunning: false };
-  return { q: { ...q, waiting: q.waiting.filter((k) => k !== key) }, killRunning: false };
+/** A running entry stays in the slot (the caller kills it, then calls `finish`). */
+export function cancel(q: Queue, e: QueueEntry): { q: Queue; killRunning: boolean } {
+  if (same(q.running, e)) return { q, killRunning: true };
+  if (!q.waiting.some((w) => same(w, e))) return { q, killRunning: false };
+  return { q: { ...q, waiting: q.waiting.filter((w) => !same(w, e)) }, killRunning: false };
 }
 
-/** Frees the slot (if held) and moves the first waiting key into it. */
-export function finish(q: Queue): { q: Queue; next: PrKey | null } {
+/** Frees the slot (if held) and moves the first waiting entry into it. */
+export function finish(q: Queue): { q: Queue; next: QueueEntry | null } {
   const [next = null, ...rest] = q.waiting;
   return { q: { running: next, waiting: rest }, next };
 }
