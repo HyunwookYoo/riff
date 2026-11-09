@@ -49,15 +49,18 @@ export async function runJob(
   const fetched = await d.fetchPr(repoPath, pr.remote, pr.number, pr.baseRef, base);
   if (fetched !== head) throw new Error("The PR changed while it was being fetched; analyse again.");
   const { mergeBase, files } = await d.prHunks(repoPath, base, head);
-  const [diff, commits] = await Promise.all([
+  const [diff, commits, instructions] = await Promise.all([
     d.prDiffText(repoPath, mergeBase, head),
     d.prCommitSubjects(repoPath, mergeBase, head),
+    // The base branch's, which the PR can't change (the checkout may be the
+    // PR branch); none if it is missing or unreadable.
+    d.readFileAt(repoPath, mergeBase, "CLAUDE.md").catch(() => null),
   ]);
 
   const pass = async (which: "find" | "verify", prompt: string, schema: object): Promise<unknown> => {
     onState({ kind: "running", pass: which, startedAt, lastActivity: null });
     const run = d.aiRun(repoPath, prompt, schema, (t) =>
-      onState({ kind: "running", pass: which, startedAt, lastActivity: t }));
+      onState({ kind: "running", pass: which, startedAt, lastActivity: t }), instructions);
     return run.done;
   };
 
@@ -152,9 +155,9 @@ async function runOne(r: Runner, key: PrKey): Promise<void> {
   r.active = a;
   const jobDeps: JobDeps = {
     ...r.jobDeps,
-    aiRun: (path, prompt, schema, onActivity) => {
+    aiRun: (path, prompt, schema, onActivity, instructions) => {
       if (a.cancelled) return { done: Promise.reject(new Error("cancelled")), cancel: () => {} };
-      const run = r.jobDeps.aiRun(path, prompt, schema, onActivity);
+      const run = r.jobDeps.aiRun(path, prompt, schema, onActivity, instructions);
       a.cancel = run.cancel;
       return run;
     },

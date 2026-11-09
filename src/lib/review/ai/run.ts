@@ -14,12 +14,14 @@ let nextRunId = crypto.getRandomValues(new Uint32Array(1))[0] >>> 1;
  * One read-only Claude Code run in the repo at `path`. `onActivity` gets a
  * line per tool call; `done` resolves to the output matching `schema`, or
  * rejects with the CLI's message, or "cancelled" after `cancel()`.
+ * `instructions` (the repo's CLAUDE.md) is appended to the system prompt.
  */
 export function aiRun(
   path: string,
   prompt: string,
   schema: object,
   onActivity: (t: string) => void,
+  instructions: string | null,
 ): { done: Promise<unknown>; cancel: () => void } {
   const id = nextRunId++;
   const channel = new Channel<AiEvent>();
@@ -31,6 +33,7 @@ export function aiRun(
     prompt,
     schema: JSON.stringify(schema),
     model: null,
+    instructions,
     id,
     onEvent: channel,
   });

@@ -543,6 +543,7 @@ async fn ai_run(
     prompt: String,
     schema: String,
     model: Option<String>,
+    instructions: Option<String>,
     id: u32,
     on_event: tauri::ipc::Channel<ai::AiEvent>,
 ) -> Result<serde_json::Value, ai::AiError> {
@@ -553,6 +554,7 @@ async fn ai_run(
             &prompt,
             &schema,
             model.as_deref(),
+            instructions.as_deref(),
             &mut |ev| {
                 let _ = on_event.send(ev);
             },

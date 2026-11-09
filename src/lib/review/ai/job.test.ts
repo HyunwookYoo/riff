@@ -23,7 +23,7 @@ const cand = (o: object) => ({ path: "a.ts", side: "RIGHT", line: 2, startLine: 
 
 /** Deps for a repo where node `N<n>` has head `H<n>`, base `B<n>`, merge-base `MB<n>`. */
 function deps(find: unknown, verify: unknown = { verdicts: [] }) {
-  const runs: { schema: object; cancel: ReturnType<typeof vi.fn> }[] = [];
+  const runs: { schema: object; instructions: string | null; cancel: ReturnType<typeof vi.fn> }[] = [];
   const d = {
     fetchPr: vi.fn(async (_p: string, _r: string, n: number) => `H${n}`),
     prDetail: vi.fn(async (_h: string, node: string) => detail(`H${node.slice(1)}`, `B${node.slice(1)}`)),
@@ -33,13 +33,13 @@ function deps(find: unknown, verify: unknown = { verdicts: [] }) {
     })),
     prDiffText: vi.fn(async () => "diff --git a/a.ts b/a.ts\n"),
     prCommitSubjects: vi.fn(async () => ["subject"]),
-    readFileAt: vi.fn(async (_p: string, rev: string, path: string) => {
+    readFileAt: vi.fn(async (_p: string, rev: string, path: string): Promise<string> => {
       if (path !== "a.ts") throw new Error("missing");
       return rev.startsWith("MB") ? "old1\nold2\nold3\n" : "one\ntwo\nthree\n";
     }),
-    aiRun: vi.fn((_p: string, _prompt: string, schema: object, _a: (t: string) => void) => {
+    aiRun: vi.fn((_p: string, _prompt: string, schema: object, _a: (t: string) => void, instructions: string | null) => {
       const cancel = vi.fn();
-      runs.push({ schema, cancel });
+      runs.push({ schema, instructions, cancel });
       return { done: Promise.resolve(schema === FIND_SCHEMA ? find : verify), cancel };
     }),
     now: () => Date.UTC(2026, 10, 9),
@@ -96,6 +96,22 @@ describe("runJob", () => {
     expect([r.key, r.headSha, r.baseSha, r.mergeBase]).toEqual([summary(7).key, "H7", "B7", "MB7"]);
   });
 
+  it("both passes get CLAUDE.md as of the merge-base, or none", async () => {
+    const find = { chapters: [], findings: [cand({})] };
+    const { d, runs } = deps(find, { verdicts: [] });
+    const read = d.readFileAt.getMockImplementation()!;
+    d.readFileAt.mockImplementation(async (p, rev, path) =>
+      path === "CLAUDE.md" ? `rules at ${rev}` : read(p, rev, path));
+    await runJob(d, summary(1), "/repo", () => {});
+    expect(d.readFileAt).toHaveBeenCalledWith("/repo", "MB1", "CLAUDE.md");
+    expect(runs.map((x) => x.instructions)).toEqual(["rules at MB1", "rules at MB1"]);
+
+    // No CLAUDE.md there (the default mock throws for it): no instructions.
+    const missing = deps(find, { verdicts: [] });
+    await runJob(missing.d, summary(1), "/repo", () => {});
+    expect(missing.runs.map((x) => x.instructions)).toEqual([null, null]);
+  });
+
   it("fails when the fetched head is not the detail's head", async () => {
     const { d } = deps({ chapters: [], findings: [] });
     d.fetchPr.mockResolvedValueOnce("H999");
@@ -145,9 +161,9 @@ describe("runner", () => {
     const { d, runs } = deps({ chapters: [], findings: [] });
     // The first run hangs until cancelled, then rejects like the backend does.
     let rejectFirst: (e: Error) => void = () => {};
-    d.aiRun.mockImplementationOnce((_p, _prompt, schema) => {
+    d.aiRun.mockImplementationOnce((_p, _prompt, schema, _a, instructions) => {
       const cancel = vi.fn(() => rejectFirst(new Error("cancelled")));
-      runs.push({ schema, cancel });
+      runs.push({ schema, instructions, cancel });
       return { done: new Promise((_, rej) => (rejectFirst = rej)), cancel };
     });
     const runJobSpy = vi.fn(runJob);

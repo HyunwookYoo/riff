@@ -91,11 +91,13 @@ pub fn agentmemory_mcp_config(claude_json: &Value) -> Value {
 }
 
 /// `guard_exe` is riff's own executable, run as the Bash PreToolUse hook in
-/// `AI_BASH_GUARD_FLAG` mode (see `guard_decision`).
+/// `AI_BASH_GUARD_FLAG` mode (see `guard_decision`). `instructions_file`
+/// holds `instructions_prompt`, appended to the system prompt.
 pub fn claude_args(
     schema_json: &str,
     mcp_config_path: &Path,
     guard_exe: &Path,
+    instructions_file: Option<&Path>,
     model: Option<&str>,
 ) -> Vec<String> {
     let mut args: Vec<String> = [
@@ -130,8 +132,9 @@ pub fn claude_args(
     // The checkout's `.claude/settings*.json` is repo content: its hooks,
     // allow rules or `disableAllHooks` must not load (headless runs show no
     // trust prompt). Only the user's settings do. This also drops the repo's
-    // CLAUDE.md (CLI 2.1.319 ties it to the `project` source); the user's
-    // global one still loads.
+    // CLAUDE.md (CLI 2.1.319 ties it to the `project` source), so riff
+    // passes the base branch's in `instructions_file`; the user's global one
+    // still loads.
     args.extend(["--setting-sources".to_string(), "user".to_string()]);
     // `|| exit 2`: any other failure exit (a panic's 101, a missing exe)
     // would be non-blocking, i.e. the call would go through unguarded.
@@ -144,6 +147,10 @@ pub fn claude_args(
     }]}});
     args.push("--settings".into());
     args.push(settings.to_string());
+    if let Some(f) = instructions_file {
+        args.push("--append-system-prompt-file".into());
+        args.push(f.to_string_lossy().into_owned());
+    }
     if let Some(m) = model {
         args.push("--model".into());
         args.push(m.into());
@@ -743,31 +750,59 @@ impl Drop for TempFile {
     }
 }
 
-fn write_mcp_config() -> Result<TempFile, AiError> {
+/// `riff-ai-<name>-<pid>-<n>.<ext>` in the temp dir, holding `body`.
+fn write_temp_file(name: &str, ext: &str, body: &[u8]) -> Result<TempFile, AiError> {
     static NEXT: AtomicU32 = AtomicU32::new(0);
-    let claude_json = home_dir()
-        .and_then(|h| std::fs::read_to_string(h.join(".claude.json")).ok())
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(Value::Null);
     let file = TempFile(std::env::temp_dir().join(format!(
-        "riff-ai-mcp-{}-{}.json",
+        "riff-ai-{name}-{}-{}.{ext}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     )));
-    let body = serde_json::to_vec(&agentmemory_mcp_config(&claude_json))
-        .map_err(|e| AiError::Failed(e.to_string()))?;
     std::fs::write(&file.0, body).map_err(|e| AiError::Failed(e.to_string()))?;
     Ok(file)
 }
 
+fn write_mcp_config() -> Result<TempFile, AiError> {
+    let claude_json = home_dir()
+        .and_then(|h| std::fs::read_to_string(h.join(".claude.json")).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(Value::Null);
+    let body = serde_json::to_vec(&agentmemory_mcp_config(&claude_json))
+        .map_err(|e| AiError::Failed(e.to_string()))?;
+    write_temp_file("mcp", "json", &body)
+}
+
+/// The repo's CLAUDE.md as appended to the system prompt: led by where it
+/// comes from, its content capped at 64 KB; None when it says nothing.
+fn instructions_prompt(claude_md: &str) -> Option<String> {
+    const CAP: usize = 64 * 1024;
+    if claude_md.trim().is_empty() {
+        return None;
+    }
+    let (text, marker) = if claude_md.len() > CAP {
+        let end = (0..=CAP)
+            .rev()
+            .find(|&i| claude_md.is_char_boundary(i))
+            .unwrap_or(0);
+        (&claude_md[..end], "\n[truncated]")
+    } else {
+        (claude_md, "")
+    };
+    Some(format!(
+        "Repository instructions (from CLAUDE.md on the base branch):\n\n{text}{marker}"
+    ))
+}
+
 /// One read-only Claude Code run in `cwd`. `on_event` gets tool activity and
 /// the result line; `cancelled` is polled while claude runs and true kills it.
-/// Returns the structured output matching `schema_json`.
+/// `claude_md` is the repo's CLAUDE.md, read by the caller from the base
+/// branch. Returns the structured output matching `schema_json`.
 pub fn run(
     cwd: &Path,
     prompt: &str,
     schema_json: &str,
     model: Option<&str>,
+    claude_md: Option<&str>,
     on_event: &mut dyn FnMut(AiEvent),
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Value, AiError> {
@@ -777,6 +812,10 @@ pub fn run(
     let guard_exe = std::env::current_exe().map_err(|e| AiError::Failed(e.to_string()))?;
     verify_guard(&guard_exe, &run_guard_exe)?;
     let mcp_config = write_mcp_config()?;
+    let instructions = claude_md
+        .and_then(instructions_prompt)
+        .map(|p| write_temp_file("instructions", "md", p.as_bytes()))
+        .transpose()?;
     let mut cmd = Command::new(program);
     // `vars()` would panic on a non-Unicode variable; those can't be ours.
     let parent: Vec<(String, String)> = std::env::vars_os()
@@ -788,11 +827,17 @@ pub fn run(
             None => cmd.env_remove(key),
         };
     }
-    cmd.args(claude_args(schema_json, &mcp_config.0, &guard_exe, model))
-        .current_dir(cwd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.args(claude_args(
+        schema_json,
+        &mcp_config.0,
+        &guard_exe,
+        instructions.as_ref().map(|f| f.0.as_path()),
+        model,
+    ))
+    .current_dir(cwd)
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     // No console window flashing up (see `git_command`).
     #[cfg(windows)]
     {
@@ -1128,17 +1173,50 @@ mod tests {
             (args[..at].to_vec(), parsed, args[at + 1..].to_vec())
         };
         assert_eq!(
-            split(claude_args(schema, &cfg, &exe, None)),
+            split(claude_args(schema, &cfg, &exe, None, None)),
             (base.clone(), settings.clone(), vec![])
         );
         assert_eq!(
-            split(claude_args(schema, &cfg, &exe, Some("sonnet"))),
+            split(claude_args(schema, &cfg, &exe, None, Some("sonnet"))),
             (
                 base.clone(),
-                settings,
+                settings.clone(),
                 vec!["--model".into(), "sonnet".into()]
             )
         );
+        let md = PathBuf::from(r"C:\tmp\riff-ai-instructions-1-0.md");
+        assert_eq!(
+            split(claude_args(schema, &cfg, &exe, Some(&md), Some("sonnet"))),
+            (
+                base.clone(),
+                settings,
+                vec![
+                    "--append-system-prompt-file".into(),
+                    r"C:\tmp\riff-ai-instructions-1-0.md".into(),
+                    "--model".into(),
+                    "sonnet".into()
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn instructions_prompt_leads_skips_and_caps() {
+        const LEAD: &str = "Repository instructions (from CLAUDE.md on the base branch):\n\n";
+        assert_eq!(
+            instructions_prompt("Use tabs.\n"),
+            Some(format!("{LEAD}Use tabs.\n"))
+        );
+        assert_eq!(instructions_prompt(""), None);
+        assert_eq!(instructions_prompt(" \n\t"), None);
+        // 64 KB of content at most, cut on a char boundary, then a marker.
+        let big = format!("{}{}", "a".repeat(64 * 1024 - 1), "é".repeat(10));
+        assert_eq!(
+            instructions_prompt(&big),
+            Some(format!("{LEAD}{}\n[truncated]", "a".repeat(64 * 1024 - 1)))
+        );
+        let exact = "b".repeat(64 * 1024);
+        assert_eq!(instructions_prompt(&exact), Some(format!("{LEAD}{exact}")));
     }
 
     #[test]
