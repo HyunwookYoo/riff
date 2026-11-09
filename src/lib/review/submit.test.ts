@@ -82,9 +82,9 @@ describe("submit", () => {
     expect(out.event).toBe("COMMENT");
   });
 
-  it("file items go as FILE threads", async () => {
+  it("file items go as FILE threads, led by their location", async () => {
     await submit(args(rec([item("f", { kind: "file", path: "x.ts", location: "L" })])));
-    expect(gh.addThread).toHaveBeenCalledWith("h", "rev1", { path: "x.ts", body: "b-f", subjectType: "FILE" });
+    expect(gh.addThread).toHaveBeenCalledWith("h", "rev1", { path: "x.ts", body: "**L**\n\nb-f", subjectType: "FILE" });
   });
 
   it("keeps unplaced items after submit", async () => {

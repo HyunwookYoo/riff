@@ -55,7 +55,7 @@ export async function submit(args: {
         });
         posted = true;
       } else if (t.kind === "file") {
-        await addThread(host, reviewId, { path: t.path, body: it.body, subjectType: "FILE" });
+        await addThread(host, reviewId, { path: t.path, body: `**${t.location}**\n\n${it.body}`, subjectType: "FILE" });
         posted = true;
       }
     }
