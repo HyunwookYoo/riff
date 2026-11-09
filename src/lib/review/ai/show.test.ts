@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chaptersFor, findingsToShow } from "./result";
+import { applyHandled, chaptersFor, findingsToShow } from "./result";
 import type { AiFinding, AiResult } from "./types";
 import type { FileHunks } from "../types";
 
@@ -74,5 +74,19 @@ describe("chaptersFor", () => {
       { title: "A", summary: "s", paths: ["b.ts"] },
       { title: "Other", summary: "", paths: ["a.ts"] },
     ]);
+  });
+});
+
+describe("applyHandled", () => {
+  it("marks the finding on the expected result", () => {
+    const r = result([f("f0")], { createdAt: "t1" });
+    expect(applyHandled(r, "t1", "f0", "added")?.handled).toEqual({ f0: "added" });
+    expect(r.handled).toEqual({});
+  });
+  it("does nothing on a newer result, a missing result or an unchanged mark", () => {
+    const r = result([f("f0")], { createdAt: "t2" });
+    expect(applyHandled(r, "t1", "f0", "added")).toBeNull();
+    expect(applyHandled(null, "t1", "f0", "added")).toBeNull();
+    expect(applyHandled(result([f("f0")], { createdAt: "t1", handled: { f0: "added" } }), "t1", "f0", "added")).toBeNull();
   });
 });

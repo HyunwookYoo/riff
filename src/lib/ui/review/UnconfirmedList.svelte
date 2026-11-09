@@ -5,10 +5,12 @@
 
   let {
     prKey,
+    createdAt,
     findings,
     onevidence,
   }: {
     prKey: PrKey;
+    createdAt: string;
     findings: ShownFinding[];
     onevidence: (path: string, line: number | null) => void;
   } = $props();
@@ -17,8 +19,8 @@
 {#if findings.length > 0}
   <details class="area">
     <summary>Unconfirmed ({findings.length})</summary>
-    {#each findings as f (f.id)}
-      <div class="entry"><InlineFinding {prKey} finding={f} showPath {onevidence} /></div>
+    {#each findings as f (`${createdAt}:${f.id}`)}
+      <div class="entry"><InlineFinding {prKey} {createdAt} finding={f} showPath {onevidence} /></div>
     {/each}
   </details>
 {/if}

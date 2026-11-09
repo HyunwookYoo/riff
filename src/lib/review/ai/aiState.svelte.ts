@@ -8,6 +8,7 @@ import { cancelJob, createRunner, requestJob, runJob } from "./job";
 import { notifyReady } from "./notify";
 import { emptyQueue, type Queue } from "./queue";
 import { aiRun } from "./run";
+import { applyHandled } from "./result";
 import type { AiJobState, AiResult } from "./types";
 
 export { isStale } from "./aiStore";
@@ -57,11 +58,13 @@ export function cancelAi(key: PrKey): void {
   cancelJob(runner, key);
 }
 
-/** Records what the user did with a finding of `key`'s current result, in memory and on disk. */
-export function setHandled(key: PrKey, id: string, how: "added" | "discarded"): Promise<void> {
-  const r = aiState.results[key];
-  if (!r || r.handled[id] === how) return Promise.resolve();
-  const next: AiResult = { ...r, handled: { ...r.handled, [id]: how } };
+/**
+ * Records what the user did with finding `id` of the result created at `createdAt`, in memory
+ * at once and then on disk. A no-op if `key`'s result is now another one.
+ */
+export function setHandled(key: PrKey, createdAt: string, id: string, how: "added" | "discarded"): Promise<void> {
+  const next = applyHandled(aiState.results[key] ?? null, createdAt, id, how);
+  if (!next) return Promise.resolve();
   aiState.results = { ...aiState.results, [key]: next };
   return queueWrite(key, async () => {
     // A newer run saved first: don't put the older result back on disk.

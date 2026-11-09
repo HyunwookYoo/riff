@@ -9,11 +9,14 @@
 
   let {
     prKey,
+    createdAt,
     finding,
     showPath = false,
     onevidence,
   }: {
     prKey: PrKey;
+    /** The result the finding belongs to (finding ids are positional within it). */
+    createdAt: string;
     finding: ShownFinding;
     /** In a list (not at its diff line): say where it is. */
     showPath?: boolean;
@@ -23,7 +26,7 @@
 
   const f = $derived(finding);
   const unconfirmed = $derived(f.status === "unconfirmed");
-  const editKey = $derived(`ai:${f.id}`);
+  const editKey = $derived(`ai:${createdAt}:${f.id}`);
   // An open edit survives the widget being redrawn.
   // svelte-ignore state_referenced_locally
   let editing = $state(textStash.has(editKey));
@@ -46,13 +49,10 @@
     editing = false;
   }
 
-  async function handle(how: "added" | "discarded") {
-    try {
-      await setHandled(prKey, f.id, how);
-    } catch (e) {
+  const handle = (how: "added" | "discarded") =>
+    setHandled(prKey, createdAt, f.id, how).catch((e) => {
       reviewState.error = `AI result not saved: ${e}`;
-    }
-  }
+    });
 
   async function add(body: string, edited: boolean) {
     const r = reviewState.record;
@@ -60,9 +60,13 @@
     busy = true;
     try {
       const origin = unconfirmed ? "ai-unconfirmed" : edited ? "ai-edited" : "ai";
-      await writeRecord(addItem(r, f.target, body, origin));
+      // Both in this tick: the finding hides with the draft appearing, so it can't be added twice
+      // and the mark can't land on a result that arrives while the draft saves.
+      const w = writeRecord(addItem(r, f.target, body, origin));
+      const h = handle("added");
       textStash.delete(editKey);
-      await handle("added");
+      await w;
+      await h;
     } finally {
       busy = false;
     }
@@ -88,7 +92,7 @@
       <button type="button" onclick={startEdit} disabled={blocked || busy}>Edit</button>
       <button type="button" onclick={() => void discard()} disabled={blocked || busy}>Discard</button>
     {/if}
-    <button type="button" onclick={() => (evidenceOpen = !evidenceOpen)} disabled={blocked}>
+    <button type="button" onclick={() => (evidenceOpen = !evidenceOpen)}>
       {evidenceOpen ? "Hide evidence" : "Show evidence"}
     </button>
   </div>
@@ -108,7 +112,7 @@
       {#each f.evidence as e, i (i)}
         <li>
           {#if inPr(e.path)}
-            <button type="button" class="link" disabled={blocked} onclick={() => onevidence(e.path, e.line)}>
+            <button type="button" class="link" onclick={() => onevidence(e.path, e.line)}>
               {where(e.path, e.line)}
             </button>
           {:else}

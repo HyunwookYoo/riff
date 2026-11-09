@@ -107,7 +107,7 @@
     const head = reviewState.headSha;
     if (!r || !head) return null;
     const texts = staleTexts && staleTexts.sig === staleFor ? staleTexts.texts : undefined;
-    return { prKey: r.key, chapters: chaptersFor(r, reviewState.files), ...findingsToShow(r, head, reviewState.files, texts) };
+    return { prKey: r.key, createdAt: r.createdAt, chapters: chaptersFor(r, reviewState.files), ...findingsToShow(r, head, reviewState.files, texts) };
   });
   const chapter = $derived(ai?.chapters.find((c) => reviewState.selectedPath !== null && c.paths.includes(reviewState.selectedPath)) ?? null);
 
@@ -221,8 +221,13 @@
       if (tg.kind === "line" && tg.path === path && tg.side === side) {
         out.push({
           line: tg.line,
-          key: `f:${aiResult?.createdAt}:${f.id}:${tg.line}`,
-          mount: mountWith(InlineFinding, { prKey: shown!.prKey, finding: f, onevidence: showEvidence }),
+          key: `f:${shown!.createdAt}:${f.id}:${tg.line}`,
+          mount: mountWith(InlineFinding, {
+            prKey: shown!.prKey,
+            createdAt: shown!.createdAt,
+            finding: f,
+            onevidence: showEvidence,
+          }),
         });
       }
     }

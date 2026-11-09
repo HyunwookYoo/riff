@@ -133,6 +133,17 @@ export function findingsToShow(
   return out;
 }
 
+/**
+ * `result` with finding `id` marked `how`; null when there is nothing to do: no result, a
+ * different result than the one the finding came from (ids are positional), or already marked.
+ */
+export function applyHandled(
+  result: AiResult | null, expectedCreatedAt: string, id: string, how: "added" | "discarded",
+): AiResult | null {
+  if (!result || result.createdAt !== expectedCreatedAt || result.handled[id] === how) return null;
+  return { ...result, handled: { ...result.handled, [id]: how } };
+}
+
 /** The result's chapters over the current files: gone paths dropped, new ones under "Other". */
 export function chaptersFor(result: AiResult, files: FileHunks[]): AiChapter[] {
   const now = new Set(files.map((f) => f.path));

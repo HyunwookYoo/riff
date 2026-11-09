@@ -13,7 +13,7 @@
     onevidence,
   }: {
     /** The open PR's AI result, as shown; null without one. */
-    ai: { prKey: PrKey; chapters: AiChapter[]; inline: ShownFinding[]; offDiff: ShownFinding[]; unconfirmed: ShownFinding[] } | null;
+    ai: { prKey: PrKey; createdAt: string; chapters: AiChapter[]; inline: ShownFinding[]; offDiff: ShownFinding[]; unconfirmed: ShownFinding[] } | null;
     onevidence: (path: string, line: number | null) => void;
   } = $props();
 
@@ -68,12 +68,14 @@
   <div class="scroll">
     {#if ai}
       <ChapterList chapters={ai.chapters} {findingCounts} {row} />
-      <UnconfirmedList prKey={ai.prKey} findings={ai.unconfirmed} {onevidence} />
+      <UnconfirmedList prKey={ai.prKey} createdAt={ai.createdAt} findings={ai.unconfirmed} {onevidence} />
       {#if ai.offDiff.length > 0}
         <details class="outdated">
           <summary>Not on a diff line ({ai.offDiff.length})</summary>
-          {#each ai.offDiff as f (f.id)}
-            <div class="outdated-item"><InlineFinding prKey={ai.prKey} finding={f} showPath {onevidence} /></div>
+          {#each ai.offDiff as f (`${ai.createdAt}:${f.id}`)}
+            <div class="outdated-item">
+              <InlineFinding prKey={ai.prKey} createdAt={ai.createdAt} finding={f} showPath {onevidence} />
+            </div>
           {/each}
         </details>
       {/if}
