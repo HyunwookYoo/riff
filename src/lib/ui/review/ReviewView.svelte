@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { mount, onMount, unmount, type Component } from "svelte";
+  import { mount, onMount, unmount, untrack, type Component } from "svelte";
   import { EditorView } from "@codemirror/view";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -12,8 +12,11 @@
     isInlineThread,
     openPr,
     writeRecord,
+    readTexts,
     UNREADABLE,
   } from "$lib/review/reviewState.svelte";
+  import { aiState, isStale, requestAi } from "$lib/review/ai/aiState.svelte";
+  import { chaptersFor, findingsToShow } from "$lib/review/ai/result";
   import { onRecordChanged, REVEAL_EVENT, type RevealPayload } from "$lib/review/draftStore";
   import { addItem } from "$lib/review/draft";
   import { isCommentable } from "$lib/review/commentable";
@@ -28,6 +31,8 @@
   import Composer from "./Composer.svelte";
   import ReviewBar from "./ReviewBar.svelte";
   import NewSinceView from "./NewSinceView.svelte";
+  import InlineFinding from "./InlineFinding.svelte";
+  import ChapterIntent from "./ChapterIntent.svelte";
   import { reviewExtension, setInlineItems, trackView, type InlineItem } from "./cmReview";
   import { clickComposer, composerKey, textStash, type ComposerAt } from "./composerAt";
 
@@ -67,6 +72,44 @@
         }
       : undefined,
   );
+
+  const aiResult = $derived(reviewState.selectedKey ? (aiState.results[reviewState.selectedKey] ?? null) : null);
+  // A stale result is re-placed against the displayed head's texts, read once per (result, head).
+  const staleFor = $derived.by(() => {
+    const r = aiResult;
+    const head = reviewState.headSha;
+    const mb = reviewState.mergeBase;
+    return r && head && mb && isStale(r, head) ? `${r.key}|${r.createdAt}|${head}|${mb}` : null;
+  });
+  let staleTexts = $state.raw<{ sig: string; texts: Map<string, string> } | null>(null);
+  $effect(() => {
+    const sig = staleFor;
+    if (!sig) return;
+    let live = true;
+    untrack(() => {
+      const r = aiResult;
+      const head = reviewState.headSha;
+      const mb = reviewState.mergeBase;
+      if (!r || !head || !mb || !repoPath || staleTexts?.sig === sig) return;
+      const wanted = new Set(r.findings.map((f) => `${f.path}|${f.side}`));
+      void readTexts(repoPath, wanted, reviewState.files, mb, head)
+        .then((texts) => {
+          if (live) staleTexts = { sig, texts };
+        })
+        .catch(() => {});
+    });
+    return () => {
+      live = false;
+    };
+  });
+  const ai = $derived.by(() => {
+    const r = aiResult;
+    const head = reviewState.headSha;
+    if (!r || !head) return null;
+    const texts = staleTexts && staleTexts.sig === staleFor ? staleTexts.texts : undefined;
+    return { prKey: r.key, chapters: chaptersFor(r, reviewState.files), ...findingsToShow(r, head, reviewState.files, texts) };
+  });
+  const chapter = $derived(ai?.chapters.find((c) => reviewState.selectedPath !== null && c.paths.includes(reviewState.selectedPath)) ?? null);
 
   let composer = $state.raw<ComposerAt | null>(null);
   let note = $state.raw<{ path: string; side: Side; line: number; text: string } | null>(null);
@@ -172,6 +215,17 @@
         out.push({ line: tg.line, key: `d:${i.id}`, mount: mountWith(InlineDraft, { itemId: i.id }) });
       }
     }
+    const shown = ai;
+    for (const f of shown?.inline ?? []) {
+      const tg = f.target;
+      if (tg.kind === "line" && tg.path === path && tg.side === side) {
+        out.push({
+          line: tg.line,
+          key: `f:${aiResult?.createdAt}:${f.id}:${tg.line}`,
+          mount: mountWith(InlineFinding, { prKey: shown!.prKey, finding: f, onevidence: showEvidence }),
+        });
+      }
+    }
     const c = composer;
     if (c && c.path === path && c.side === side) {
       const label = c.startLine !== null ? `Comment on lines ${c.startLine}–${c.line}` : `Comment on line ${c.line}`;
@@ -244,6 +298,14 @@
     reveal = at.line !== null ? { path: at.path, side: at.side, line: at.line } : null;
   }
 
+  // An AI finding's evidence: select its file (in the PR) and reveal the line.
+  function showEvidence(path: string, line: number | null) {
+    if (!fileHunks(path)) return;
+    newSinceOpen = false;
+    reviewState.selectedPath = path;
+    reveal = line !== null ? { path, side: "RIGHT", line } : null;
+  }
+
   onMount(() => {
     const un = listen<RevealPayload>(REVEAL_EVENT, (e) => void onReveal(e.payload));
     return () => void un.then((u) => u());
@@ -290,7 +352,7 @@
   <div class="left" class:with-files={!!reviewState.selectedKey && reviewState.files.length > 0}>
     <PrList />
     {#if reviewState.selectedKey && reviewState.files.length > 0}
-      <ReviewFiles />
+      <ReviewFiles {ai} onevidence={showEvidence} />
     {/if}
   </div>
   <main class="review-main">
@@ -302,6 +364,15 @@
         <NewSinceView onclose={() => (newSinceOpen = false)} />
       {:else}
         <PrOverview />
+        {#if source && chapter && ai}
+          <ChapterIntent
+            {chapter}
+            stale={ai.stale}
+            onreanalyse={() => {
+              if (summary) requestAi(summary);
+            }}
+          />
+        {/if}
         {#if source}
           <DiffView {source} {sideExtensions} forceSideBySide />
         {:else if !reviewState.headSha && !reviewState.error}

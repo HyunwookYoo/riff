@@ -23,11 +23,28 @@ class AiState {
 
 export const aiState = new AiState();
 
+// Saves of one PR's result run in order; `written` is the last result saved per PR.
+const writes = new Map<PrKey, Promise<void>>();
+const written = new Map<PrKey, AiResult>();
+
+function queueWrite(key: PrKey, step: () => Promise<void>): Promise<void> {
+  const p = (writes.get(key) ?? Promise.resolve()).catch(() => {}).then(step);
+  writes.set(key, p);
+  return p;
+}
+
+function saveResult(r: AiResult): Promise<void> {
+  return queueWrite(r.key, async () => {
+    await saveAiResult(r);
+    written.set(r.key, r);
+  });
+}
+
 const runner = createRunner({
   ctx: aiState,
   jobDeps: { fetchPr, prDetail, prHunks, prDiffText, prCommitSubjects, readFileAt, aiRun, now: Date.now },
   runJob,
-  save: saveAiResult,
+  save: saveResult,
   notify: notifyReady,
 });
 
@@ -38,6 +55,20 @@ export function requestAi(pr: PrSummary): void {
 
 export function cancelAi(key: PrKey): void {
   cancelJob(runner, key);
+}
+
+/** Records what the user did with a finding of `key`'s current result, in memory and on disk. */
+export function setHandled(key: PrKey, id: string, how: "added" | "discarded"): Promise<void> {
+  const r = aiState.results[key];
+  if (!r || r.handled[id] === how) return Promise.resolve();
+  const next: AiResult = { ...r, handled: { ...r.handled, [id]: how } };
+  aiState.results = { ...aiState.results, [key]: next };
+  return queueWrite(key, async () => {
+    // A newer run saved first: don't put the older result back on disk.
+    if (written.get(key) && written.get(key)!.createdAt !== next.createdAt) return;
+    await saveAiResult(next);
+    written.set(key, next);
+  });
 }
 
 const inFlight = new Set<PrKey>();

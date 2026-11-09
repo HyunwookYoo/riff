@@ -1,4 +1,5 @@
 import type { DraftTarget, FileHunks, Side } from "../types";
+import { reanchor } from "../anchor";
 import { placeTarget } from "../commentable";
 import type { AiChapter, AiEvidence, AiFinding, AiResult, Severity } from "./types";
 
@@ -94,4 +95,55 @@ export function placeFinding(f: AiFinding, files: FileHunks[]): DraftTarget {
 
 export function chapterOf(result: AiResult, path: string): AiChapter | null {
   return result.chapters.find((c) => c.paths.includes(path)) ?? null;
+}
+
+/** A finding as shown now: `target` is where Add puts it (re-placed when the result is stale). */
+export interface ShownFinding extends AiFinding { target: DraftTarget }
+
+/** Off the current diff lines: a file comment if the file is in the PR, else the review body. */
+function offLine(f: AiFinding, files: FileHunks[]): DraftTarget {
+  const location = `${f.path}:${f.line}`;
+  return files.some((x) => x.path === f.path) ? { kind: "file", path: f.path, location } : { kind: "body", location };
+}
+
+/**
+ * Unhandled findings split for display. A stale result (analysed at another head)
+ * is re-placed by quote against `texts` (`${path}|${side}` → that side's text now).
+ */
+export function findingsToShow(
+  result: AiResult | null, headSha: string, files: FileHunks[], texts?: Map<string, string>,
+): { inline: ShownFinding[]; offDiff: ShownFinding[]; unconfirmed: ShownFinding[]; stale: boolean } {
+  const out = { inline: [] as ShownFinding[], offDiff: [] as ShownFinding[], unconfirmed: [] as ShownFinding[], stale: false };
+  if (!result) return out;
+  out.stale = result.headSha !== headSha;
+  for (const f of result.findings) {
+    if (result.handled[f.id]) continue;
+    let target: DraftTarget;
+    if (!out.stale) target = placeFinding(f, files);
+    else {
+      const text = texts?.get(`${f.path}|${f.side}`);
+      const lt = { kind: "line" as const, path: f.path, side: f.side, line: f.line, startLine: f.startLine, quote: f.quote };
+      const placed = text === undefined ? null : reanchor(lt, text, files.find((x) => x.path === f.path));
+      target = placed ? { ...lt, ...placed } : offLine(f, files);
+    }
+    const shown = { ...f, target };
+    if (f.status === "unconfirmed") out.unconfirmed.push(shown);
+    else (target.kind === "line" ? out.inline : out.offDiff).push(shown);
+  }
+  return out;
+}
+
+/** The result's chapters over the current files: gone paths dropped, new ones under "Other". */
+export function chaptersFor(result: AiResult, files: FileHunks[]): AiChapter[] {
+  const now = new Set(files.map((f) => f.path));
+  const chapters = result.chapters
+    .map((c) => ({ ...c, paths: c.paths.filter((p) => now.has(p)) }))
+    .filter((c) => c.paths.length);
+  const seen = new Set(chapters.flatMap((c) => c.paths));
+  const rest = files.map((f) => f.path).filter((p) => !seen.has(p));
+  if (!rest.length) return chapters;
+  const other = chapters.find((c) => c.title === "Other");
+  if (other) other.paths.push(...rest);
+  else chapters.push({ title: "Other", summary: "", paths: rest });
+  return chapters;
 }

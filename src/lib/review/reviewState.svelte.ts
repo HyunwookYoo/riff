@@ -21,6 +21,8 @@ class ReviewState {
   headSha = $state<string | null>(null);
   /** The base sha `files` (hunks) were computed against. */
   baseSha = $state<string | null>(null);
+  /** merge-base(base, head) of `files`: where LEFT texts are read. */
+  mergeBase = $state<string | null>(null);
   detail = $state<PrDetail | null>(null);
   files = $state<FileHunks[]>([]);
   record = $state<PrRecord | null>(null);
@@ -80,11 +82,22 @@ async function sideTexts(
   mergeBase: string,
   headSha: string,
 ): Promise<Map<string, string>> {
-  const texts = new Map<string, string>();
   const wanted = new Set<string>();
   for (const i of rec.items) {
     if (i.target.kind === "line") wanted.add(`${i.target.path}|${i.target.side}`);
   }
+  return readTexts(repo, wanted, files, mergeBase, headSha);
+}
+
+/** Full text per wanted `${path}|${side}`: RIGHT at `headSha`, LEFT at `mergeBase`; absent sides are left out. */
+export async function readTexts(
+  repo: string,
+  wanted: Set<string>,
+  files: FileHunks[],
+  mergeBase: string,
+  headSha: string,
+): Promise<Map<string, string>> {
+  const texts = new Map<string, string>();
   await Promise.all(
     [...wanted].map(async (k) => {
       const sep = k.lastIndexOf("|");
@@ -107,6 +120,7 @@ export async function openPr(key: PrKey): Promise<void> {
   s.selectedKey = key;
   s.headSha = null;
   s.baseSha = null;
+  s.mergeBase = null;
   s.error = null;
   s.detail = null;
   s.files = [];
@@ -138,6 +152,7 @@ export async function openPr(key: PrKey): Promise<void> {
         s.headSha = headSha;
         shownSeq++;
         s.baseSha = baseSha;
+        s.mergeBase = mergeBase;
         s.detail = detail;
         s.files = files;
         s.error = UNREADABLE; // record stays null; never saved over
@@ -169,6 +184,7 @@ export async function openPr(key: PrKey): Promise<void> {
     s.headSha = headSha;
     shownSeq++;
     s.baseSha = baseSha;
+    s.mergeBase = mergeBase;
     s.detail = detail;
     s.files = files;
     s.record = rec;

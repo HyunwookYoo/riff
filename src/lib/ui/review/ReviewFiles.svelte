@@ -1,6 +1,21 @@
 <script lang="ts">
   import { reviewState, isInlineThread, sortedPaths } from "$lib/review/reviewState.svelte";
+  import type { ShownFinding } from "$lib/review/ai/result";
+  import type { AiChapter } from "$lib/review/ai/types";
+  import type { PrKey } from "$lib/review/types";
   import InlineThread from "./InlineThread.svelte";
+  import InlineFinding from "./InlineFinding.svelte";
+  import ChapterList from "./ChapterList.svelte";
+  import UnconfirmedList from "./UnconfirmedList.svelte";
+
+  let {
+    ai,
+    onevidence,
+  }: {
+    /** The open PR's AI result, as shown; null without one. */
+    ai: { prKey: PrKey; chapters: AiChapter[]; inline: ShownFinding[]; offDiff: ShownFinding[]; unconfirmed: ShownFinding[] } | null;
+    onevidence: (path: string, line: number | null) => void;
+  } = $props();
 
   const paths = $derived(sortedPaths(reviewState.files));
   const threads = $derived(reviewState.detail?.threads ?? []);
@@ -22,28 +37,51 @@
     return m;
   });
 
+  const findingCounts = $derived.by(() => {
+    const m = new Map<string, number>();
+    for (const f of [...(ai?.inline ?? []), ...(ai?.offDiff ?? [])]) m.set(f.path, (m.get(f.path) ?? 0) + 1);
+    return m;
+  });
+
   const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
   const dir = (p: string) => p.slice(0, p.lastIndexOf("/") + 1);
 </script>
 
+{#snippet row(p: string)}
+  <button
+    type="button"
+    class="row"
+    class:selected={reviewState.selectedPath === p}
+    title={p}
+    onclick={() => (reviewState.selectedPath = p)}
+  >
+    <span class="name"><span class="muted">{dir(p)}</span>{base(p)}</span>
+    {#if threadCounts.get(p)}
+      <span class="badge">{threadCounts.get(p)} thread{threadCounts.get(p) === 1 ? "" : "s"}</span>
+    {/if}
+    {#if draftCounts.get(p)}<span class="badge draft">draft {draftCounts.get(p)}</span>{/if}
+  </button>
+{/snippet}
+
 <section class="review-files">
-  <div class="chapter">All files <span class="muted">{paths.length}</span></div>
+  {#if !ai}<div class="chapter">All files <span class="muted">{paths.length}</span></div>{/if}
   <div class="scroll">
-    {#each paths as p (p)}
-      <button
-        type="button"
-        class="row"
-        class:selected={reviewState.selectedPath === p}
-        title={p}
-        onclick={() => (reviewState.selectedPath = p)}
-      >
-        <span class="name"><span class="muted">{dir(p)}</span>{base(p)}</span>
-        {#if threadCounts.get(p)}
-          <span class="badge">{threadCounts.get(p)} thread{threadCounts.get(p) === 1 ? "" : "s"}</span>
-        {/if}
-        {#if draftCounts.get(p)}<span class="badge draft">draft {draftCounts.get(p)}</span>{/if}
-      </button>
-    {/each}
+    {#if ai}
+      <ChapterList chapters={ai.chapters} {findingCounts} {row} />
+      <UnconfirmedList prKey={ai.prKey} findings={ai.unconfirmed} {onevidence} />
+      {#if ai.offDiff.length > 0}
+        <details class="outdated">
+          <summary>Not on a diff line ({ai.offDiff.length})</summary>
+          {#each ai.offDiff as f (f.id)}
+            <div class="outdated-item"><InlineFinding prKey={ai.prKey} finding={f} showPath {onevidence} /></div>
+          {/each}
+        </details>
+      {/if}
+    {:else}
+      {#each paths as p (p)}
+        {@render row(p)}
+      {/each}
+    {/if}
     {#if outdated.length > 0}
       <details class="outdated">
         <summary>Outdated threads ({outdated.length})</summary>
