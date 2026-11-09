@@ -650,6 +650,91 @@ impl serde::Serialize for AiError {
     }
 }
 
+/// The claude process tree. `child.kill()` ends claude alone, leaving its
+/// hooks, git and MCP server running; on Windows claude goes into a Job
+/// Object that kills every process in it when its handle closes. The handle
+/// isn't inheritable, so it also closes, and kills the tree, when riff exits
+/// in any way.
+#[cfg(windows)]
+mod job {
+    use std::io;
+    use std::os::windows::io::AsRawHandle;
+    use std::process::Child;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    pub struct Job(pub(super) HANDLE);
+
+    fn check(ok: i32) -> io::Result<()> {
+        if ok == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    impl Job {
+        /// A new job holding `child`, which should have just been spawned:
+        /// a process it starts before this call stays outside.
+        pub fn new(child: &Child) -> io::Result<Job> {
+            let h = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if h.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let job = Job(h);
+            job.set_limits(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)?;
+            check(unsafe { AssignProcessToJobObject(h, child.as_raw_handle() as HANDLE) })?;
+            Ok(job)
+        }
+
+        fn set_limits(&self, flags: u32) -> io::Result<()> {
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+            info.BasicLimitInformation.LimitFlags = flags;
+            check(unsafe {
+                SetInformationJobObject(
+                    self.0,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const std::ffi::c_void,
+                    std::mem::size_of_val(&info) as u32,
+                )
+            })
+        }
+
+        pub fn kill(&self) {
+            unsafe { TerminateJobObject(self.0, 1) };
+        }
+
+        /// After claude exited by itself: whatever it left running (a hook's
+        /// background work) goes on, as it would without the job.
+        pub fn release(self) {
+            let _ = self.set_limits(0);
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod job {
+    pub struct Job;
+
+    impl Job {
+        pub fn new(_: &std::process::Child) -> std::io::Result<Job> {
+            Ok(Job)
+        }
+        pub fn kill(&self) {}
+        pub fn release(self) {}
+    }
+}
+
 /// Removes the generated MCP config however `run` returns.
 struct TempFile(PathBuf);
 
@@ -720,6 +805,21 @@ pub fn run(
         std::io::ErrorKind::NotFound => AiError::NotInstalled,
         _ => AiError::Failed(e.to_string()),
     })?;
+    let job = match job::Job::new(&child) {
+        Ok(job) => job,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AiError::Failed(format!(
+                "can't track the claude process: {e}"
+            )));
+        }
+    };
+    let kill = |child: &mut std::process::Child| {
+        job.kill();
+        let _ = child.kill();
+        let _ = child.wait();
+    };
     if let Some(mut stdin) = child.stdin.take() {
         let prompt = prompt.to_string();
         // Own thread so a long prompt can't deadlock against claude filling
@@ -774,18 +874,19 @@ pub fn run(
             Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(tick),
         }
         if cancelled() {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill(&mut child);
             return Err(AiError::Cancelled);
         }
-        if child
-            .try_wait()
-            .map_err(|e| AiError::Failed(e.to_string()))?
-            .is_some()
-        {
-            break;
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(e) => {
+                kill(&mut child);
+                return Err(AiError::Failed(e.to_string()));
+            }
         }
     }
+    job.release();
     // Lines written just before exit; bounded so a process that inherited
     // the pipes (a hook, the MCP server) can't hold this open.
     while let Ok((is_stderr, line)) = rx.recv_timeout(Duration::from_millis(200)) {
@@ -809,6 +910,113 @@ mod tests {
 
     fn exists_in<'a>(present: &'a [PathBuf]) -> impl Fn(&Path) -> bool + 'a {
         move |p| present.iter().any(|x| x == p)
+    }
+
+    /// `cmd` running `cmd /c ping` a second in, so the grandchild starts
+    /// after the job holds `cmd`; returns the job and handles to the three
+    /// processes in it.
+    #[cfg(windows)]
+    fn job_with_grandchild() -> (std::process::Child, job::Job, Vec<isize>) {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicProcessIdList, QueryInformationJobObject,
+        };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        };
+        #[repr(C)]
+        struct Pids {
+            assigned: u32,
+            listed: u32,
+            ids: [usize; 16],
+        }
+        let child = Command::new("cmd")
+            .raw_arg("/c ping -n 2 127.0.0.1 >nul & cmd /c ping -n 30 127.0.0.1 >nul")
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let job = job::Job::new(&child).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let pids = loop {
+            let mut p = Pids {
+                assigned: 0,
+                listed: 0,
+                ids: [0; 16],
+            };
+            let ok = unsafe {
+                QueryInformationJobObject(
+                    job.0,
+                    JobObjectBasicProcessIdList,
+                    &mut p as *mut _ as *mut std::ffi::c_void,
+                    std::mem::size_of::<Pids>() as u32,
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_ne!(ok, 0);
+            // cmd, the inner cmd and its ping (the first ping has ended).
+            if p.listed == 3 {
+                break p.ids[..3].to_vec();
+            }
+            assert!(std::time::Instant::now() < deadline, "no grandchild");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let handles = pids
+            .iter()
+            .map(|&pid| {
+                let h =
+                    unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pid as u32) };
+                assert!(!h.is_null(), "{pid}");
+                h as isize
+            })
+            .collect();
+        (child, job, handles)
+    }
+
+    #[cfg(windows)]
+    fn ended(h: isize, wait_ms: u32) -> bool {
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+        unsafe { WaitForSingleObject(h as _, wait_ms) == WAIT_OBJECT_0 }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn job_kills_the_whole_tree() {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        // Closing the handle, as when riff exits mid-run.
+        let (mut child, job, handles) = job_with_grandchild();
+        drop(job);
+        for &h in &handles {
+            assert!(ended(h, 5000));
+            unsafe { CloseHandle(h as _) };
+        }
+        child.wait().unwrap();
+        // Cancel.
+        let (mut child, job, handles) = job_with_grandchild();
+        job.kill();
+        for &h in &handles {
+            assert!(ended(h, 5000));
+            unsafe { CloseHandle(h as _) };
+        }
+        child.wait().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn released_job_leaves_the_tree_running() {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::TerminateProcess;
+        let (mut child, job, handles) = job_with_grandchild();
+        job.release();
+        std::thread::sleep(Duration::from_millis(300));
+        for &h in &handles {
+            assert!(!ended(h, 0));
+            unsafe {
+                TerminateProcess(h as _, 1);
+                CloseHandle(h as _);
+            }
+        }
+        child.wait().unwrap();
     }
 
     #[test]

@@ -30,3 +30,7 @@ notify = "8"
 ignore = "0.4"
 similar = "2"
 
+
+[target.'cfg(windows)'.dependencies]
+# Already in the tree (0.61.2); Job Objects for AI runs (ai::job).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
