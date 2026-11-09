@@ -57,7 +57,10 @@ function claudeArgs(schemaJson, mcpConfigPath, guardExe, model) {
   const settings = {
     hooks: {
       PreToolUse: [
-        { matcher: "Bash", hooks: [{ type: "command", command: `"${guardExe}" ${GUARD_FLAG}` }] },
+        {
+          matcher: "*",
+          hooks: [{ type: "command", command: `"${guardExe}" ${GUARD_FLAG} || exit 2` }],
+        },
       ],
     },
   };
@@ -105,6 +108,7 @@ const PROBES = [
   { cmd: "git -c core.pager=cat log -1", mustDeny: true },
   { cmd: "cat package.json", mustDeny: true },
   { cmd: "ls", mustDeny: true },
+  { cmd: "git grep -E -f package.json HEAD", mustDeny: true },
   { cmd: "git show HEAD:package.json", mustSucceed: true },
   { cmd: "git grep -n riff HEAD -- package.json", mustSucceed: true },
   {
@@ -141,6 +145,7 @@ function gitStatus() {
 function toolCalls(stdout) {
   const calls = new Map();
   let result = null;
+  let tools = null;
   for (const line of stdout.split("\n")) {
     let j;
     try {
@@ -168,9 +173,11 @@ function toolCalls(stdout) {
       }
     } else if (j.type === "result") {
       result = j;
+    } else if (j.type === "system" && j.subtype === "init") {
+      tools = j.tools;
     }
   }
-  return { calls: [...calls.values()], result };
+  return { calls: [...calls.values()], result, tools };
 }
 
 // Run as riff runs it: not as a child of another Claude Code session.
@@ -214,7 +221,8 @@ try {
       maxBuffer: 64 * 1024 * 1024,
       timeout: 5 * 60 * 1000,
     });
-    const { calls, result } = toolCalls(r.stdout ?? "");
+    const { calls, result, tools } = toolCalls(r.stdout ?? "");
+    if (probe === PROBES[0]) console.log(`session tools: ${JSON.stringify(tools)}`);
     const denied = (result?.permission_denials ?? []).map(
       (d) => `${d.tool_name}: ${d.tool_input?.command ?? JSON.stringify(d.tool_input)}`,
     );

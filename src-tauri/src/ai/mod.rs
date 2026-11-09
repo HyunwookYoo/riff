@@ -4,8 +4,9 @@
 //! else, and `--strict-mcp-config` loads agentmemory alone. The allow/deny
 //! lists can't stop the CLI's own auto-approval of commands like `cat`, or
 //! allow rules in the user's settings, so a PreToolUse hook (riff.exe in
-//! `AI_BASH_GUARD_FLAG` mode, `guard_allows`) hard-denies every other Bash
-//! command; the lists stay as defense in depth.
+//! `AI_BASH_GUARD_FLAG` mode, `guard_decision`) hard-denies every other Bash
+//! command and every tool outside the allowlist; the lists stay as defense
+//! in depth.
 
 use serde_json::{json, Value};
 use std::ffi::OsStr;
@@ -126,9 +127,11 @@ pub fn claude_args(
         .map(|s| s.to_string()),
     );
     args.push(mcp_config_path.to_string_lossy().into_owned());
-    let guard = format!("\"{}\" {AI_BASH_GUARD_FLAG}", guard_exe.display());
+    // `|| exit 2`: any other failure exit (a panic's 101, a missing exe)
+    // would be non-blocking, i.e. the call would go through unguarded.
+    let guard = format!("\"{}\" {AI_BASH_GUARD_FLAG} || exit 2", guard_exe.display());
     let settings = json!({ "hooks": { "PreToolUse": [{
-        "matcher": "Bash",
+        "matcher": "*",
         "hooks": [{ "type": "command", "command": guard }]
     }]}});
     args.push("--settings".into());
@@ -140,7 +143,7 @@ pub fn claude_args(
     args
 }
 
-/// argv[1] that makes riff.exe act as the Bash PreToolUse hook (handled in
+/// argv[1] that makes riff.exe act as the PreToolUse hook (handled in
 /// main.rs before Tauri starts).
 pub const AI_BASH_GUARD_FLAG: &str = "--ai-bash-guard";
 
@@ -176,9 +179,9 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
 
 /// Whether the AI's Bash call is one read-only git command: `git <sub>` with
 /// an allowed subcommand right after `git` (so no `-c`/`-C`/`--git-dir`), no
-/// shell operators, and no option that writes a file or runs a program.
-/// Long options also match by prefix both ways, because git accepts
-/// abbreviations (`--out=x` is `--output=x`).
+/// shell operators, and no option that writes a file, runs a program or
+/// reads a file outside git objects. Long options also match by prefix both
+/// ways, because git accepts abbreviations (`--out=x` is `--output=x`).
 pub fn guard_allows(command: &str) -> bool {
     const SUBCOMMANDS: &[&str] = &[
         "show",
@@ -190,7 +193,21 @@ pub fn guard_allows(command: &str) -> bool {
         "rev-parse",
     ];
     const OPERATORS: &[&str] = &[";", "&", "|", ">", "<", "`", "$(", "\n", "\r"];
-    const UNSAFE_LONG: &[&str] = &["output", "ext-diff", "textconv", "open-files-in-pager"];
+    const UNSAFE_LONG: &[&str] = &[
+        // write a file
+        "output",
+        // run a program (configured diff driver, filter, gpg)
+        "ext-diff",
+        "textconv",
+        "filters",
+        "show-signature",
+        "open-files-in-pager",
+        // read a file outside git objects
+        "file",
+        "no-index",
+        "untracked",
+        "resolve-git-dir",
+    ];
     if OPERATORS.iter().any(|op| command.contains(op)) {
         return false;
     }
@@ -204,6 +221,10 @@ pub fn guard_allows(command: &str) -> bool {
         return false;
     }
     rest.iter().all(|w| {
+        // UNC paths (`//host/x`) reach the network on Windows; `~` is home.
+        if w.starts_with("//") || w.starts_with("\\\\") || w.starts_with('~') {
+            return false;
+        }
         if let Some(long) = w.strip_prefix("--") {
             let name = long.split('=').next().unwrap_or_default();
             name.is_empty()
@@ -211,9 +232,9 @@ pub fn guard_allows(command: &str) -> bool {
                     .iter()
                     .any(|u| u.starts_with(name) || name.starts_with(u))
         } else if let Some(short) = w.strip_prefix('-') {
-            // `-O<cmd>` opens matches in a pager command; grep bundles short
-            // flags (`-nO`).
-            !(short.starts_with('O') || (sub == "grep" && short.contains('O')))
+            // Short flags bundle (`-nO`, `-pOx`): `O` is grep's pager command
+            // and log/show's orderfile, `f` grep's pattern file.
+            !(short.contains('O') || short == "f" || (sub == "grep" && short.contains('f')))
         } else {
             true
         }
@@ -221,13 +242,26 @@ pub fn guard_allows(command: &str) -> bool {
 }
 
 /// The `AI_BASH_GUARD_FLAG` hook on its PreToolUse stdin JSON: Err (exit 2,
-/// the reason goes to the model) blocks the call. Other tools pass; `--tools`
-/// already limits them. Input it can't read is blocked.
+/// the reason goes to the model) blocks the call. Only Bash (through
+/// `guard_allows`), the schema answer and the agentmemory tools of
+/// `ALLOWED_TOOLS` pass; anything else, or input it can't read, is blocked.
 pub fn guard_decision(hook_json: &str) -> Result<(), String> {
+    const OTHER_TOOLS: &[&str] = &[
+        "StructuredOutput",
+        "mcp__agentmemory__memory_recall",
+        "mcp__agentmemory__memory_smart_search",
+        "mcp__agentmemory__memory_save",
+    ];
     let v: Value = serde_json::from_str(hook_json)
         .map_err(|e| format!("riff AI guard: unreadable hook input: {e}"))?;
-    if v.get("tool_name").and_then(Value::as_str) != Some("Bash") {
+    let tool = v.get("tool_name").and_then(Value::as_str).unwrap_or("");
+    if OTHER_TOOLS.contains(&tool) {
         return Ok(());
+    }
+    if tool != "Bash" {
+        return Err(format!(
+            "Blocked by riff: the {tool:?} tool is not available here."
+        ));
     }
     let command = v
         .pointer("/tool_input/command")
@@ -242,6 +276,59 @@ pub fn guard_decision(hook_json: &str) -> Result<(), String> {
          redirects, chaining, options before the subcommand, unquoted globs or $. \
          Quote patterns with single quotes. Blocked: {command}"
     ))
+}
+
+/// Checks the hook before a run relies on it. Claude Code treats any hook
+/// exit other than 0/2 as non-blocking, so a guard that can't run would
+/// silently allow everything; `|| exit 2` in the hook command covers a
+/// crash, this covers a path the hook command can't quote and a guard that
+/// doesn't block. `run_guard` feeds `input` to `exe` on stdin and returns
+/// its exit code.
+fn verify_guard(exe: &Path, run_guard: &dyn Fn(&Path, &str) -> Option<i32>) -> Result<(), AiError> {
+    let unavailable = || AiError::Failed("AI guard unavailable".into());
+    if exe
+        .to_string_lossy()
+        .contains(|c| matches!(c, '"' | '$' | '`'))
+    {
+        return Err(unavailable());
+    }
+    let probe = json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": "cat x" }
+    });
+    match run_guard(exe, &probe.to_string()) {
+        Some(2) => Ok(()),
+        _ => Err(unavailable()),
+    }
+}
+
+/// `exe --ai-bash-guard` with `input` on stdin; None if it can't be run.
+fn run_guard_exe(exe: &Path, input: &str) -> Option<i32> {
+    let mut cmd = Command::new(exe);
+    cmd.arg(AI_BASH_GUARD_FLAG)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd.spawn().ok()?;
+    let mut stdin = child.stdin.take()?;
+    let _ = stdin.write_all(input.as_bytes());
+    drop(stdin);
+    child.wait().ok()?.code()
+}
+
+/// Variables a parent Claude Code session sets for its children; inherited,
+/// they would make the run a nested session. `CLAUDE_CODE_GIT_BASH_PATH` is
+/// user configuration (where Git Bash lives on Windows), not session state.
+fn is_nested_session_var(key: &str) -> bool {
+    let key = key.to_ascii_uppercase();
+    key == "CLAUDECODE" || (key.starts_with("CLAUDE_CODE_") && key != "CLAUDE_CODE_GIT_BASH_PATH")
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -344,8 +431,14 @@ pub fn run(
     let program = resolve_claude(path_var.as_deref(), home_dir().as_deref(), &|p| p.is_file())
         .ok_or(AiError::NotInstalled)?;
     let guard_exe = std::env::current_exe().map_err(|e| AiError::Failed(e.to_string()))?;
+    verify_guard(&guard_exe, &run_guard_exe)?;
     let mcp_config = write_mcp_config()?;
     let mut cmd = Command::new(program);
+    for (key, _) in std::env::vars_os() {
+        if key.to_str().is_some_and(is_nested_session_var) {
+            cmd.env_remove(key);
+        }
+    }
     cmd.args(claude_args(schema_json, &mcp_config.0, &guard_exe, model))
         .current_dir(cwd)
         .stdin(Stdio::piped())
@@ -549,8 +642,8 @@ mod tests {
         .collect();
         let exe = PathBuf::from(r"C:\Program Files\riff\riff.exe");
         let settings = json!({"hooks": {"PreToolUse": [{
-            "matcher": "Bash",
-            "hooks": [{"type": "command", "command": r#""C:\Program Files\riff\riff.exe" --ai-bash-guard"#}]
+            "matcher": "*",
+            "hooks": [{"type": "command", "command": r#""C:\Program Files\riff\riff.exe" --ai-bash-guard || exit 2"#}]
         }]}});
         let split = |args: Vec<String>| {
             let at = base.len();
@@ -584,6 +677,9 @@ mod tests {
             "git merge-base a b",
             "git rev-parse HEAD",
             "git log --oneline -5 --no-ext-diff",
+            "git log --follow --first-parent --format=%s -- a.rs",
+            "git rev-parse --show-toplevel",
+            "git grep -n -e foo HEAD",
             "  git show HEAD  ",
         ] {
             assert!(guard_allows(ok), "{ok}");
@@ -630,6 +726,24 @@ mod tests {
             "FOO=1 git show HEAD",
             "/usr/bin/git show HEAD",
             "git showx HEAD",
+            // Options that read files outside git objects or run programs.
+            "git grep -f x HEAD",
+            "git grep -E -f x HEAD",
+            "git grep -nf x HEAD",
+            "git grep --file=x HEAD",
+            "git log -f x",
+            "git log -pO x",
+            "git log -pOx",
+            "git show -pO x HEAD",
+            "git grep --no-index foo",
+            "git grep --untracked foo",
+            "git rev-parse --resolve-git-dir x",
+            "git cat-file --filters HEAD:a",
+            "git log --show-signature -1",
+            "git show HEAD -- //host/s",
+            r"git show HEAD -- '\\host\s'",
+            "git show ~/x",
+            "git show '~/x'",
         ] {
             assert!(!guard_allows(bad), "{bad:?}");
         }
@@ -644,15 +758,76 @@ mod tests {
         assert_eq!(guard_decision(&bash("git show HEAD:a.rs")), Ok(()));
         let err = guard_decision(&bash("cat package.json")).unwrap_err();
         assert!(err.contains("cat package.json"), "{err}");
-        assert_eq!(
-            guard_decision(
-                r#"{"tool_name":"mcp__agentmemory__memory_recall","tool_input":{"query":"x"}}"#
-            ),
-            Ok(())
-        );
+        let tool =
+            |name: &str| json!({"tool_name": name, "tool_input": {"query": "x"}}).to_string();
+        for ok in [
+            "StructuredOutput",
+            "mcp__agentmemory__memory_recall",
+            "mcp__agentmemory__memory_smart_search",
+            "mcp__agentmemory__memory_save",
+        ] {
+            assert_eq!(guard_decision(&tool(ok)), Ok(()), "{ok}");
+        }
+        for bad in [
+            "mcp__agentmemory__memory_governance_delete",
+            "Read",
+            "Write",
+            "PowerShell",
+            "mcp__plugin_atlassian_atlassian__executeWrite",
+            "",
+        ] {
+            assert!(guard_decision(&tool(bad)).is_err(), "{bad}");
+        }
         // Fail closed on input the guard can't read.
         assert!(guard_decision("not json").is_err());
+        assert!(guard_decision(r#"{"tool_input":{}}"#).is_err());
         assert!(guard_decision(r#"{"tool_name":"Bash","tool_input":{}}"#).is_err());
+    }
+
+    #[test]
+    fn verify_guard_needs_a_quotable_path_and_a_blocking_guard() {
+        let exe = Path::new(r"C:\Program Files\riff\riff.exe");
+        let exits = |code: Option<i32>| move |_: &Path, _: &str| code;
+        assert_eq!(verify_guard(exe, &exits(Some(2))), Ok(()));
+        for broken in [Some(0), Some(1), Some(101), None] {
+            assert_eq!(
+                verify_guard(exe, &exits(broken)),
+                Err(AiError::Failed("AI guard unavailable".into())),
+                "{broken:?}"
+            );
+        }
+        // The self-test input is a Bash call the guard has to block.
+        verify_guard(exe, &|_, input| {
+            assert!(guard_decision(input).is_err(), "{input}");
+            Some(2)
+        })
+        .unwrap();
+        for bad in [r#"C:\a"b\riff.exe"#, r"C:\$x\riff.exe", r"C:\`x`\riff.exe"] {
+            assert!(
+                verify_guard(Path::new(bad), &exits(Some(2))).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_session_vars_are_dropped() {
+        for k in [
+            "CLAUDECODE",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_SESSION_ID",
+            "claudecode",
+        ] {
+            assert!(is_nested_session_var(k), "{k}");
+        }
+        for k in [
+            "CLAUDE_CODE_GIT_BASH_PATH",
+            "PATH",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CONFIG_DIR",
+        ] {
+            assert!(!is_nested_session_var(k), "{k}");
+        }
     }
 
     // Trimmed from a real `claude -p --output-format stream-json --verbose` run

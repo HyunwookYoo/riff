@@ -21,7 +21,7 @@ fn main() {
             }
         });
     }
-    // AI runs register riff's own executable as Claude Code's Bash PreToolUse
+    // AI runs register riff's own executable as Claude Code's PreToolUse
     // hook (see ai::claude_args): the hook JSON comes on stdin, and exit 2
     // blocks the call with the stderr reason shown to the model. Unreadable
     // stdin fails closed through guard_decision.
