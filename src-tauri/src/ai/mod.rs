@@ -127,10 +127,18 @@ pub fn claude_args(
         .map(|s| s.to_string()),
     );
     args.push(mcp_config_path.to_string_lossy().into_owned());
+    // The checkout's `.claude/settings*.json` is repo content: its hooks,
+    // allow rules or `disableAllHooks` must not load (headless runs show no
+    // trust prompt). Only the user's settings do. This also drops the repo's
+    // CLAUDE.md (CLI 2.1.319 ties it to the `project` source); the user's
+    // global one still loads.
+    args.extend(["--setting-sources".to_string(), "user".to_string()]);
     // `|| exit 2`: any other failure exit (a panic's 101, a missing exe)
     // would be non-blocking, i.e. the call would go through unguarded.
     let guard = format!("\"{}\" {AI_BASH_GUARD_FLAG} || exit 2", guard_exe.display());
-    let settings = json!({ "hooks": { "PreToolUse": [{
+    // `disableAllHooks: false`: flag settings outrank the user's, whose
+    // `true` would switch the guard off too.
+    let settings = json!({ "disableAllHooks": false, "hooks": { "PreToolUse": [{
         "matcher": "*",
         "hooks": [{ "type": "command", "command": guard }]
     }]}});
@@ -896,13 +904,15 @@ mod tests {
             "--strict-mcp-config",
             "--mcp-config",
             r"C:\tmp\riff-ai-mcp-1-0.json",
+            "--setting-sources",
+            "user",
             "--settings",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect();
         let exe = PathBuf::from(r"C:\Program Files\riff\riff.exe");
-        let settings = json!({"hooks": {"PreToolUse": [{
+        let settings = json!({"disableAllHooks": false, "hooks": {"PreToolUse": [{
             "matcher": "*",
             "hooks": [{"type": "command", "command": r#""C:\Program Files\riff\riff.exe" --ai-bash-guard || exit 2"#}]
         }]}});
