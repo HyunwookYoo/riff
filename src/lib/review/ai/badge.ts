@@ -13,7 +13,9 @@ export function aiBadge(
     const s = Math.max(0, Math.floor((nowMs - job.startedAt) / 1000));
     return { text: `analysing ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`, kind: "running" };
   }
-  if (job?.kind === "failed") return { text: "AI failed", kind: "failed" };
+  // A failed re-run doesn't hide a result that is still current; PrList's
+  // tooltip still shows the failure.
+  if (job?.kind === "failed" && result?.headSha !== headSha) return { text: "AI failed", kind: "failed" };
   if (!result) return { text: "", kind: "none" };
   if (result.headSha !== headSha) return { text: "PR updated · re-analyse", kind: "stale" };
   const open = result.findings.filter((f) => f.status === "confirmed" && !result.handled[f.id]).length;

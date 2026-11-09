@@ -163,12 +163,12 @@ describe("runner", () => {
 
     cancelJob(r, a.key);
     expect(runs[0].cancel).toHaveBeenCalled();
-    expect(c.jobs[a.key]).toEqual({ kind: "failed", message: "Cancelled" });
+    expect(c.jobs[a.key]).toBeUndefined();
     expect(c.queue.running).toBe(b.key);
     expect(runJobSpy).toHaveBeenCalledTimes(2);
     await flush();
     await flush();
-    expect(c.jobs[a.key]).toEqual({ kind: "failed", message: "Cancelled" });
+    expect(c.jobs[a.key]).toBeUndefined();
     expect(c.jobs[b.key]).toEqual({ kind: "done" });
     expect(save.mock.calls.map(([x]) => x.key)).toEqual([b.key]);
     expect(c.queue).toEqual(emptyQueue());

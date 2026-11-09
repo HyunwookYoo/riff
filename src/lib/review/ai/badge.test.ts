@@ -33,6 +33,24 @@ describe("aiBadge", () => {
     expect(aiBadge({ kind: "done" }, r, "h", 0)).toEqual({ text: "AI ready · ⚠1", kind: "ready" });
     expect(aiBadge(undefined, r, "h", 0).kind).toBe("ready");
   });
+  it("queued and running win over a cached result", () => {
+    const r = result("h", [finding("f0", "confirmed")]);
+    expect(aiBadge({ kind: "queued" }, r, "h", 0).kind).toBe("queued");
+    const job = { kind: "running", pass: "verify", startedAt: 0, lastActivity: null } as const;
+    expect(aiBadge(job, r, "h", 0).kind).toBe("running");
+  });
+  it("done without a result is none", () => {
+    expect(aiBadge({ kind: "done" }, null, "h", 0)).toEqual({ text: "", kind: "none" });
+    expect(aiBadge({ kind: "done" }, undefined, "h", 0)).toEqual({ text: "", kind: "none" });
+  });
+  it("ready with no open findings shows 0", () => {
+    expect(aiBadge({ kind: "done" }, result("h"), "h", 0)).toEqual({ text: "AI ready · ⚠0", kind: "ready" });
+  });
+  it("a failed re-run keeps showing a result for the current head", () => {
+    const failed = { kind: "failed", message: "x" } as const;
+    expect(aiBadge(failed, result("h", [finding("f0", "confirmed")]), "h", 0)).toEqual({ text: "AI ready · ⚠1", kind: "ready" });
+    expect(aiBadge(failed, result("old"), "h", 0).kind).toBe("failed");
+  });
   it("stale when head moved", () => {
     expect(aiBadge(undefined, result("old"), "new", 0)).toEqual({ text: "PR updated · re-analyse", kind: "stale" });
   });

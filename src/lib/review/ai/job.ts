@@ -133,7 +133,7 @@ export function cancelJob(r: Runner, key: PrKey): void {
     a.cancelled = true;
     a.cancel();
   }
-  setJob(r, key, { kind: "failed", message: "Cancelled" });
+  setJob(r, key, null);
   startNext(r);
 }
 
