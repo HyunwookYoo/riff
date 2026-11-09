@@ -2,7 +2,10 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 type AiEvent =
   | { kind: "activity"; text: string }
-  | { kind: "result"; output: unknown; cost_usd: number | null };
+  | {
+      kind: "result"; output: unknown; cost_usd: number | null;
+      subtype: string | null; is_error: boolean; result: string | null;
+    };
 
 // Random start: the backend's cancelled set outlives a webview reload (see rebaseCheck.ts).
 let nextRunId = crypto.getRandomValues(new Uint32Array(1))[0] >>> 1;

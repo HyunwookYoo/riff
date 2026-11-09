@@ -550,11 +550,37 @@ pub enum AiEvent {
     /// A tool call, for the progress line.
     Activity { text: String },
     /// The run's `result` line; `output` is Null unless it succeeded with
-    /// structured output.
+    /// structured output. `result` is the CLI's text (the answer, or what
+    /// went wrong).
     Result {
         output: Value,
         cost_usd: Option<f64>,
+        subtype: Option<String>,
+        is_error: bool,
+        result: Option<String>,
     },
+}
+
+/// What the CLI said went wrong in a result line, or None if it reported no
+/// error: its text, led by the subtype unless that is `success` (being
+/// logged out comes as a `success` with `is_error`).
+fn result_failure(ev: &AiEvent) -> Option<String> {
+    let AiEvent::Result {
+        subtype,
+        is_error,
+        result,
+        ..
+    } = ev
+    else {
+        return None;
+    };
+    let text = result.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    match (subtype.as_deref(), text) {
+        (Some("success"), _) if !is_error => None,
+        (Some("success"), text) => text.map(String::from),
+        (sub, Some(t)) => Some(format!("{}: {t}", sub.unwrap_or("error"))),
+        (sub, None) => Some(sub.unwrap_or("error").to_string()),
+    }
 }
 
 /// One stream-json line. Everything but tool calls and the result is noise.
@@ -575,13 +601,19 @@ pub fn parse_stream_line(line: &str) -> Option<AiEvent> {
             Some(AiEvent::Activity { text })
         }
         "result" => {
-            let success = v.get("subtype").and_then(Value::as_str) == Some("success");
+            let text = |k: &str| v.get(k).and_then(Value::as_str).map(String::from);
+            let subtype = text("subtype");
             let output = match v.get("structured_output") {
-                Some(o) if success => o.clone(),
+                Some(o) if subtype.as_deref() == Some("success") => o.clone(),
                 _ => Value::Null,
             };
-            let cost_usd = v.get("total_cost_usd").and_then(Value::as_f64);
-            Some(AiEvent::Result { output, cost_usd })
+            Some(AiEvent::Result {
+                output,
+                cost_usd: v.get("total_cost_usd").and_then(Value::as_f64),
+                subtype,
+                is_error: v.get("is_error").and_then(Value::as_bool) == Some(true),
+                result: text("result"),
+            })
         }
         _ => None,
     }
@@ -699,6 +731,7 @@ pub fn run(
     drop(tx);
 
     let mut output = Value::Null;
+    let mut failure: Option<String> = None;
     let mut stderr_tail: Vec<String> = Vec::new();
     let mut feed = |is_stderr: bool, line: String| {
         if is_stderr {
@@ -713,6 +746,7 @@ pub fn run(
         if let Some(ev) = parse_stream_line(&line) {
             if let AiEvent::Result { output: o, .. } = &ev {
                 output = o.clone();
+                failure = result_failure(&ev);
             }
             on_event(ev);
         }
@@ -745,11 +779,13 @@ pub fn run(
     if !output.is_null() {
         return Ok(output);
     }
-    Err(AiError::Failed(if stderr_tail.is_empty() {
-        "no structured output".into()
-    } else {
-        stderr_tail.join("\n")
-    }))
+    Err(AiError::Failed(failure.unwrap_or_else(|| {
+        if stderr_tail.is_empty() {
+            "no structured output".into()
+        } else {
+            stderr_tail.join("\n")
+        }
+    })))
 }
 
 #[cfg(test)]
@@ -1247,9 +1283,61 @@ mod tests {
             parse_stream_line(SUCCESS_RESULT),
             Some(AiEvent::Result {
                 output: json!({"ok": true}),
-                cost_usd: Some(0.01118273)
+                cost_usd: Some(0.01118273),
+                subtype: Some("success".into()),
+                is_error: false,
+                result: Some(r#"{"ok":true}"#.into()),
             })
         );
+    }
+
+    // Shapes of real failures: logged out (a `success` with `is_error`), and
+    // a turn limit, which carries no result text.
+    const LOGGED_OUT_RESULT: &str = r#"{"type":"result","subtype":"success","is_error":true,"duration_ms":312,"duration_api_ms":0,"num_turns":1,"result":"Not logged in · Please run /login","stop_reason":"stop_sequence","session_id":"283c94fc-0769-4417-85b4-6c5cc99239bb","total_cost_usd":0,"permission_denials":[]}"#;
+    const MAX_TURNS_RESULT: &str = r#"{"type":"result","subtype":"error_max_turns","is_error":true,"duration_ms":91234,"duration_api_ms":88000,"num_turns":31,"stop_reason":"tool_use","session_id":"283c94fc-0769-4417-85b4-6c5cc99239bb","total_cost_usd":0.4,"permission_denials":[]}"#;
+
+    #[test]
+    fn parse_failed_result_keeps_the_cli_message() {
+        assert_eq!(
+            parse_stream_line(LOGGED_OUT_RESULT),
+            Some(AiEvent::Result {
+                output: Value::Null,
+                cost_usd: Some(0.0),
+                subtype: Some("success".into()),
+                is_error: true,
+                result: Some("Not logged in · Please run /login".into()),
+            })
+        );
+        assert_eq!(
+            parse_stream_line(MAX_TURNS_RESULT),
+            Some(AiEvent::Result {
+                output: Value::Null,
+                cost_usd: Some(0.4),
+                subtype: Some("error_max_turns".into()),
+                is_error: true,
+                result: None,
+            })
+        );
+    }
+
+    #[test]
+    fn result_failure_prefers_the_cli_message() {
+        let failure = |line: &str| result_failure(&parse_stream_line(line).unwrap());
+        assert_eq!(
+            failure(LOGGED_OUT_RESULT).as_deref(),
+            Some("Not logged in · Please run /login")
+        );
+        assert_eq!(failure(MAX_TURNS_RESULT).as_deref(), Some("error_max_turns"));
+        let with_text =
+            MAX_TURNS_RESULT.replace(r#""num_turns""#, r#""result":"stopped","num_turns""#);
+        assert_eq!(
+            failure(&with_text).as_deref(),
+            Some("error_max_turns: stopped")
+        );
+        // A clean result without structured output leaves it to stderr.
+        let no_output = SUCCESS_RESULT.replace(r#""structured_output":{"ok":true},"#, "");
+        assert_eq!(failure(&no_output), None);
+        assert_eq!(result_failure(&AiEvent::Activity { text: "x".into() }), None);
     }
 
     #[test]
