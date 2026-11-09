@@ -207,7 +207,7 @@ const env = Object.fromEntries(
     ["gpg.x509.program", "riff-gpg-disabled"],
     ["core.fsmonitor", "false"],
     ["protocol.allow", "never"],
-    ["core.attributesFile", "riff-no-attributes"],
+    ["core.attributesFile", process.platform === "win32" ? "nul" : "/dev/null"],
   ];
   config.forEach(([k, v], i) => {
     env[`GIT_CONFIG_KEY_${base + i}`] = k;

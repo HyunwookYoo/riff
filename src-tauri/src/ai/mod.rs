@@ -152,11 +152,13 @@ pub const AI_BASH_GUARD_FLAG: &str = "--ai-bash-guard";
 /// or a quote is unterminated: expansion could produce words the guard
 /// never saw (`${IFS}--output=x`, `\-\-output`, `{--output=x,}`). Words
 /// split on space and tab only, as bash does; any other whitespace (NBSP,
-/// VT, FF, …) is refused because the guard and bash would disagree on it.
+/// VT, FF, …) or control character (NUL, ESC, …) is refused because the
+/// guard and bash would disagree on it, and so are unquoted `(`/`)`
+/// (extglob patterns like `@(a.txt)`).
 fn shell_words(command: &str) -> Option<Vec<String>> {
     if command
         .chars()
-        .any(|c| c.is_whitespace() && c != ' ' && c != '\t')
+        .any(|c| (c.is_whitespace() || c.is_control()) && c != ' ' && c != '\t')
     {
         return None;
     }
@@ -174,7 +176,9 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
                 quote = Some(c);
                 word.get_or_insert_with(String::new);
             }
-            None if matches!(c, '\\' | '$' | '{' | '}' | '*' | '?' | '[') => return None,
+            None if matches!(c, '\\' | '$' | '{' | '}' | '*' | '?' | '[' | '(' | ')') => {
+                return None
+            }
             None => word.get_or_insert_with(String::new).push(c),
         }
     }
@@ -285,20 +289,21 @@ fn option_words(sub: &str, w: &str, next: Option<&str>) -> Option<usize> {
 }
 
 /// A rev, path or `rev:path` word: repo-relative only. Absolute, drive
-/// (`C:/x`, and drive-relative `C:x`, which git also treats as absolute),
-/// home, UNC (in any slash mix, which Windows git sends to SMB) and `..`
-/// paths are refused, as is pathspec magic `:(…)`; a rev range `a..b` is
-/// fine because its `..` touches no separator. `{`/`}` are refused outright:
-/// git skips colons inside `^{…}`/`@{…}`, so its `rev:path` split would
-/// differ from the one checked here.
+/// (any single character then `:`, which Git for Windows treats as a drive:
+/// `C:x`, `1:x`, `ä:x`), UNC (in any slash mix, which Windows git sends to
+/// SMB) and `..` paths are refused, as is pathspec magic `:(…)`; a rev range
+/// `a..b` is fine because its `..` touches no separator. Refused anywhere:
+/// `{`/`}` (git skips colons inside `^{…}`/`@{…}`, so its `rev:path` split
+/// would differ from the one checked here), and `=`/`~` (bash expands `~`
+/// after `=`, MSYS rewrites `=/c/…` paths, so git would get another word).
 fn positional_ok(w: &str) -> bool {
-    if w.contains(['{', '}']) {
+    if w.contains(['{', '}', '=', '~']) {
         return false;
     }
     let path_ok = |p: &str| {
-        let b = p.as_bytes();
-        let drive = b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':';
-        !(p.starts_with(['/', '\\', '~'])
+        let mut chars = p.chars();
+        let drive = chars.next().is_some() && chars.next() == Some(':');
+        !(p.starts_with(['/', '\\'])
             || p.starts_with(":(")
             || drive
             || p == ".."
@@ -408,7 +413,7 @@ pub fn guard_decision(hook_json: &str) -> Result<(), String> {
          git cat-file -t|-s|-p|-e <object>; git merge-base [--is-ancestor --all] <a> <b>; \
          git rev-parse [--verify --short] <rev>. \
          Paths are repo-relative (no absolute, drive, ~, .. or // paths); revs are names or \
-         SHAs (no ^{{...}} or @{{...}}); formats can't use %G or %(; \
+         SHAs (no ^{{...}}, @{{...}}, ~ or =); formats can't use %G or %(; \
          no pipes, redirects, chaining, unquoted globs or $. Quote patterns with single quotes. \
          Blocked: {command}"
     ))
@@ -493,6 +498,7 @@ fn is_nested_session_var(key: &str) -> bool {
 /// system or global `.gitattributes`), so no textconv or filter driver is
 /// ever selected.
 fn child_env(parent: &[(String, String)]) -> Vec<(String, Option<String>)> {
+    const NULL_DEVICE: &str = if cfg!(windows) { "nul" } else { "/dev/null" };
     const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
     const GIT_CONFIG: &[(&str, &str)] = &[
         ("gpg.program", "riff-gpg-disabled"),
@@ -500,7 +506,9 @@ fn child_env(parent: &[(String, String)]) -> Vec<(String, Option<String>)> {
         ("gpg.x509.program", "riff-gpg-disabled"),
         ("core.fsmonitor", "false"),
         ("protocol.allow", "never"),
-        ("core.attributesFile", "riff-no-attributes"),
+        // The null device: a relative value resolves against the worktree,
+        // where a PR could add the file.
+        ("core.attributesFile", NULL_DEVICE),
     ];
     let mut env: Vec<(String, Option<String>)> = parent
         .iter()
@@ -916,6 +924,8 @@ mod tests {
             "git grep -n '//host/x' HEAD",
             "git log\t--oneline\tHEAD",
             "git log --format='%h %s' -1",
+            "git log --format='%h %s' a..b",
+            "git grep -n 'a=~(b)' HEAD",
         ] {
             assert!(guard_allows(ok), "{ok}");
         }
@@ -1037,6 +1047,21 @@ mod tests {
             "git log -- 'C:Windows'",
             "git show 'abc:C:x'",
             "git show Q:",
+            // P2-R8: any single char before `:` is a drive to Git for
+            // Windows; `=`/`~` change what bash/MSYS hand git; control chars;
+            // unquoted parentheses (extglob).
+            "git show '1:x'",
+            "git show '_:x'",
+            "git show 'ä:x'",
+            "git show 'HEAD:1:x'",
+            "git show 'HEAD:.:/x'",
+            "git show a=~/.gitconfig",
+            "git log -- a=/c/Windows/win.ini",
+            "git show HEAD~1",
+            "git show HE\u{0}AD",
+            "git show HEAD\u{1b}x",
+            "git show HEAD (x)",
+            "git log -- @(a.txt)",
         ] {
             assert!(!guard_allows(bad), "{bad:?}");
         }
@@ -1142,6 +1167,9 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect()
         };
+        // Relative values resolve against the worktree, where a PR could add
+        // the file; the null device can't be shadowed.
+        let null_device = if cfg!(windows) { "nul" } else { "/dev/null" };
         let env = child_env(&parent(&[
             ("PATH", "C:\\bin"),
             ("CLAUDECODE", "1"),
@@ -1155,7 +1183,7 @@ mod tests {
             ("gpg.x509.program", "riff-gpg-disabled"),
             ("core.fsmonitor", "false"),
             ("protocol.allow", "never"),
-            ("core.attributesFile", "riff-no-attributes"),
+            ("core.attributesFile", null_device),
         ]
         .into_iter()
         .enumerate()
