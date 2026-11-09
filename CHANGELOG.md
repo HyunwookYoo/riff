@@ -3,6 +3,40 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v2.6.0
+
+**PR Review 모드**를 추가했습니다. 리뷰어로 지정된 PR을 riff 안에서 읽고, 코멘트를 모아 GitHub 리뷰로 제출하고, 로컬 Claude Code로 AI 리뷰와 재리뷰 검증까지 할 수 있습니다.
+
+### ✨ 하이라이트
+
+- **PR Review 모드** — 상단 `PR Review` 버튼(또는 `Ctrl+Shift+W` 순환)으로 들어갑니다. riff에 열어 둔 저장소(서브모듈 포함)의 **리뷰 요청된 PR**과 **내가 리뷰한 열린 PR**을 보여줍니다. github.com과 GitHub Enterprise Server 모두 `gh` 로그인을 그대로 씁니다.
+    - PR은 체크아웃하지 않고 `refs/riff/pr/*`로만 가져옵니다. 작업 트리·브랜치·원격 ref는 건드리지 않습니다.
+    - **Description / Files changed** 두 탭: 본문과 대화, 그리고 좌우 diff. 기존 리뷰 스레드가 해당 줄에 붙고, 답글·resolve가 됩니다.
+    - git hunk 줄의 `+`로 줄·범위 코멘트를 달고, 모은 초안은 **별도 초안 창**에서 한눈에 보고 고친 뒤 **리뷰 하나로 제출**합니다(Comment / Approve / Request changes). 초안은 재시작해도 남습니다.
+    - 작성자가 push하면 초안을 새 줄로 옮기고, **New since you looked** 를 확인하기 전에는 제출을 막습니다. 리뷰는 항상 최신 head에 묶입니다.
+- **gh 로그인과 번들** — 로그인 안 된 호스트에 **Sign in** 버튼: 일회용 코드를 보여주고 브라우저 승인 후 목록을 새로 고칩니다. 릴리즈 빌드에는 GitHub CLI(2.93.0)가 함께 들어 있어 따로 설치할 필요가 없습니다.
+- **AI 리뷰** — PR마다 **AI review** 를 누르면 로컬 Claude Code가 백그라운드에서 PR을 읽고 두 단계(찾기 → 반박 검증)로 분석합니다. 한 번에 하나씩 실행되고, 끝나면 OS 알림이 옵니다.
+    - 결과: 읽는 순서대로 묶은 **챕터와 의도 요약**, diff 줄 아래 **검증된 지적**(심각도·근거), 확신 못 한 것은 접힌 **Unconfirmed** 영역.
+    - 지적은 **Add / Edit / Discard** 로만 초안이 됩니다. AI가 GitHub에 직접 올리는 일은 없습니다.
+- **재리뷰 검증** — 내 리뷰 뒤 작성자가 push했으면 **Re-review** 로 내 스레드마다 ✓ Addressed / ✗ Not addressed / ? Unclear 를 근거와 함께 보여줍니다. rebase해도 PR 자체 변경만 비교합니다.
+- **리뷰 기억** — 지적을 추가·버림, 내 스레드 resolve, 재리뷰 판정을 riff가 agentmemory에 짧게 기록하고, 다음 AI 리뷰가 이 저장소의 과거 반응을 참고합니다. PR 본문·코멘트 내용은 기록하지 않습니다.
+
+### 🔒 AI 실행 안전장치
+
+- AI는 **읽기 전용 git 명령**(show / grep / log / ls-tree / cat-file / merge-base / rev-parse, 허용된 옵션만)만 쓸 수 있고, riff의 가드 훅이 그 밖의 모든 도구·명령을 거부합니다. 파일 쓰기, 네트워크, 저장소 밖 읽기, gpg·textconv 실행이 막힙니다.
+- MCP는 agentmemory **조회만** 허용합니다. 저장소에 커밋된 `.claude/settings.json`은 무시하고, 저장소 `CLAUDE.md`는 PR이 바꿀 수 없는 base 브랜치 버전만 전달합니다.
+- 취소하거나 riff를 끄면 claude와 하위 프로세스까지 정리합니다.
+
+### 📝 참고
+
+- AI 리뷰·재리뷰는 **Claude Code CLI**(`%USERPROFILE%\.local\bin\claude.exe`)가 설치·로그인되어 있어야 하고, 사용량은 본인 Claude 플랜에서 나갑니다.
+- 리뷰 기억은 agentmemory가 `http://` 로 실행 중일 때만 기록됩니다(꺼져 있으면 조용히 건너뜀).
+- 알림 플러그인 추가로 Tauri가 2.12로 올라갔습니다.
+
+### 📦 설치 / 업그레이드
+
+- 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+
 ## v2.5.0
 
 **rebase가 conflict로 멈출지 시작하기 전에 알려주고**, Branch 모드 커밋 표에서 SHA로 커밋을 찾을 수 있게 했습니다.
