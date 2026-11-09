@@ -1,14 +1,15 @@
 <script lang="ts">
   import { reviewState, reloadDetail, writeRecord } from "$lib/review/reviewState.svelte";
   import { addItem } from "$lib/review/draft";
-  import { setThreadResolved } from "$lib/review/github";
+  import { setThreadResolved, viewerLogin } from "$lib/review/github";
   import { draftLocked } from "$lib/review/submitFlow.svelte";
   import Composer from "./Composer.svelte";
   import InlineDraft from "./InlineDraft.svelte";
   import { textStash } from "./composerAt";
   import { aiState } from "$lib/review/ai/aiState.svelte";
   import { verdictLabel } from "$lib/review/ai/rereview";
-  import { recordReaction, threadReaction } from "$lib/review/ai/memory";
+  import type { GhRepo, ReviewThread } from "$lib/review/types";
+  import { ownThreadResolved, recordReaction } from "$lib/review/ai/memory";
 
   let { threadId, onevidence }: {
     threadId: string;
@@ -46,6 +47,16 @@
     return true;
   }
 
+  /** Only for a thread the viewer started; skipped if their login can't be had. */
+  function rememberResolved(t: ReviewThread, repo: GhRepo) {
+    viewerLogin(repo.host)
+      .then((login) => {
+        const r = ownThreadResolved(t, login, repo);
+        if (r) recordReaction(r);
+      })
+      .catch(() => {});
+  }
+
   async function toggleResolved() {
     const t = thread;
     const repo = reviewState.prs.find((p) => p.key === reviewState.selectedKey)?.repo;
@@ -54,7 +65,7 @@
     error = null;
     try {
       await setThreadResolved(repo.host, t.id, !t.isResolved);
-      if (!t.isResolved) recordReaction(threadReaction(t, "resolved", repo));
+      if (!t.isResolved) rememberResolved(t, repo);
       await reloadDetail();
     } catch (e) {
       error = String(e);

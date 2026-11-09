@@ -260,9 +260,18 @@ describe("runner", () => {
     expect(saveRereview).toHaveBeenCalledTimes(1);
   });
 
-  it("a finished re-review records one memory per verdict, after saving", async () => {
+  it("a finished re-review records one memory per answered verdict, after saving", async () => {
     const { d } = deps({ chapters: [], findings: [] });
     withMyThread(d);
+    const one = (await d.prDetail("h", "N1")).threads[0];
+    d.prDetail.mockImplementation(async (_h: string, node: string) => ({
+      ...detail(`H${node.slice(1)}`, `B${node.slice(1)}`), threads: [one, { ...one, id: "t2", path: "b.ts" }],
+    }));
+    // The AI answers t1 only; t2's filled-in "no answer" verdict is not a memory.
+    d.aiRun.mockImplementation(() => ({
+      done: Promise.resolve({ verdicts: [{ threadId: "t1", verdict: "addressed", reason: "r", evidence: [] }] }),
+      cancel: vi.fn(),
+    }));
     const order: string[] = [];
     const saveRereview = vi.fn(async () => { order.push("save"); });
     const remember = vi.fn(() => { order.push("remember"); });
@@ -271,8 +280,8 @@ describe("runner", () => {
     await flush();
     expect(order).toEqual(["save", "remember"]);
     expect(remember).toHaveBeenCalledWith({
-      content: `riff review: reviewer's comment thread in "a.ts" was judged unclear`,
-      project: "o/r", concepts: ["riff-review", "thread-unclear"],
+      content: `riff review (o/r): reviewer's comment thread in "a.ts" was judged addressed`,
+      project: "o/r", concepts: ["riff-review", "thread-addressed", "repo-o-r"],
     });
   });
 

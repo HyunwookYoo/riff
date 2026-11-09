@@ -1,9 +1,9 @@
 import type { FileCompare } from "../gh";
-import type { PrKey, PrSummary, ReviewThread } from "../types";
+import type { GhRepo, PrKey, PrSummary, ReviewThread } from "../types";
 import { baseInstructions, type JobDeps } from "./job";
-import { MAX_DIFF_CHARS, MEMORY_HINT, UNTRUSTED_END, UNTRUSTED_START, evidenceItem, fenced, gitRules } from "./prompts";
+import { MAX_DIFF_CHARS, UNTRUSTED_END, UNTRUSTED_START, evidenceItem, fenced, gitRules, memoryRules } from "./prompts";
 import { evidenceOf } from "./result";
-import type { AiJobState, AiResult, RereviewResult, ThreadVerdict, Verdict } from "./types";
+import { NO_ANSWER, type AiJobState, type AiResult, type RereviewResult, type ThreadVerdict, type Verdict } from "./types";
 
 export const REREVIEW_SCHEMA = {
   type: "object",
@@ -74,7 +74,7 @@ function patch(text: string | undefined): string {
   return fenced(text.length > MAX_DIFF_CHARS ? `${text.slice(0, MAX_DIFF_CHARS)}\n[patch truncated]` : text);
 }
 
-export function rereviewPrompt(a: { head: string; oldHead: string; threads: ReviewThread[]; compares: FileCompare[] }): string {
+export function rereviewPrompt(a: { repo: GhRepo; head: string; oldHead: string; threads: ReviewThread[]; compares: FileCompare[] }): string {
   const paths = [...new Set(a.threads.map((t) => t.path))];
   const files = paths.flatMap((path) => {
     const c = a.compares.find((x) => x.path === path);
@@ -101,7 +101,7 @@ export function rereviewPrompt(a: { head: string; oldHead: string; threads: Revi
     "Rules for reading code:",
     ...gitRules("- Read a file with `git show <head>:<path>` (the code now) or `git show <oldHead>:<path>` (the code at the last review), using the SHAs given above."),
     "",
-    MEMORY_HINT,
+    ...memoryRules(a.repo),
     "",
     "Each patch below is PR-only: the file's diff from the PR's merge-base to that commit, so base-branch changes (from a rebase or merge) are not in it. Compare the patch at oldHead with the patch at head to see what the author changed, and read the code at head before deciding.",
     "",
@@ -135,7 +135,7 @@ export function normalizeVerdicts(raw: unknown, threads: ReviewThread[]): Thread
       reason: typeof v.reason === "string" ? v.reason : "", evidence: evidenceOf(v.evidence),
     });
   }
-  return threads.map((t) => byId.get(t.id) ?? { threadId: t.id, verdict: "unclear", reason: "no answer", evidence: [] });
+  return threads.map((t) => byId.get(t.id) ?? { threadId: t.id, verdict: "unclear", reason: NO_ANSWER, evidence: [] });
 }
 
 /**
@@ -165,7 +165,7 @@ export async function runRereview(
     d.prFileCompare(repoPath, base, oldHead, head, [...new Set(threads.map((t) => t.path))]),
     d.prHunks(repoPath, base, head).then(({ mergeBase }) => baseInstructions(d, repoPath, mergeBase)),
   ]);
-  const run = d.aiRun(repoPath, rereviewPrompt({ head, oldHead, threads, compares }), REREVIEW_SCHEMA, (t) =>
+  const run = d.aiRun(repoPath, rereviewPrompt({ repo: pr.repo, head, oldHead, threads, compares }), REREVIEW_SCHEMA, (t) =>
     onState({ kind: "running", pass: "rereview", startedAt, lastActivity: t }), instructions);
   const verdicts = normalizeVerdicts(await run.done, threads);
   return { fromHead: oldHead, toHead: head, createdAt: new Date(d.now()).toISOString(), verdicts };

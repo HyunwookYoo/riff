@@ -81,7 +81,7 @@ export async function runJob(
   if (candidates.length) {
     const verdicts = await pass(
       "verify",
-      verifyPrompt({ repoPath, head, mergeBase, candidates: candidates.map((c, index) => ({ index, ...c })) }),
+      verifyPrompt({ repo: pr.repo, repoPath, head, mergeBase, candidates: candidates.map((c, index) => ({ index, ...c })) }),
       VERIFY_SCHEMA,
     );
     findings = mergeVerdicts(candidates, verdicts);

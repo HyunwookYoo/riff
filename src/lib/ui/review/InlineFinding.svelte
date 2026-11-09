@@ -83,10 +83,15 @@
 
   async function discard() {
     if (blocked || busy) return;
+    busy = true;
     const memo = reaction("discarded");
-    textStash.delete(editKey);
-    await handle("discarded");
-    if (memo) recordReaction(memo);
+    try {
+      textStash.delete(editKey);
+      await handle("discarded");
+      if (memo) recordReaction(memo);
+    } finally {
+      busy = false;
+    }
   }
 
   const where = (path: string, line: number | null) => (line !== null ? `${path}:${line}` : path);

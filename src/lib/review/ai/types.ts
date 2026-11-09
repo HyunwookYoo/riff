@@ -11,6 +11,8 @@ export interface AiFinding {
 }
 export type Verdict = "addressed" | "not_addressed" | "unclear";
 export interface ThreadVerdict { threadId: string; verdict: Verdict; reason: string; evidence: AiEvidence[] }
+/** The `reason` of a verdict riff filled in because the AI gave none for the thread. */
+export const NO_ANSWER = "no answer";
 /** Whether the commits since my last submitted review (`fromHead`) address my open threads. */
 export interface RereviewResult { fromHead: string; toHead: string; createdAt: string; verdicts: ThreadVerdict[] }
 /** `headSha` is "" when no AI review ran yet and the record only holds a re-review (see `hasReview`). */

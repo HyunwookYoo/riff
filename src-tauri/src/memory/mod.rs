@@ -11,12 +11,18 @@ pub fn remember_body(content: &str, project: &str, concepts: &[String]) -> Value
     json!({ "content": content, "project": project, "concepts": concepts, "type": "fact" })
 }
 
-/// The POST to `<url>/agentmemory/remember`, built but not sent.
+/// The POST to `<url>/agentmemory/remember`, built but not sent. Only a
+/// plain `http://` URL is accepted (the client has no TLS).
 pub fn remember_request(
     url: &str,
     secret: Option<&str>,
     body: &Value,
 ) -> Result<Request<String>, String> {
+    if !url.starts_with("http://") {
+        return Err(format!(
+            "AGENTMEMORY_URL must start with http://, not {url:?}"
+        ));
+    }
     let mut b = Request::post(format!(
         "{}/agentmemory/remember",
         url.trim_end_matches('/')
@@ -28,10 +34,11 @@ pub fn remember_request(
     b.body(body.to_string()).map_err(|e| e.to_string())
 }
 
-/// Sends `body` with a 2 s overall timeout; blocking.
+/// Sends `body` with a 2 s overall timeout, following no redirects; blocking.
 pub fn remember(url: &str, secret: Option<&str>, body: &Value) -> Result<(), String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(2)))
+        .max_redirects(0)
         .build()
         .into();
     let res = agent
@@ -75,5 +82,13 @@ mod tests {
         let r = remember_request("http://h:1", Some("s3"), &body).unwrap();
         assert_eq!(r.uri(), "http://h:1/agentmemory/remember");
         assert_eq!(r.headers()["authorization"], "Bearer s3");
+    }
+
+    #[test]
+    fn remember_rejects_a_url_that_is_not_plain_http() {
+        let body = remember_body("c", "o/r", &[]);
+        for url in ["https://h", "file:///x", "HTTP://h", "localhost:3111", ""] {
+            assert!(remember_request(url, None, &body).is_err(), "{url}");
+        }
     }
 }
