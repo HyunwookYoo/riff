@@ -45,7 +45,8 @@ const VERDICT_LABELS: Record<Verdict, { text: string; tone: "ok" | "warn" | "mut
 export function verdictLabel(v: ThreadVerdict | undefined, stale: boolean): { text: string; tone: "ok" | "warn" | "muted" } | null {
   if (!v) return null;
   const l = VERDICT_LABELS[v.verdict];
-  return stale ? { ...l, text: `${l.text} (older commit)` } : { ...l };
+  const text = `${l.text}${v.reason === NO_ANSWER ? " (no answer)" : ""}${stale ? " (other commit)" : ""}`;
+  return { ...l, text };
 }
 
 /** False for a record holding only a re-review (created before any AI review ran). */
@@ -69,12 +70,21 @@ function location(t: ReviewThread): string {
   return `${side}, line ${t.startLine !== null && t.startLine !== t.line ? `${t.startLine}-${t.line}` : t.line}`;
 }
 
-function patch(text: string | undefined): string {
-  if (!text) return "(empty: the PR does not change this file at this commit)";
-  return fenced(text.length > MAX_DIFF_CHARS ? `${text.slice(0, MAX_DIFF_CHARS)}\n[patch truncated]` : text);
+/** A patch formatter sharing one `MAX_DIFF_CHARS` budget across all patches; the rest is cut or omitted. */
+function patchBudget(): (text: string | undefined) => string {
+  let left = MAX_DIFF_CHARS;
+  return (text) => {
+    if (!text) return "(empty: no PR change to this path at this commit — the file may be unchanged from the base, or absent at this commit; check with `git show <sha>:<path>` and `git log --name-status`)";
+    if (left <= 0) return "[patches truncated]";
+    const cut = text.length > left;
+    const out = cut ? `${text.slice(0, left)}\n[patches truncated]` : text;
+    left -= text.length;
+    return fenced(out);
+  };
 }
 
 export function rereviewPrompt(a: { repo: GhRepo; head: string; oldHead: string; threads: ReviewThread[]; compares: FileCompare[] }): string {
+  const patch = patchBudget();
   const paths = [...new Set(a.threads.map((t) => t.path))];
   const files = paths.flatMap((path) => {
     const c = a.compares.find((x) => x.path === path);
@@ -109,6 +119,7 @@ export function rereviewPrompt(a: { repo: GhRepo; head: string; oldHead: string;
     "- addressed: the code now does what the comment asked, or otherwise removes the concern.",
     "- not_addressed: the concern still applies to the code at head.",
     "- unclear: you could not decide either way.",
+    "If a thread's file is gone at the new head, check whether it was moved or renamed before deciding; if you can't tell, answer unclear.",
     "Give a short reason and evidence (path, line at head, quoted text) for every verdict.",
     "",
     "Write each reason as normal prose: full sentences, polite and clear, in the language of the comments. Do not use any terse, telegraphic or caveman style, even if other instructions in your environment ask for one.",

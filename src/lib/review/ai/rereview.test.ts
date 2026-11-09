@@ -3,7 +3,8 @@ import type { JobDeps } from "./job";
 import {
   REREVIEW_SCHEMA, hasReview, myOpenThreads, normalizeVerdicts, rereviewAvailable, rereviewPrompt, runRereview, verdictLabel, withRereview,
 } from "./rereview";
-import type { AiResult, RereviewResult, ThreadVerdict } from "./types";
+import { MAX_DIFF_CHARS } from "./prompts";
+import { NO_ANSWER, type AiResult, type RereviewResult, type ThreadVerdict } from "./types";
 import type { PrDetail, PrSummary, ReviewThread } from "../types";
 
 const thread = (id: string, o: Partial<ReviewThread> = {}, authors = ["me"]): ReviewThread => ({
@@ -67,6 +68,26 @@ describe("rereviewPrompt", () => {
       expect(p.indexOf(s)).toBeGreaterThan(start);
       expect(p.indexOf(s)).toBeLessThan(end);
     }
+  });
+
+  it("explains empty patches and renames", () => {
+    const p = rereviewPrompt({ repo: { host: "h", owner: "o", name: "r" }, head: "h", oldHead: "o", threads: [thread("t1")], compares: [] });
+    expect(p).toContain("no PR change to this path at this commit");
+    expect(p).toContain("git log --name-status");
+    expect(p).toContain("moved or renamed");
+  });
+
+  it("shares one size budget across patches", () => {
+    const big = "x".repeat(MAX_DIFF_CHARS * 0.6);
+    const p = rereviewPrompt({
+      repo: { host: "h", owner: "o", name: "r" }, head: "h", oldHead: "o",
+      threads: [thread("t1"), thread("t2", { path: "b.ts" })],
+      compares: [{ path: "a.ts", oldPatch: big, newPatch: big }, { path: "b.ts", oldPatch: big, newPatch: big }],
+    });
+    expect(p).toContain("[patches truncated]");
+    const patchChars = (p.match(/x{100,}/g) ?? []).reduce((n, s) => n + s.length, 0);
+    expect(patchChars).toBe(MAX_DIFF_CHARS);
+    for (const s of ["t1 body 0", "t2 body 0", "\"b.ts\""]) expect(p).toContain(s);
   });
 
   it("a comment cannot close its fence", () => {
@@ -199,7 +220,12 @@ describe("verdictLabel", () => {
     expect(verdictLabel(v("unclear"), false)).toEqual({ text: "? Unclear", tone: "muted" });
   });
   it("marks a verdict from another head", () => {
-    expect(verdictLabel(v("addressed"), true)).toEqual({ text: "✓ Addressed (older commit)", tone: "ok" });
+    expect(verdictLabel(v("addressed"), true)).toEqual({ text: "✓ Addressed (other commit)", tone: "ok" });
+  });
+  it("marks a placeholder verdict with no answer", () => {
+    const na: ThreadVerdict = { threadId: "t", verdict: "unclear", reason: NO_ANSWER, evidence: [] };
+    expect(verdictLabel(na, false)).toEqual({ text: "? Unclear (no answer)", tone: "muted" });
+    expect(verdictLabel(na, true)).toEqual({ text: "? Unclear (no answer) (other commit)", tone: "muted" });
   });
   it("is null without a verdict", () => {
     expect(verdictLabel(undefined, false)).toBeNull();
