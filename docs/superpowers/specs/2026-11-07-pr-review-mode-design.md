@@ -184,8 +184,11 @@ git commands above. No edit, write or arbitrary shell tools.
 How much of the user's own Claude Code setup the run gets (the user decided:
 keep their context):
 
-- **Loaded:** the user's global and the repo's `CLAUDE.md`, the user's
-  (not the working tree's project) settings and hooks, and the agentmemory
+- **Loaded:** the user's global `CLAUDE.md`; the repo's root `CLAUDE.md`
+  as committed at the PR's merge-base (riff reads it from git objects and
+  passes it with `--append-system-prompt-file`, capped at 64 KB, so a PR
+  can't change it; its `@imports` are not followed); the user's (not the
+  working tree's project) settings and hooks; and the agentmemory
   MCP server for **recall only** (`memory_recall`, `memory_smart_search`).
   *(Revised 2026-11-09, user decision: the AI reads PR-author-controlled
   text, so it must not be able to plant memories; `memory_save` is denied.

@@ -18,7 +18,7 @@
 - AI runs **only on the user's request** per PR. There are no automatic runs.
 - Jobs queue and run **one at a time**. A queued or running job can be cancelled.
 - **Read-only toward the repo.** The AI may run only read-only git commands: `git show`, `git grep`, `git log`, `git ls-tree`, `git cat-file`, `git merge-base`, `git rev-parse`. It reads from git objects at the PR head, never from the working tree. It has no Read, Grep, Glob, Edit, Write, WebFetch or other shell tools. This is enforced by CLI flags (`--tools`, `--allowedTools`, `--disallowedTools`, `--permission-mode dontAsk`), not by prompt wording alone.
-- **Loaded:** the user's global and repo `CLAUDE.md`, settings and hooks, and the agentmemory MCP server only. **Blocked:** every other MCP server, via `--strict-mcp-config` with a generated config that lists agentmemory only.
+- **Loaded:** the user's global `CLAUDE.md`, the repo's root `CLAUDE.md` read by riff at the merge-base (passed via `--append-system-prompt-file`), the user's settings and hooks only (`--setting-sources user`), and the agentmemory MCP server for recall only (`memory_save` denied; revised 2026-11-09). **Blocked:** every other MCP server, via `--strict-mcp-config` with a generated config that lists agentmemory only.
 - **Every finding shown as a finding passed the verify pass and carries evidence.**
   - Refuted findings are dropped.
   - A finding without evidence is treated as refuted.
