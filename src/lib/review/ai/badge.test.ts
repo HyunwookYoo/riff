@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiBadge, aiErrorText, shouldLoad } from "./badge";
+import { aiBadge, aiErrorText, rereviewButtonState, shouldLoad } from "./badge";
 import type { AiFinding, AiResult } from "./types";
 
 const finding = (id: string, status: AiFinding["status"]): AiFinding => ({
@@ -76,5 +76,24 @@ describe("shouldLoad", () => {
     expect(shouldLoad("a", {}, new Set())).toBe(true);
     expect(shouldLoad("a", { a: null }, new Set())).toBe(false);
     expect(shouldLoad("a", {}, new Set(["a"]))).toBe(false);
+  });
+});
+
+describe("rereviewButtonState", () => {
+  it("idle after no job or a finished one", () => {
+    expect(rereviewButtonState(undefined, 0)).toEqual({ text: "Re-review", busy: false });
+    expect(rereviewButtonState({ kind: "done" }, 0)).toEqual({ text: "Re-review", busy: false });
+  });
+  it("queued", () => {
+    expect(rereviewButtonState({ kind: "queued" }, 0)).toEqual({ text: "re-review queued", busy: true });
+  });
+  it("running shows m:ss", () => {
+    const job = { kind: "running", pass: "rereview", startedAt: 1000, lastActivity: null } as const;
+    expect(rereviewButtonState(job, 1000 + 65_000)).toEqual({ text: "re-reviewing 1:05", busy: true });
+  });
+  it("failed carries the error as tooltip and can be retried", () => {
+    expect(rereviewButtonState({ kind: "failed", message: "ai-malformed: x" }, 0)).toEqual({
+      text: "re-review failed", busy: false, title: "The AI returned an unexpected answer — try again.",
+    });
   });
 });

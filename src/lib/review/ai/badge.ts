@@ -23,6 +23,20 @@ export function aiBadge(
   return { text: `AI ready · ⚠${open}`, kind: "ready" };
 }
 
+/** The Re-review button's text; `busy` = a click cancels, `title` = why the last run failed. */
+export function rereviewButtonState(
+  job: AiJobState | undefined,
+  nowMs: number,
+): { text: string; busy: boolean; title?: string } {
+  if (job?.kind === "queued") return { text: "re-review queued", busy: true };
+  if (job?.kind === "running") {
+    const s = Math.max(0, Math.floor((nowMs - job.startedAt) / 1000));
+    return { text: `re-reviewing ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`, busy: true };
+  }
+  if (job?.kind === "failed") return { text: "re-review failed", busy: false, title: aiErrorText(job.message) };
+  return { text: "Re-review", busy: false };
+}
+
 export function aiErrorText(message: string): string {
   const m = message.trim();
   if (m.startsWith("ai-malformed")) return "The AI returned an unexpected answer — try again.";

@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { JobDeps } from "./job";
 import {
-  REREVIEW_SCHEMA, hasReview, myOpenThreads, normalizeVerdicts, rereviewAvailable, rereviewPrompt, runRereview, withRereview,
+  REREVIEW_SCHEMA, hasReview, myOpenThreads, normalizeVerdicts, rereviewAvailable, rereviewPrompt, runRereview, verdictLabel, withRereview,
 } from "./rereview";
-import type { AiResult, RereviewResult } from "./types";
+import type { AiResult, RereviewResult, ThreadVerdict } from "./types";
 import type { PrDetail, PrSummary, ReviewThread } from "../types";
 
 const thread = (id: string, o: Partial<ReviewThread> = {}, authors = ["me"]): ReviewThread => ({
@@ -188,5 +188,20 @@ describe("withRereview", () => {
     const r = withRereview(null, "k", rr);
     expect(r).toMatchObject({ version: 1, key: "k", chapters: [], findings: [], handled: {}, rereview: rr });
     expect(hasReview(r)).toBe(false);
+  });
+});
+
+describe("verdictLabel", () => {
+  const v = (verdict: ThreadVerdict["verdict"]): ThreadVerdict => ({ threadId: "t", verdict, reason: "", evidence: [] });
+  it("labels each verdict", () => {
+    expect(verdictLabel(v("addressed"), false)).toEqual({ text: "✓ Addressed", tone: "ok" });
+    expect(verdictLabel(v("not_addressed"), false)).toEqual({ text: "✗ Not addressed", tone: "warn" });
+    expect(verdictLabel(v("unclear"), false)).toEqual({ text: "? Unclear", tone: "muted" });
+  });
+  it("marks a verdict from another head", () => {
+    expect(verdictLabel(v("addressed"), true)).toEqual({ text: "✓ Addressed (older commit)", tone: "ok" });
+  });
+  it("is null without a verdict", () => {
+    expect(verdictLabel(undefined, false)).toBeNull();
   });
 });

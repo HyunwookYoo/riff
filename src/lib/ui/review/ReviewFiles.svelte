@@ -92,7 +92,7 @@
             <div class="path muted" title={t.path}>
               {t.path}{t.originalLine !== null ? `:${t.originalLine}` : ""}
             </div>
-            <InlineThread threadId={t.id} />
+            <InlineThread threadId={t.id} {onevidence} />
           </div>
         {/each}
       </details>

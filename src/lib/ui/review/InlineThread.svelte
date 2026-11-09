@@ -6,8 +6,14 @@
   import Composer from "./Composer.svelte";
   import InlineDraft from "./InlineDraft.svelte";
   import { textStash } from "./composerAt";
+  import { aiState } from "$lib/review/ai/aiState.svelte";
+  import { verdictLabel } from "$lib/review/ai/rereview";
 
-  let { threadId }: { threadId: string } = $props();
+  let { threadId, onevidence }: {
+    threadId: string;
+    /** Select `path` and reveal `line` (null: just the file). */
+    onevidence?: (path: string, line: number | null) => void;
+  } = $props();
 
   const thread = $derived(reviewState.detail?.threads.find((t) => t.id === threadId));
   const replies = $derived(
@@ -20,6 +26,12 @@
   // Reopen a reply box that was open when the widget was last drawn.
   let replying = $state(textStash.has(replyKey));
   let showResolved = $state(false);
+  let verdictOpen = $state(false);
+  const rereview = $derived(reviewState.selectedKey ? aiState.results[reviewState.selectedKey]?.rereview : undefined);
+  const verdict = $derived(rereview?.verdicts.find((v) => v.threadId === threadId));
+  const label = $derived(thread && !thread.isResolved ? verdictLabel(verdict, rereview?.toHead !== reviewState.headSha) : null);
+  const inPr = (path: string) => reviewState.files.some((x) => x.path === path);
+  const where = (path: string, line: number | null) => (line !== null ? `${path}:${line}` : path);
   let busy = $state(false);
   let error = $state<string | null>(null);
 
@@ -66,6 +78,28 @@
         {thread.isResolved ? "Unresolve" : "Resolve"}
       </button>
     </div>
+    {#if label && verdict}
+      <div class="verdict {label.tone}">
+        <button type="button" class="link" onclick={() => (verdictOpen = !verdictOpen)}>
+          {verdictOpen ? "▾" : "▸"} <b>{label.text}</b>
+        </button>
+        {#if verdictOpen}
+          <pre class="body">{verdict.reason}</pre>
+          <ul class="evidence">
+            {#each verdict.evidence as e, i (i)}
+              <li>
+                {#if onevidence && inPr(e.path)}
+                  <button type="button" class="link" onclick={() => onevidence(e.path, e.line)}>{where(e.path, e.line)}</button>
+                {:else}
+                  <span class="loc">{where(e.path, e.line)}</span>
+                {/if}
+                <pre class="quote">{e.quote}</pre>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    {/if}
     {#if !thread.isResolved || showResolved}
       {#each thread.comments as c (c.id)}
         <div class="comment">
@@ -126,6 +160,35 @@
     padding: 0;
     color: var(--muted);
     cursor: pointer;
+  }
+  .verdict {
+    font-size: 0.85em;
+  }
+  .verdict.ok b {
+    color: var(--ok-fg, #2da44e);
+  }
+  .verdict.warn b {
+    color: var(--warn-fg, #d29922);
+  }
+  .verdict.muted b {
+    color: var(--muted);
+  }
+  .evidence {
+    margin: 4px 0 0;
+    padding-left: 16px;
+  }
+  .loc {
+    font-family: var(--mono);
+    color: var(--muted);
+  }
+  .quote {
+    margin: 2px 0 4px;
+    padding: 2px 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--mono);
+    background: var(--input-bg);
+    border-radius: 3px;
   }
   .comment {
     border-top: 1px solid var(--border);

@@ -78,9 +78,11 @@
       for (const k of keys) void loadResultFor(k);
     });
   });
-  // Tick each second only while a job runs, so "analysing m:ss" advances.
+  // Tick each second only while a job (review or re-review) runs, so "analysing m:ss" advances.
   let aiNow = $state(Date.now());
-  const anyRunning = $derived(Object.values(aiState.jobs).some((j) => j.kind === "running"));
+  const anyRunning = $derived(
+    [...Object.values(aiState.jobs), ...Object.values(aiState.rereviewJobs)].some((j) => j.kind === "running"),
+  );
   $effect(() => {
     if (!anyRunning) return;
     aiNow = Date.now();

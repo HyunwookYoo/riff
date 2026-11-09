@@ -34,6 +34,7 @@
   import NewSinceView from "./NewSinceView.svelte";
   import InlineFinding from "./InlineFinding.svelte";
   import ChapterIntent from "./ChapterIntent.svelte";
+  import RereviewButton from "./RereviewButton.svelte";
   import { reviewExtension, setInlineItems, trackView, type InlineItem } from "./cmReview";
   import { clickComposer, composerKey, textStash, type ComposerAt } from "./composerAt";
 
@@ -211,7 +212,7 @@
     const out: InlineItem[] = [];
     for (const t of reviewState.detail?.threads ?? []) {
       if (t.path === path && t.side === side && isInlineThread(t)) {
-        out.push({ line: t.line!, key: `t:${t.id}`, mount: mountWith(InlineThread, { threadId: t.id }) });
+        out.push({ line: t.line!, key: `t:${t.id}`, mount: mountWith(InlineThread, { threadId: t.id, onevidence: showEvidence }) });
       }
     }
     for (const i of reviewState.record?.items ?? []) {
@@ -374,6 +375,7 @@
         <NewSinceView onclose={() => (newSinceOpen = false)} />
       {:else}
         <PrOverview />
+        {#if summary}<div class="rereview-row"><RereviewButton pr={summary} /></div>{/if}
         {#if source && chapter && ai}
           <ChapterIntent
             {chapter}
@@ -431,6 +433,13 @@
     color: var(--error-fg);
     border-bottom: 1px solid var(--border);
     white-space: pre-wrap;
+  }
+  .rereview-row {
+    display: flex;
+    padding: 0 10px;
+  }
+  .rereview-row:empty {
+    display: none;
   }
   .placeholder {
     margin: auto;

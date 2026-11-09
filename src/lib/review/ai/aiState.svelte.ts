@@ -13,7 +13,7 @@ import { applyHandled } from "./result";
 import type { AiJobState, AiResult, RereviewResult } from "./types";
 
 export { isStale } from "./aiStore";
-export { aiBadge, aiErrorText, shouldLoad } from "./badge";
+export { aiBadge, aiErrorText, rereviewButtonState, shouldLoad } from "./badge";
 import { shouldLoad } from "./badge";
 
 class AiState {

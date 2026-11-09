@@ -35,6 +35,19 @@ export function rereviewAvailable(pr: PrSummary, threads: ReviewThread[], login:
   return pr.myLastReviewSha !== null && pr.myLastReviewSha !== pr.headSha && myOpenThreads(threads, login).length > 0;
 }
 
+const VERDICT_LABELS: Record<Verdict, { text: string; tone: "ok" | "warn" | "muted" }> = {
+  addressed: { text: "✓ Addressed", tone: "ok" },
+  not_addressed: { text: "✗ Not addressed", tone: "warn" },
+  unclear: { text: "? Unclear", tone: "muted" },
+};
+
+/** `stale`: the verdict was made for a head other than the one displayed. */
+export function verdictLabel(v: ThreadVerdict | undefined, stale: boolean): { text: string; tone: "ok" | "warn" | "muted" } | null {
+  if (!v) return null;
+  const l = VERDICT_LABELS[v.verdict];
+  return stale ? { ...l, text: `${l.text} (older commit)` } : { ...l };
+}
+
 /** False for a record holding only a re-review (created before any AI review ran). */
 export function hasReview(r: AiResult): boolean {
   return r.headSha !== "";
