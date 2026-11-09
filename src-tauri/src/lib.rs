@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod diff;
 pub mod git;
 pub mod github;
@@ -23,6 +24,11 @@ struct RebaseChecks(std::sync::Mutex<std::collections::HashSet<u32>>);
 /// `RebaseChecks` (the running login polls and kills gh).
 #[derive(Default)]
 struct GhLogins(std::sync::Mutex<std::collections::HashSet<u32>>);
+
+/// Ids of AI runs the frontend has asked to stop; same protocol as
+/// `RebaseChecks` (the running run polls and kills claude).
+#[derive(Default)]
+struct AiRuns(std::sync::Mutex<std::collections::HashSet<u32>>);
 
 #[derive(Clone, serde::Serialize)]
 struct RebaseCheckProgress {
@@ -528,6 +534,42 @@ fn cancel_gh_login(logins: tauri::State<'_, GhLogins>, id: u32) {
     logins.0.lock().unwrap().insert(id);
 }
 
+/// A run takes minutes, so it gets a blocking-pool thread rather than one of
+/// the async runtime's workers.
+#[tauri::command]
+async fn ai_run(
+    app: tauri::AppHandle,
+    path: String,
+    prompt: String,
+    schema: String,
+    model: Option<String>,
+    id: u32,
+    on_event: tauri::ipc::Channel<ai::AiEvent>,
+) -> Result<serde_json::Value, ai::AiError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let runs = app.state::<AiRuns>();
+        let result = ai::run(
+            Path::new(&path),
+            &prompt,
+            &schema,
+            model.as_deref(),
+            &mut |ev| {
+                let _ = on_event.send(ev);
+            },
+            &|| runs.0.lock().unwrap().remove(&id),
+        );
+        runs.0.lock().unwrap().remove(&id);
+        result
+    })
+    .await
+    .map_err(|e| ai::AiError::Failed(e.to_string()))?
+}
+
+#[tauri::command]
+fn cancel_ai_run(runs: tauri::State<'_, AiRuns>, id: u32) {
+    runs.0.lock().unwrap().insert(id);
+}
+
 #[tauri::command]
 async fn pr_hunks(
     state: tauri::State<'_, GitCli>,
@@ -762,6 +804,7 @@ pub fn run() {
         .manage(watch::RepoWatch::new())
         .manage(RebaseChecks::default())
         .manage(GhLogins::default())
+        .manage(AiRuns::default())
         .setup(|app| {
             // The watcher needs an AppHandle to emit events; it only exists now.
             app.state::<watch::RepoWatch>()
@@ -836,6 +879,8 @@ pub fn run() {
             gh_api,
             gh_login,
             cancel_gh_login,
+            ai_run,
+            cancel_ai_run,
             pr_hunks,
             pr_changed_files,
             mark_pr_seen,
