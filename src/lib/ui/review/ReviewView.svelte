@@ -120,6 +120,8 @@
   let composer = $state.raw<ComposerAt | null>(null);
   let note = $state.raw<{ path: string; side: Side; line: number; text: string } | null>(null);
   let newSinceOpen = $state(false);
+  // Main-area tab: the PR description and conversation, or the changed files.
+  let tab = $state<"description" | "files">("description");
   // A "Show in main" target waiting for its file's editor.
   let reveal = $state.raw<{ path: string; side: Side; line: number } | null>(null);
 
@@ -129,6 +131,7 @@
     note = null;
     newSinceOpen = false;
     reveal = null;
+    tab = "description";
     textStash.clear();
   });
 
@@ -305,6 +308,7 @@
     }
     if (!at || !fileHunks(at.path)) return;
     newSinceOpen = false;
+    tab = "files";
     reviewState.selectedPath = at.path;
     reveal = at.line !== null ? { path: at.path, side: at.side, line: at.line } : null;
   }
@@ -313,6 +317,7 @@
   function showEvidence(path: string, line: number | null) {
     if (!fileHunks(path)) return;
     newSinceOpen = false;
+    tab = "files";
     reviewState.selectedPath = path;
     reveal = line !== null ? { path, side: "RIGHT", line } : null;
   }
@@ -363,7 +368,7 @@
   <div class="left" class:with-files={!!reviewState.selectedKey && reviewState.files.length > 0}>
     <PrList />
     {#if reviewState.selectedKey && reviewState.files.length > 0}
-      <ReviewFiles {ai} onevidence={showEvidence} />
+      <ReviewFiles {ai} onevidence={showEvidence} onpickfile={() => (tab = "files")} />
     {/if}
   </div>
   <main class="review-main">
@@ -374,23 +379,51 @@
       {#if newSinceOpen}
         <NewSinceView onclose={() => (newSinceOpen = false)} />
       {:else}
-        <PrOverview />
-        {#if summary}<div class="rereview-row"><RereviewButton pr={summary} /></div>{/if}
-        {#if source && chapter && ai}
-          <ChapterIntent
-            {chapter}
-            stale={ai.stale}
-            onreanalyse={() => {
-              if (summary) requestAi(summary);
-            }}
-          />
-        {/if}
-        {#if source}
-          <DiffView {source} {sideExtensions} forceSideBySide />
-        {:else if !reviewState.headSha && !reviewState.error}
-          <div class="placeholder">Loading PR…</div>
+        <div class="tabs" role="tablist" aria-label="Pull request">
+          <button
+            type="button"
+            role="tab"
+            class="tab"
+            class:active={tab === "description"}
+            aria-selected={tab === "description"}
+            onclick={() => (tab = "description")}
+          >
+            Description
+            {#if reviewState.detail}<span class="count">{reviewState.detail.conversation.length}</span>{/if}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="tab"
+            class:active={tab === "files"}
+            aria-selected={tab === "files"}
+            onclick={() => (tab = "files")}
+          >
+            Files changed <span class="count">{reviewState.files.length}</span>
+          </button>
+        </div>
+        {#if tab === "description"}
+          <div class="description">
+            {#if summary}<div class="rereview-row"><RereviewButton pr={summary} /></div>{/if}
+            <PrOverview full />
+          </div>
         {:else}
-          <div class="placeholder">No file selected</div>
+          {#if source && chapter && ai}
+            <ChapterIntent
+              {chapter}
+              stale={ai.stale}
+              onreanalyse={() => {
+                if (summary) requestAi(summary);
+              }}
+            />
+          {/if}
+          {#if source}
+            <DiffView {source} {sideExtensions} forceSideBySide />
+          {:else if !reviewState.headSha && !reviewState.error}
+            <div class="placeholder">Loading PR…</div>
+          {:else}
+            <div class="placeholder">No file selected</div>
+          {/if}
         {/if}
       {/if}
       <ReviewBar onnewsince={() => (newSinceOpen = true)} />
@@ -433,6 +466,43 @@
     color: var(--error-fg);
     border-bottom: 1px solid var(--border);
     white-space: pre-wrap;
+  }
+  .tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bar-bg);
+  }
+  .tab {
+    padding: 6px 12px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .tab:hover {
+    color: inherit;
+  }
+  .tab.active {
+    color: inherit;
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
+  .count {
+    margin-left: 4px;
+    padding: 0 6px;
+    border-radius: 8px;
+    background: var(--hover);
+    font-size: 0.85em;
+    font-weight: 400;
+  }
+  .description {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
   }
   .rereview-row {
     display: flex;

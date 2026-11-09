@@ -11,10 +11,13 @@
   let {
     ai,
     onevidence,
+    onpickfile,
   }: {
     /** The open PR's AI result, as shown; null without one. */
     ai: { prKey: PrKey; createdAt: string; chapters: AiChapter[]; inline: ShownFinding[]; offDiff: ShownFinding[]; unconfirmed: ShownFinding[] } | null;
     onevidence: (path: string, line: number | null) => void;
+    /** A file row was clicked (the main area switches to the files tab). */
+    onpickfile?: () => void;
   } = $props();
 
   const paths = $derived(sortedPaths(reviewState.files));
@@ -53,7 +56,10 @@
     class="row"
     class:selected={reviewState.selectedPath === p}
     title={p}
-    onclick={() => (reviewState.selectedPath = p)}
+    onclick={() => {
+      reviewState.selectedPath = p;
+      onpickfile?.();
+    }}
   >
     <span class="name"><span class="muted">{dir(p)}</span>{base(p)}</span>
     {#if threadCounts.get(p)}

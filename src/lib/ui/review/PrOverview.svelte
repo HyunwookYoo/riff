@@ -1,20 +1,31 @@
 <script lang="ts">
   import { reviewState } from "$lib/review/reviewState.svelte";
 
+  /** `full`: shown as its own tab — always open, no height cap. */
+  let { full = false }: { full?: boolean } = $props();
+
   const summary = $derived(reviewState.prs.find((p) => p.key === reviewState.selectedKey));
   const detail = $derived(reviewState.detail);
-  let open = $state(true);
+  let collapsed = $state(false);
+  const open = $derived(full || !collapsed);
 </script>
 
 {#if detail}
-  <section class="overview">
-    <button type="button" class="head" onclick={() => (open = !open)}>
-      <span>{open ? "▾" : "▸"}</span>
+  <section class="overview" class:full>
+    {#snippet heading()}
       {#if summary}<span class="title">#{summary.number} {summary.title}</span>{/if}
       <span class="muted">
         {detail.conversation.length} comment{detail.conversation.length === 1 ? "" : "s"}
       </span>
-    </button>
+    {/snippet}
+    {#if full}
+      <div class="head">{@render heading()}</div>
+    {:else}
+      <button type="button" class="head" onclick={() => (collapsed = !collapsed)}>
+        <span>{open ? "▾" : "▸"}</span>
+        {@render heading()}
+      </button>
+    {/if}
     {#if open}
       <div class="content">
         {#if detail.body.trim()}
@@ -64,6 +75,21 @@
     max-height: 35vh;
     overflow-y: auto;
     padding: 4px 10px 8px;
+  }
+  .full {
+    border-bottom: none;
+    background: transparent;
+  }
+  .full .head {
+    cursor: default;
+    color: inherit;
+    padding: 8px 12px 2px;
+    font-size: 1.05em;
+  }
+  .full .content {
+    max-height: none;
+    overflow: visible;
+    padding: 4px 12px 12px;
   }
   .comment {
     border-top: 1px solid var(--border);
