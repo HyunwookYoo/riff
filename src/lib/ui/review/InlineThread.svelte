@@ -138,7 +138,7 @@
   .body {
     margin: 2px 0 0;
     white-space: pre-wrap;
-    word-break: break-word;
+    overflow-wrap: anywhere;
     font-family: inherit;
   }
   .actions {
