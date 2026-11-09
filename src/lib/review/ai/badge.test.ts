@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiBadge, aiErrorText } from "./badge";
+import { aiBadge, aiErrorText, shouldLoad } from "./badge";
 import type { AiFinding, AiResult } from "./types";
 
 const finding = (id: string, status: AiFinding["status"]): AiFinding => ({
@@ -45,5 +45,13 @@ describe("aiErrorText", () => {
   it("passes others through trimmed to 200 chars", () => {
     expect(aiErrorText("  Claude Code CLI is not installed \n")).toBe("Claude Code CLI is not installed");
     expect(aiErrorText("x".repeat(300))).toHaveLength(200);
+  });
+});
+
+describe("shouldLoad", () => {
+  it("loads only unknown, not-in-flight keys", () => {
+    expect(shouldLoad("a", {}, new Set())).toBe(true);
+    expect(shouldLoad("a", { a: null }, new Set())).toBe(false);
+    expect(shouldLoad("a", {}, new Set(["a"]))).toBe(false);
   });
 });

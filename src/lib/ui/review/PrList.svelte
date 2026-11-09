@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { reviewState, refreshList, openPr } from "$lib/review/reviewState.svelte";
   import { hostProblemText, listEmptyState, loginHint } from "$lib/review/prList";
   import { listReviews } from "$lib/review/gh";
@@ -73,7 +73,10 @@
 
   // Results load lazily for every listed PR.
   $effect(() => {
-    for (const p of reviewState.prs) void loadResultFor(p.key);
+    const keys = reviewState.prs.map((p) => p.key);
+    untrack(() => {
+      for (const k of keys) void loadResultFor(k);
+    });
   });
   // Tick each second only while a job runs, so "analysing m:ss" advances.
   let aiNow = $state(Date.now());

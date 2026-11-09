@@ -11,7 +11,8 @@ import { aiRun } from "./run";
 import type { AiJobState, AiResult } from "./types";
 
 export { isStale } from "./aiStore";
-export { aiBadge, aiErrorText } from "./badge";
+export { aiBadge, aiErrorText, shouldLoad } from "./badge";
+import { shouldLoad } from "./badge";
 
 class AiState {
   queue = $state<Queue>(emptyQueue());
@@ -39,8 +40,19 @@ export function cancelAi(key: PrKey): void {
   cancelJob(runner, key);
 }
 
+const inFlight = new Set<PrKey>();
+
 export async function loadResultFor(key: PrKey): Promise<void> {
-  if (key in aiState.results) return;
+  if (!shouldLoad(key, aiState.results, inFlight)) return;
+  inFlight.add(key);
+  try {
+    await load(key);
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+async function load(key: PrKey): Promise<void> {
   let r: AiResult | null;
   try {
     r = await loadAiResult(key);

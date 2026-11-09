@@ -25,3 +25,8 @@ export function aiErrorText(message: string): string {
   if (m.startsWith("ai-malformed")) return "The AI returned an unexpected answer — try again.";
   return m.slice(0, 200);
 }
+
+/** A result is loaded at most once concurrently, and never when already known. */
+export function shouldLoad(key: string, results: Record<string, unknown>, inFlight: Set<string>): boolean {
+  return !(key in results) && !inFlight.has(key);
+}
