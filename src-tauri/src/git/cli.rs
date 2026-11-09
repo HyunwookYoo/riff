@@ -14,7 +14,7 @@ use super::uasset;
 use super::{
     Branch, BranchKind, BranchStatus, ChangedFile, Commit, CommitFind, Containment, ContainmentDetail,
     ConflictFile, ConflictVersions, DiffMode, FileDiff, FileHunks, FileStatus, GitError, GitLayer,
-    Hunk, PrHunks, RebaseAction, RebaseCheck, RebaseStep, ReflogEntry, Remote,
+    FileCompare, Hunk, PrHunks, RebaseAction, RebaseCheck, RebaseStep, ReflogEntry, Remote,
     RepoStatus, SquashCheck, SquashVerdict, StatusEntry, SubmoduleCommit, SubmoduleInfo,
 };
 
@@ -2428,6 +2428,85 @@ impl GitLayer for GitCli {
         Ok(changed)
     }
 
+    fn pr_file_compare(
+        &self,
+        path: &Path,
+        base: &str,
+        old_head: &str,
+        new_head: &str,
+        files: &[String],
+    ) -> Result<Vec<FileCompare>, GitError> {
+        let base = validate_ref(base)?;
+        let old_head = validate_ref(old_head)?;
+        let new_head = validate_ref(new_head)?;
+        for f in files {
+            validate_path(f)?;
+        }
+        let mb = |head: &str| -> Result<String, GitError> {
+            let out = self.run(path, &["merge-base", base, head])?;
+            Ok(String::from_utf8_lossy(&out).trim().to_string())
+        };
+        let (mb_old, mb_new) = (mb(old_head)?, mb(new_head)?);
+        let patch = |from: &str, to: &str, file: &str| -> Result<String, GitError> {
+            let out = self.run(
+                path,
+                &[
+                    "-c",
+                    "core.quotePath=false",
+                    "diff",
+                    "--no-color",
+                    "--no-ext-diff",
+                    "-M",
+                    "-U5",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    from,
+                    to,
+                    "--",
+                    file,
+                ],
+            )?;
+            Ok(String::from_utf8_lossy(&out).into_owned())
+        };
+        files
+            .iter()
+            .map(|f| {
+                Ok(FileCompare {
+                    path: f.clone(),
+                    old_patch: patch(&mb_old, old_head, f)?,
+                    new_patch: patch(&mb_new, new_head, f)?,
+                })
+            })
+            .collect()
+    }
+
+    fn fetch_commit(&self, path: &Path, remote: &str, sha: &str) -> Result<(), GitError> {
+        let remote = validate_ref(remote)?;
+        let is_oid = matches!(sha.len(), 40 | 64)
+            && sha.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if !is_oid {
+            return Err(GitError::InvalidRef(sha.to_string()));
+        }
+        if self.has_commit(path, sha)? {
+            return Ok(());
+        }
+        self.run_network(
+            path,
+            &[
+                "fetch",
+                "--no-tags",
+                "--refmap=",
+                "--no-write-fetch-head",
+                "--no-recurse-submodules",
+                remote,
+                sha,
+            ],
+        )?;
+        let _w = self.write_lock.lock().unwrap();
+        self.run(path, &["update-ref", &format!("refs/riff/pr/review-{}", &sha[..12]), sha])?;
+        Ok(())
+    }
+
     fn mark_pr_seen(&self, path: &Path, number: u32, sha: &str) -> Result<(), GitError> {
         if number == 0 {
             return Err(GitError::InvalidRef("0".to_string()));
@@ -3757,6 +3836,89 @@ new3
         let new_head = rev_parse(&repo, "topic2");
         let got = GitCli::new().pr_changed_files(&repo, "main", &old_head, &new_head).unwrap();
         assert_eq!(got, vec!["c.txt".to_string()]);
+    }
+
+    #[test]
+    fn pr_file_compare_ignores_rebase_noise() {
+        let repo = pr_fixture("pr-compare");
+        let body: String = (1..=20).map(|i| format!("line{i}\n")).collect();
+        let old_head = rev_parse(&repo, "topic");
+        commit_file(&repo, "a.txt", &format!("new1\nnew2\nnew3\n{body}"), "main a");
+        git_in(&repo, &["checkout", "-q", "-b", "topic2", "main"]);
+        git_in(&repo, &["cherry-pick", &old_head]);
+        let new_head = rev_parse(&repo, "topic2");
+        let got = GitCli::new()
+            .pr_file_compare(&repo, "main", &old_head, &new_head, &["a.txt".to_string()])
+            .unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path, "a.txt");
+        assert!(got[0].old_patch.contains("+LINE10"), "{}", got[0].old_patch);
+        assert_eq!(normalize_patch(&got[0].old_patch), normalize_patch(&got[0].new_patch));
+    }
+
+    #[test]
+    fn pr_file_compare_shows_new_pr_edit() {
+        let repo = pr_fixture("pr-compare-edit");
+        let body: String = (1..=20).map(|i| format!("line{i}\n")).collect();
+        let old_head = rev_parse(&repo, "topic");
+        git_in(&repo, &["checkout", "-q", "topic"]);
+        commit_file(&repo, "a.txt", &body.replace("line10", "LINE10").replace("line15", "LINE15"), "more");
+        let new_head = rev_parse(&repo, "topic");
+        let got = GitCli::new()
+            .pr_file_compare(&repo, "main", &old_head, &new_head, &["a.txt".to_string()])
+            .unwrap();
+        assert!(!got[0].old_patch.contains("LINE15"));
+        assert!(got[0].new_patch.contains("+LINE15"), "{}", got[0].new_patch);
+        assert_ne!(normalize_patch(&got[0].old_patch), normalize_patch(&got[0].new_patch));
+    }
+
+    #[test]
+    fn pr_file_compare_handles_deleted_file() {
+        let repo = pr_fixture("pr-compare-del");
+        let old_head = rev_parse(&repo, "topic");
+        git_in(&repo, &["checkout", "-q", "topic"]);
+        git_in(&repo, &["rm", "-q", "b.txt"]);
+        git_in(&repo, &["commit", "-qm", "rm b"]);
+        let new_head = rev_parse(&repo, "topic");
+        let got = GitCli::new()
+            .pr_file_compare(&repo, "main", &old_head, &new_head, &["b.txt".to_string()])
+            .unwrap();
+        assert_eq!(got[0].old_patch, "");
+        assert!(got[0].new_patch.contains("-line1"), "{}", got[0].new_patch);
+    }
+
+    #[test]
+    fn fetch_commit_rejects_non_hex() {
+        let repo = temp_repo("fetch-commit-bad");
+        let sha = rev_parse(&repo, "HEAD");
+        let upper = sha.to_uppercase();
+        let long = format!("{sha}0");
+        for bad in ["HEAD", "main", &sha[..12], upper.as_str(), long.as_str(), "--upload-pack=x"] {
+            let r = GitCli::new().fetch_commit(&repo, "origin", bad);
+            assert!(matches!(r, Err(GitError::InvalidRef(_))), "{bad}: {r:?}");
+        }
+    }
+
+    #[test]
+    fn fetch_commit_noop_when_present() {
+        let repo = temp_repo("fetch-commit-noop");
+        let sha = rev_parse(&repo, "HEAD");
+        // No remote "origin" exists: any fetch attempt would fail.
+        GitCli::new().fetch_commit(&repo, "origin", &sha).unwrap();
+    }
+
+    #[test]
+    fn fetch_commit_fetches_missing_commit_and_pins_it() {
+        let repo = pr_fixture("fetch-commit");
+        let bare = add_bare_remote(&repo, "fetch-commit");
+        git_in(&repo, &["push", "-q", "origin", "topic"]);
+        let topic = rev_parse(&repo, "topic");
+        let clone = temp_repo("fetch-commit-clone");
+        git_in(&clone, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        assert!(!GitCli::new().has_commit(&clone, &topic).unwrap());
+        GitCli::new().fetch_commit(&clone, "origin", &topic).unwrap();
+        assert!(GitCli::new().has_commit(&clone, &topic).unwrap());
+        assert_eq!(rev_parse(&clone, &format!("refs/riff/pr/review-{}", &topic[..12])), topic);
     }
 
     #[test]

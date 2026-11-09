@@ -22,7 +22,7 @@ const SEARCH_QUERY = `query($q: String!, $login: String!) {
         id number title url additions deletions headRefOid baseRefOid baseRefName updatedAt
         author { login }
         repository { nameWithOwner }
-        reviews(last: 1, author: $login) { nodes { commit { oid } } }
+        reviews(last:1, author:$login, states:[APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) { nodes { commit { oid } } }
       }
     }
   }

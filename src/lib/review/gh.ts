@@ -39,6 +39,28 @@ export function prChangedFiles(
   return invoke("pr_changed_files", { path, base, oldHead, newHead });
 }
 
+export interface FileCompare {
+  path: string;
+  oldPatch: string;
+  newPatch: string;
+}
+
+/** Per file, the PR-only patch (merge-base..head) at `oldHead` and at `newHead`. */
+export function prFileCompare(
+  path: string,
+  base: string,
+  oldHead: string,
+  newHead: string,
+  files: string[],
+): Promise<FileCompare[]> {
+  return invoke("pr_file_compare", { path, base, oldHead, newHead, files });
+}
+
+/** Make a commit local by SHA (a review made on the web may not be). */
+export function fetchCommit(path: string, remote: string, sha: string): Promise<void> {
+  return invoke("fetch_commit", { path, remote, sha });
+}
+
 export function markPrSeen(path: string, number: number, sha: string): Promise<void> {
   return invoke("mark_pr_seen", { path, number, sha });
 }

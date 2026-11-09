@@ -37,6 +37,15 @@ pub struct FileHunks {
     pub hunks: Vec<Hunk>,
 }
 
+/// One file's PR-only patch at two heads (see `pr_file_compare`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileCompare {
+    pub path: String,
+    pub old_patch: String,
+    pub new_patch: String,
+}
+
 /// What a PR changes: the hunks, and the merge-base their old side is read at.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -706,6 +715,19 @@ pub trait GitLayer {
         old_head: &str,
         new_head: &str,
     ) -> Result<Vec<String>, GitError>;
+    /// For each file, the PR-only patch (`merge-base(base, head)..head`) at
+    /// `old_head` and at `new_head`; empty when the PR doesn't touch the file.
+    fn pr_file_compare(
+        &self,
+        path: &Path,
+        base: &str,
+        old_head: &str,
+        new_head: &str,
+        files: &[String],
+    ) -> Result<Vec<FileCompare>, GitError>;
+    /// Make commit `sha` (full lowercase hex) local, fetching it by name from
+    /// `remote` if missing and pinning it under `refs/riff/pr/review-<sha12>`.
+    fn fetch_commit(&self, path: &Path, remote: &str, sha: &str) -> Result<(), GitError>;
     /// Record `sha` as the last-seen head of PR `number` (`refs/riff/pr/<N>/seen`).
     fn mark_pr_seen(&self, path: &Path, number: u32, sha: &str) -> Result<(), GitError>;
     /// The content of `file_path` at `rev` (`git cat-file blob <rev>:<path>`),

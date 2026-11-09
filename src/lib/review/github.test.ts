@@ -47,6 +47,12 @@ describe("searchPrs", () => {
     expect(qs[1]).toBe("is:pr is:open reviewed-by:@me archived:false repo:octo/repo repo:octo/sub");
     expect(gql.mock.calls[0][2].login).toBe("me");
   });
+
+  it("last submitted review ignores pending", async () => {
+    gql.mockResolvedValue({ search: { nodes: [] } } as never);
+    await searchPrs("h", repos, "me");
+    expect(String(gql.mock.calls[0][1])).toContain("states:[APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]");
+  });
 });
 
 describe("prDetail", () => {

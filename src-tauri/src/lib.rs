@@ -614,6 +614,28 @@ async fn pr_changed_files(
 }
 
 #[tauri::command]
+async fn pr_file_compare(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    base: String,
+    old_head: String,
+    new_head: String,
+    files: Vec<String>,
+) -> Result<Vec<git::FileCompare>, GitError> {
+    state.pr_file_compare(Path::new(&path), &base, &old_head, &new_head, &files)
+}
+
+#[tauri::command]
+async fn fetch_commit(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    remote: String,
+    sha: String,
+) -> Result<(), GitError> {
+    state.fetch_commit(Path::new(&path), &remote, &sha)
+}
+
+#[tauri::command]
 async fn mark_pr_seen(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -908,6 +930,8 @@ pub fn run() {
             pr_diff_text,
             pr_commit_subjects,
             pr_changed_files,
+            pr_file_compare,
+            fetch_commit,
             mark_pr_seen,
             read_file_at,
             containment,
