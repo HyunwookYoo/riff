@@ -67,7 +67,7 @@ pub struct PersistedState {
     #[serde(default)]
     pub ue_version_by_repo: HashMap<String, String>,
     /// Claude Code `--model` / `--effort` for AI review and re-review. None
-    /// leaves the CLI's own setting. Checked again in `ai::claude_args`.
+    /// leaves the CLI's own setting. Checked on save and again in `ai::run`.
     #[serde(default)]
     pub ai_model: Option<String>,
     #[serde(default)]
@@ -143,6 +143,9 @@ pub enum StoreError {
 
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("{0}")]
+    Invalid(&'static str),
 }
 
 impl serde::Serialize for StoreError {
@@ -257,19 +260,24 @@ pub fn set_uassetgui_path(app: &AppHandle, path: Option<String>) -> Result<(), S
 
 pub fn set_ai_model(app: &AppHandle, model: Option<String>) -> Result<(), StoreError> {
     let mut state = load(app)?;
-    state.ai_model = non_blank(model);
+    state.ai_model = ai_value(model, crate::ai::model_ok)?;
     save(app, &state)
 }
 
 pub fn set_ai_effort(app: &AppHandle, effort: Option<String>) -> Result<(), StoreError> {
     let mut state = load(app)?;
-    state.ai_effort = non_blank(effort);
+    state.ai_effort = ai_value(effort, crate::ai::effort_ok)?;
     save(app, &state)
 }
 
-/// Trimmed; empty means unset.
-fn non_blank(v: Option<String>) -> Option<String> {
-    v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+/// Trimmed; empty means unset; refused unless `ok`, so junk never lands in
+/// the state file.
+fn ai_value(v: Option<String>, ok: fn(&str) -> bool) -> Result<Option<String>, StoreError> {
+    match v.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(s) if ok(s) => Ok(Some(s.to_string())),
+        Some(_) => Err(StoreError::Invalid(crate::ai::INVALID_CHOICE)),
+    }
 }
 
 pub fn set_ue_version_for_repo(
@@ -353,9 +361,25 @@ mod tests {
     }
 
     #[test]
-    fn non_blank_trims_and_drops_empty() {
-        assert_eq!(non_blank(Some(" opus ".into())), Some("opus".into()));
-        assert_eq!(non_blank(Some("  ".into())), None);
-        assert_eq!(non_blank(None), None);
+    fn ai_value_trims_unsets_blank_and_rejects_invalid() {
+        let model = |v: Option<&str>| ai_value(v.map(String::from), crate::ai::model_ok).ok();
+        assert_eq!(model(Some(" opus ")), Some(Some("opus".into())));
+        assert_eq!(
+            model(Some("claude-opus-5-5[1m]")),
+            Some(Some("claude-opus-5-5[1m]".into()))
+        );
+        assert_eq!(model(Some("  ")), Some(None));
+        assert_eq!(model(None), Some(None));
+        assert_eq!(model(Some("bad model")), None);
+        assert_eq!(model(Some("--x")), None);
+        let effort = |v: &str| ai_value(Some(v.into()), crate::ai::effort_ok).ok();
+        assert_eq!(effort("high"), Some(Some("high".into())));
+        assert_eq!(effort("extreme"), None);
+        assert_eq!(
+            ai_value(Some("x y".into()), crate::ai::model_ok)
+                .unwrap_err()
+                .to_string(),
+            crate::ai::INVALID_CHOICE
+        );
     }
 }

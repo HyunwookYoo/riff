@@ -2,14 +2,15 @@
   import { EFFORTS, MODEL_ALIASES, isValidModel, type ChoiceForm } from "$lib/review/ai/modelChoice";
 
   // Controlled: every edit goes out through `onchange`; the owner decides what to keep.
-  let { form, onchange }: { form: ChoiceForm; onchange: (f: ChoiceForm) => void } = $props();
+  // `commit` is false while the custom id is being typed, true on a select change, blur or Enter.
+  let { form, onchange }: { form: ChoiceForm; onchange: (f: ChoiceForm, commit: boolean) => void } = $props();
 
   const customBad = $derived(form.model === "custom" && !isValidModel(form.custom.trim()));
 </script>
 
 <label class="field">
   <span class="name">Model</span>
-  <select value={form.model} onchange={(e) => onchange({ ...form, model: e.currentTarget.value })}>
+  <select value={form.model} onchange={(e) => onchange({ ...form, model: e.currentTarget.value }, true)}>
     <option value="">Default (Claude Code setting)</option>
     {#each MODEL_ALIASES as m (m)}
       <option value={m}>{m}</option>
@@ -21,16 +22,19 @@
   <input
     class="custom"
     class:bad={customBad}
+    aria-label="Custom model id"
+    aria-invalid={customBad}
     placeholder="Model id, e.g. claude-opus-5-5"
     spellcheck="false"
     title={customBad ? "Letters, digits and . _ : [ ] - only, up to 64 characters" : undefined}
     value={form.custom}
-    oninput={(e) => onchange({ ...form, custom: e.currentTarget.value })}
+    oninput={(e) => onchange({ ...form, custom: e.currentTarget.value }, false)}
+    onchange={(e) => onchange({ ...form, custom: e.currentTarget.value }, true)}
   />
 {/if}
 <label class="field">
   <span class="name">Effort</span>
-  <select value={form.effort} onchange={(e) => onchange({ ...form, effort: e.currentTarget.value })}>
+  <select value={form.effort} onchange={(e) => onchange({ ...form, effort: e.currentTarget.value }, true)}>
     <option value="">Default</option>
     {#each EFFORTS as e (e)}
       <option value={e}>{e}</option>

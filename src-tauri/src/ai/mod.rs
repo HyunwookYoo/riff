@@ -90,12 +90,18 @@ pub fn agentmemory_mcp_config(claude_json: &Value) -> Value {
     }
 }
 
-/// The `--effort` values `claude --help` lists.
-const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+/// A model or effort that `model_ok` / `effort_ok` refuse, at run or save.
+pub const INVALID_CHOICE: &str = "invalid AI model/effort — check the AI settings";
+
+/// One of the `--effort` values `claude --help` lists.
+pub fn effort_ok(e: &str) -> bool {
+    ["low", "medium", "high", "xhigh", "max"].contains(&e)
+}
 
 /// A model alias or id (`opus`, `claude-opus-5-5`, `opus[1m]`): 1-64 of
 /// `A-Za-z0-9._:[]-`, not led by `-` so it can't read as another flag.
-fn model_ok(m: &str) -> bool {
+/// `isValidModel` in src/lib/review/ai/modelChoice.ts mirrors it.
+pub fn model_ok(m: &str) -> bool {
     (1..=64).contains(&m.len())
         && !m.starts_with('-')
         && m.bytes()
@@ -114,9 +120,7 @@ pub fn claude_args(
     model: Option<&str>,
     effort: Option<&str>,
 ) -> Result<Vec<String>, AiError> {
-    if !model.is_none_or(model_ok) || !effort.is_none_or(|e| EFFORTS.contains(&e)) {
-        return Err(AiError::Failed("invalid model/effort".into()));
-    }
+    check_choice(model, effort)?;
     let mut args: Vec<String> = [
         "-p",
         "--output-format",
@@ -177,6 +181,14 @@ pub fn claude_args(
         args.push(e.into());
     }
     Ok(args)
+}
+
+fn check_choice(model: Option<&str>, effort: Option<&str>) -> Result<(), AiError> {
+    if model.is_none_or(model_ok) && effort.is_none_or(effort_ok) {
+        Ok(())
+    } else {
+        Err(AiError::Failed(INVALID_CHOICE.into()))
+    }
 }
 
 /// argv[1] that makes riff.exe act as the PreToolUse hook (handled in
@@ -829,6 +841,8 @@ pub fn run(
     on_event: &mut dyn FnMut(AiEvent),
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Value, AiError> {
+    // First: a bad setting is the user's to fix, whatever else is wrong.
+    check_choice(model, effort)?;
     let path_var = std::env::var_os("PATH");
     let program = resolve_claude(path_var.as_deref(), home_dir().as_deref(), &|p| p.is_file())
         .ok_or(AiError::NotInstalled)?;
@@ -1259,7 +1273,7 @@ mod tests {
     #[test]
     fn claude_args_rejects_invalid_model_or_effort() {
         let p = Path::new("x");
-        let invalid = Err(AiError::Failed("invalid model/effort".into()));
+        let invalid = Err(AiError::Failed(INVALID_CHOICE.into()));
         let long = "a".repeat(65);
         // A leading `-` could read as another CLI flag.
         for model in [
@@ -1285,6 +1299,24 @@ mod tests {
                 "{effort:?}"
             );
         }
+    }
+
+    #[test]
+    fn run_rejects_invalid_model_or_effort_before_anything_else() {
+        // Checked before claude is looked up or the guard is run: the test
+        // binary as guard would otherwise fail with "AI guard unavailable".
+        let cwd = Path::new(".");
+        let invalid = Err(AiError::Failed(INVALID_CHOICE.into()));
+        for (model, effort) in [(Some("bad model"), None), (None, Some("extreme"))] {
+            assert_eq!(
+                run(cwd, "", "{}", model, effort, None, &mut |_| {}, &|| true),
+                invalid
+            );
+        }
+        assert_eq!(
+            INVALID_CHOICE,
+            "invalid AI model/effort — check the AI settings"
+        );
     }
 
     #[test]

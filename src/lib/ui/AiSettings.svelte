@@ -1,7 +1,7 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
   import { setAiEffort, setAiModel } from "$lib/git";
-  import { choiceFromForm, formFromChoice, type ChoiceForm } from "$lib/review/ai/modelChoice";
+  import { choiceFromForm, choiceLabel, formFromChoice, type ChoiceForm } from "$lib/review/ai/modelChoice";
   import AiModelFields from "./review/AiModelFields.svelte";
 
   let open_ = $state(false);
@@ -12,10 +12,13 @@
     open_ = !open_;
   }
 
-  // Saved as soon as the form holds a valid choice; an invalid custom id keeps the last one.
-  function change(f: ChoiceForm) {
+  // The form shows what was picked, even an empty or invalid custom id; only a valid choice is
+  // saved, on a select change or when the custom id is left (blur/Enter), not per keystroke.
+  const unsaved = $derived(choiceFromForm(form) === null);
+
+  function change(f: ChoiceForm, commit: boolean) {
     form = f;
-    const c = choiceFromForm(f);
+    const c = commit ? choiceFromForm(f) : null;
     if (!c) return;
     if (c.model !== appState.aiModel) {
       appState.aiModel = c.model;
@@ -35,6 +38,8 @@
     class:active={open_}
     class:configured={!!appState.aiModel || !!appState.aiEffort}
     title="AI review settings"
+    aria-haspopup="dialog"
+    aria-expanded={open_}
     onclick={toggle}
   >
     AI
@@ -44,6 +49,9 @@
     <div class="panel" role="dialog" aria-label="AI review settings">
       <div class="heading">AI review</div>
       <AiModelFields {form} onchange={change} />
+      {#if unsaved}
+        <p class="unsaved">Enter a valid model id to save it; runs use {choiceLabel({ model: appState.aiModel, effort: appState.aiEffort })} until then.</p>
+      {/if}
       <p class="hint">Applies to AI review and re-review. Uses your Claude Code login.</p>
     </div>
   {/if}
@@ -98,6 +106,11 @@
   .heading {
     font-weight: 600;
     font-size: 0.9em;
+  }
+  .unsaved {
+    margin: 0;
+    font-size: 0.8em;
+    color: var(--error-fg);
   }
   .hint {
     margin: 0;
