@@ -10,6 +10,12 @@
   import AiButton from "./AiButton.svelte";
   import SignInDialog from "./SignInDialog.svelte";
 
+  let { collapsed = false, ontoggle }: {
+    /** Only the toolbar shows; the list is folded away. */
+    collapsed?: boolean;
+    ontoggle?: () => void;
+  } = $props();
+
   const requested = $derived(reviewState.prs.filter((p) => p.section === "requested"));
   const reviewed = $derived(reviewState.prs.filter((p) => p.section === "reviewed"));
   const problemHosts = $derived(reviewState.hosts.filter((h) => h.status !== "ready"));
@@ -138,12 +144,16 @@
 
 <aside class="pr-list">
   <div class="toolbar">
+    <button type="button" class="fold" onclick={() => ontoggle?.()} aria-expanded={!collapsed} title={collapsed ? "Show pull requests" : "Hide pull requests"}>
+      {collapsed ? "▸" : "▾"} Pull requests <span class="fold-count">{reviewState.prs.length}</span>
+    </button>
+    <span class="spacer"></span>
     <button type="button" onclick={() => void refreshList()} disabled={reviewState.loadingList}>
       Refresh
     </button>
     <span class="updated">{updatedText}</span>
   </div>
-  <div class="scroll">
+  <div class="scroll" hidden={collapsed}>
     {#each problemHosts as h (h.host)}
       {@const t = hostProblemText(h)}
       <div class="host-error">
@@ -194,6 +204,20 @@
   .updated {
     color: var(--muted);
     font-size: 0.8em;
+  }
+  .fold {
+    border: none;
+    background: transparent;
+    padding: 0;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .fold-count {
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .spacer {
+    flex: 1;
   }
   .scroll {
     overflow-y: auto;

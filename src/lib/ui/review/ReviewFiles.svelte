@@ -7,6 +7,7 @@
   import InlineFinding from "./InlineFinding.svelte";
   import ChapterList from "./ChapterList.svelte";
   import UnconfirmedList from "./UnconfirmedList.svelte";
+  import { fileLabel } from "./pathLabel";
 
   let {
     ai,
@@ -46,11 +47,10 @@
     return m;
   });
 
-  const base = (p: string) => p.slice(p.lastIndexOf("/") + 1);
-  const dir = (p: string) => p.slice(0, p.lastIndexOf("/") + 1);
 </script>
 
 {#snippet row(p: string)}
+  {@const label = fileLabel(p)}
   <button
     type="button"
     class="row"
@@ -61,7 +61,8 @@
       onpickfile?.();
     }}
   >
-    <span class="name"><span class="muted">{dir(p)}</span>{base(p)}</span>
+    <span class="name">{label.name}</span>
+    {#if label.dir}<span class="dir">{label.dir}</span>{/if}
     {#if threadCounts.get(p)}
       <span class="badge">{threadCounts.get(p)} thread{threadCounts.get(p) === 1 ? "" : "s"}</span>
     {/if}
@@ -150,12 +151,21 @@
     background: var(--accent-soft);
   }
   .name {
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: var(--mono);
+  }
+  .dir {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+    font-size: 0.9em;
   }
   .badge {
     flex: none;

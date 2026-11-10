@@ -120,6 +120,40 @@
   let composer = $state.raw<ComposerAt | null>(null);
   let note = $state.raw<{ path: string; side: Side; line: number; text: string } | null>(null);
   let newSinceOpen = $state(false);
+  // Left column layout (session-only): width, PR list height, PR list folded.
+  let viewEl = $state<HTMLDivElement>();
+  let leftEl = $state<HTMLDivElement>();
+  let leftWidth = $state(340);
+  let prHeight = $state<number | null>(null);
+  let prCollapsed = $state(false);
+
+  function drag(e: PointerEvent, move: (ev: PointerEvent) => void) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const onUp = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", onUp);
+  }
+  function onLeftResize(e: PointerEvent) {
+    const el = viewEl;
+    if (!el) return;
+    drag(e, (ev) => {
+      const r = el.getBoundingClientRect();
+      leftWidth = Math.round(Math.min(Math.max(ev.clientX - r.left, 220), Math.max(220, r.width - 360)));
+    });
+  }
+  function onPrResize(e: PointerEvent) {
+    const el = leftEl;
+    if (!el) return;
+    drag(e, (ev) => {
+      const r = el.getBoundingClientRect();
+      prHeight = Math.round(Math.min(Math.max(ev.clientY - r.top, 80), Math.max(80, r.height - 120)));
+    });
+  }
+
   // Main-area tab: the PR description and conversation, or the changed files.
   let tab = $state<"description" | "files">("description");
   // A "Show in main" target waiting for its file's editor.
@@ -364,13 +398,23 @@
   });
 </script>
 
-<div class="review-view">
-  <div class="left" class:with-files={!!reviewState.selectedKey && reviewState.files.length > 0}>
-    <PrList />
+<div class="review-view" bind:this={viewEl} style="--left-w: {leftWidth}px">
+  <div
+    class="left"
+    bind:this={leftEl}
+    class:with-files={!!reviewState.selectedKey && reviewState.files.length > 0}
+    class:pr-collapsed={prCollapsed}
+    style={prHeight !== null ? `--pr-h: ${prHeight}px` : undefined}
+  >
+    <PrList collapsed={prCollapsed} ontoggle={() => (prCollapsed = !prCollapsed)} />
     {#if reviewState.selectedKey && reviewState.files.length > 0}
+      {#if !prCollapsed}
+        <div class="row-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize pull request list" onpointerdown={onPrResize}></div>
+      {/if}
       <ReviewFiles {ai} onevidence={showEvidence} onpickfile={() => (tab = "files")} />
     {/if}
   </div>
+  <div class="col-resizer" role="separator" aria-orientation="vertical" aria-label="Resize side panel" onpointerdown={onLeftResize}></div>
   <main class="review-main">
     {#if reviewState.selectedKey}
       {#if reviewState.error}
@@ -437,7 +481,7 @@
   .review-view {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: 340px 1fr;
+    grid-template-columns: var(--left-w, 340px) 4px minmax(0, 1fr);
     min-height: 0;
     min-width: 0;
   }
@@ -452,7 +496,27 @@
     overflow: hidden;
   }
   .left.with-files {
-    grid-template-rows: minmax(0, 2fr) minmax(0, 3fr);
+    grid-template-rows: var(--pr-h, minmax(0, 2fr)) 4px minmax(0, 3fr);
+  }
+  .left.pr-collapsed {
+    grid-template-rows: auto;
+  }
+  .left.with-files.pr-collapsed {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .row-resizer,
+  .col-resizer {
+    background: var(--border);
+  }
+  .row-resizer {
+    cursor: row-resize;
+  }
+  .col-resizer {
+    cursor: col-resize;
+  }
+  .row-resizer:hover,
+  .col-resizer:hover {
+    background: var(--accent);
   }
   .review-main {
     display: flex;
