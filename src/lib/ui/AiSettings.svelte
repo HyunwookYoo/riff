@@ -3,8 +3,12 @@
   import { setAiEffort, setAiModel } from "$lib/git";
   import { choiceFromForm, choiceLabel, formFromChoice, type ChoiceForm } from "$lib/review/ai/modelChoice";
   import AiModelFields from "./review/AiModelFields.svelte";
+  import { popoverPlace } from "./review/popoverPlace";
 
   let open_ = $state(false);
+  let trigger = $state<HTMLButtonElement>();
+  // Fixed and clamped to the window: the toolbar wraps, so the trigger can sit anywhere.
+  const pos = $derived(open_ && trigger ? popoverPlace(trigger.getBoundingClientRect(), { width: 300, height: 0 }, { width: window.innerWidth, height: window.innerHeight }) : null);
   let form = $state<ChoiceForm>({ model: "", custom: "", effort: "" });
 
   function toggle() {
@@ -31,6 +35,8 @@
   }
 </script>
 
+<svelte:window onresize={() => (open_ = false)} />
+
 <div class="ai-settings">
   <button
     type="button"
@@ -40,13 +46,14 @@
     title="AI review settings"
     aria-haspopup="dialog"
     aria-expanded={open_}
+    bind:this={trigger}
     onclick={toggle}
   >
     AI
   </button>
   {#if open_}
     <button type="button" class="backdrop" aria-label="Close" onclick={() => (open_ = false)}></button>
-    <div class="panel" role="dialog" aria-label="AI review settings">
+    <div class="panel" role="dialog" style:left="{pos?.x ?? 0}px" style:top="{pos?.y ?? 0}px" aria-label="AI review settings">
       <div class="heading">AI review</div>
       <AiModelFields {form} onchange={change} />
       {#if unsaved}
@@ -89,9 +96,9 @@
     z-index: 40;
   }
   .panel {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
+    position: fixed;
+    max-width: calc(100vw - 8px);
+    box-sizing: border-box;
     z-index: 41;
     width: 300px;
     padding: 12px;

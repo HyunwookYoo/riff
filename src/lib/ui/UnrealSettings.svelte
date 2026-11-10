@@ -2,8 +2,12 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { appState } from "$lib/store.svelte";
   import { setParseUnrealAssets, setUassetguiPath } from "$lib/git";
+  import { popoverPlace } from "./review/popoverPlace";
 
   let open_ = $state(false);
+  let trigger = $state<HTMLButtonElement>();
+  // Fixed and clamped to the window: the toolbar wraps, so the trigger can sit anywhere.
+  const pos = $derived(open_ && trigger ? popoverPlace(trigger.getBoundingClientRect(), { width: 320, height: 0 }, { width: window.innerWidth, height: window.innerHeight }) : null);
 
   function basename(p: string): string {
     const t = p.replace(/[\\/]+$/, "");
@@ -36,6 +40,8 @@
   }
 </script>
 
+<svelte:window onresize={() => (open_ = false)} />
+
 <div class="unreal-settings">
   <button
     type="button"
@@ -43,6 +49,7 @@
     class:active={open_}
     class:configured={!!appState.uassetguiPath && appState.parseUnrealAssets}
     title="Unreal asset preview settings"
+    bind:this={trigger}
     onclick={() => (open_ = !open_)}
   >
     UE
@@ -54,7 +61,7 @@
       aria-label="Close"
       onclick={() => (open_ = false)}
     ></button>
-    <div class="panel" role="dialog" aria-label="Unreal asset settings">
+    <div class="panel" role="dialog" style:left="{pos?.x ?? 0}px" style:top="{pos?.y ?? 0}px" aria-label="Unreal asset settings">
       <label class="check-row">
         <input
           type="checkbox"
@@ -116,9 +123,9 @@
     z-index: 40;
   }
   .panel {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
+    position: fixed;
+    max-width: calc(100vw - 8px);
+    box-sizing: border-box;
     z-index: 41;
     width: 320px;
     padding: 12px;
