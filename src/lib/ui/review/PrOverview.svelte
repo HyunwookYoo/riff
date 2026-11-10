@@ -1,5 +1,7 @@
 <script lang="ts">
   import { reviewState } from "$lib/review/reviewState.svelte";
+  import { viewerLogin } from "$lib/review/github";
+  import CommentItem from "./CommentItem.svelte";
 
   /** `full`: shown as its own tab — always open, no height cap. */
   let { full = false }: { full?: boolean } = $props();
@@ -8,6 +10,21 @@
   const detail = $derived(reviewState.detail);
   let collapsed = $state(false);
   const open = $derived(full || !collapsed);
+
+  let viewer = $state<string | null>(null);
+  $effect(() => {
+    const host = summary?.repo.host;
+    if (!host) return;
+    let live = true;
+    viewerLogin(host)
+      .then((l) => {
+        if (live) viewer = l;
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  });
 </script>
 
 {#if detail}
@@ -28,16 +45,19 @@
     {/if}
     {#if open}
       <div class="content">
-        {#if detail.body.trim()}
+        {#if summary}
+          <CommentItem
+            author={summary.author}
+            createdAt={null}
+            body={detail.body.trim() ? detail.body : "(No description.)"}
+            prAuthor={summary.author}
+            {viewer}
+          />
+        {:else if detail.body.trim()}
           <pre class="body">{detail.body}</pre>
-        {:else}
-          <div class="muted">No description.</div>
         {/if}
         {#each detail.conversation as c (c.id)}
-          <div class="comment">
-            <div class="meta"><b>{c.author}</b> · {new Date(c.createdAt).toLocaleString()}</div>
-            <pre class="body">{c.body}</pre>
-          </div>
+          <CommentItem author={c.author} createdAt={c.createdAt} body={c.body} prAuthor={summary?.author ?? null} {viewer} />
         {/each}
       </div>
     {/if}
@@ -90,15 +110,6 @@
     max-height: none;
     overflow: visible;
     padding: 4px 12px 12px;
-  }
-  .comment {
-    border-top: 1px solid var(--border);
-    padding-top: 4px;
-    margin-top: 6px;
-  }
-  .meta {
-    color: var(--muted);
-    font-size: 0.85em;
   }
   .body {
     margin: 2px 0 0;

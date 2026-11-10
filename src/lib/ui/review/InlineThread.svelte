@@ -5,6 +5,7 @@
   import { draftLocked } from "$lib/review/submitFlow.svelte";
   import Composer from "./Composer.svelte";
   import InlineDraft from "./InlineDraft.svelte";
+  import CommentItem from "./CommentItem.svelte";
   import { textStash } from "./composerAt";
   import { aiState } from "$lib/review/ai/aiState.svelte";
   import { verdictLabel } from "$lib/review/ai/rereview";
@@ -36,6 +37,24 @@
   const where = (path: string, line: number | null) => (line !== null ? `${path}:${line}` : path);
   let busy = $state(false);
   let error = $state<string | null>(null);
+
+  // Who wrote what: badge the PR author and the viewer on each comment.
+  const summary = $derived(reviewState.prs.find((p) => p.key === reviewState.selectedKey));
+  const prAuthor = $derived(summary?.author ?? null);
+  let viewer = $state<string | null>(null);
+  $effect(() => {
+    const host = summary?.repo.host;
+    if (!host) return;
+    let live = true;
+    viewerLogin(host)
+      .then((l) => {
+        if (live) viewer = l;
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  });
 
   async function addReply(body: string) {
     const r = reviewState.record;
@@ -114,12 +133,11 @@
       </div>
     {/if}
     {#if !thread.isResolved || showResolved}
-      {#each thread.comments as c (c.id)}
-        <div class="comment">
-          <div class="meta"><b>{c.author}</b> · {new Date(c.createdAt).toLocaleString()}</div>
-          <pre class="body">{c.body}</pre>
-        </div>
-      {/each}
+      <div class="comments">
+        {#each thread.comments as c, i (c.id)}
+          <CommentItem author={c.author} createdAt={c.createdAt} body={c.body} {prAuthor} {viewer} reply={i > 0} />
+        {/each}
+      </div>
       {#each replies as r (r.id)}
         <InlineDraft itemId={r.id} />
       {/each}
@@ -203,13 +221,8 @@
     background: var(--input-bg);
     border-radius: 3px;
   }
-  .comment {
+  .comments {
     border-top: 1px solid var(--border);
-    padding-top: 4px;
-  }
-  .meta {
-    color: var(--muted);
-    font-size: 0.85em;
   }
   .body {
     margin: 2px 0 0;
