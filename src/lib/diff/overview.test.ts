@@ -3,6 +3,7 @@ import { Text } from "@codemirror/state";
 import {
   chunkKind,
   currentChunkIndex,
+  nextChunkIndex,
   mapAToB,
   overviewMarks,
   type ChunkSpan,
@@ -153,5 +154,40 @@ describe("currentChunkIndex", () => {
 
   it("stays on the last chunk once the top is past every chunk", () => {
     expect(currentChunkIndex(chunks, 500)).toBe(2);
+  });
+});
+
+describe("nextChunkIndex", () => {
+  // Chunk tops in px from the document top; the viewport top is a px offset too.
+  const tops = [100, 400, 900];
+
+  it("is -1 without chunks", () => {
+    expect(nextChunkIndex([], 0, 1)).toBe(-1);
+    expect(nextChunkIndex([], 0, -1)).toBe(-1);
+  });
+
+  it("goes to the first chunk starting below the viewport top", () => {
+    expect(nextChunkIndex(tops, 0, 1)).toBe(0);
+    expect(nextChunkIndex(tops, 150, 1)).toBe(1);
+    expect(nextChunkIndex(tops, 400, 1)).toBe(2); // the chunk at the top is the current one
+  });
+
+  it("goes back to the last chunk starting above the viewport top", () => {
+    expect(nextChunkIndex(tops, 1000, -1)).toBe(2);
+    expect(nextChunkIndex(tops, 400, -1)).toBe(0); // not the chunk at the top
+    expect(nextChunkIndex(tops, 401, -1)).toBe(0); // within the epsilon
+    expect(nextChunkIndex(tops, 50, -1)).toBe(-1);
+  });
+
+  it("stops at the ends", () => {
+    expect(nextChunkIndex(tops, 950, 1)).toBe(-1);
+  });
+
+  it("steps from the chunk last navigated to while the view hasn't moved", () => {
+    // After centring chunk 1 the viewport top sits above it: still step to 2 / 0.
+    expect(nextChunkIndex(tops, 150, 1, 1)).toBe(2);
+    expect(nextChunkIndex(tops, 150, -1, 1)).toBe(0);
+    expect(nextChunkIndex(tops, 150, 1, 2)).toBe(-1);
+    expect(nextChunkIndex(tops, 150, -1, 0)).toBe(-1);
   });
 });

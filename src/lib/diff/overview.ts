@@ -125,3 +125,25 @@ export function currentChunkIndex(chunks: readonly ChunkSpan[], topPos: number):
   }
   return chunks.length - 1;
 }
+
+/**
+ * Chunk to step to from the viewport top (px from the document top): next =
+ * first chunk starting below it, previous = last chunk starting above it (an
+ * `eps` px band counts as "at" the top). `from`, the chunk last navigated to
+ * while the view hasn't been scrolled since, wins: a centred or end-clamped
+ * chunk doesn't sit at the top. -1 when there is nothing that way.
+ */
+export function nextChunkIndex(
+  tops: readonly number[],
+  viewportTop: number,
+  dir: 1 | -1,
+  from: number | null = null,
+  eps = 2,
+): number {
+  if (from !== null) {
+    const j = from + dir;
+    return j >= 0 && j < tops.length ? j : -1;
+  }
+  if (dir > 0) return tops.findIndex((t) => t > viewportTop + eps);
+  return tops.findLastIndex((t) => t < viewportTop - eps);
+}

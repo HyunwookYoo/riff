@@ -8,8 +8,6 @@
     Change,
     getChunks,
     getOriginalDoc,
-    goToNextChunk,
-    goToPreviousChunk,
   } from "@codemirror/merge";
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
@@ -26,6 +24,7 @@
   import {
     currentChunkIndex,
     mapAToB,
+    nextChunkIndex,
     overviewMarks,
     type DiffMarker,
     type OverviewMark,
@@ -104,7 +103,17 @@
   const changesOnly = $derived(
     source ? appState.reviewChangesOnly : appState.changesOnly,
   );
+  // The toggle remounts the editor: carry its first visible line across.
+  let keepTop: { path: string; line: number } | null = null;
   function toggleChangesOnly() {
+    const v = mergeView?.b ?? unifiedView;
+    keepTop =
+      v && file
+        ? {
+            path: file.path,
+            line: v.state.doc.lineAt(v.lineBlockAtHeight(viewportTopY(v)).from).number,
+          }
+        : null;
     if (source) appState.reviewChangesOnly = !appState.reviewChangesOnly;
     else appState.changesOnly = !appState.changesOnly;
   }
@@ -160,9 +169,17 @@
         },
       });
     }
-    const y = host.getBoundingClientRect().top - b.documentTop;
-    const top = b.lineBlockAtHeight(Math.max(0, y)).from;
-    chunkAt = { index: currentChunkIndex(chunks, top), count: chunks.length };
+    const top = b.lineBlockAtHeight(viewportTopY(b)).from;
+    const index =
+      navIndex !== null && navIndex < chunks.length
+        ? navIndex
+        : currentChunkIndex(chunks, top);
+    chunkAt = { index, count: chunks.length };
+  }
+
+  /** The viewport top, in px from the scrolled editor's document top. */
+  function viewportTopY(v: EditorView): number {
+    return Math.max(0, host.getBoundingClientRect().top - v.documentTop);
   }
 
   const overviewListener = EditorView.updateListener.of((u) => {
@@ -175,13 +192,38 @@
   });
 
   function revealMark(m: OverviewMark) {
+    dropNav();
     const v = m.side === "a" && mergeView ? mergeView.a : (mergeView?.b ?? unifiedView);
     v?.dispatch({ effects: EditorView.scrollIntoView(m.pos, { y: "center" }) });
   }
 
+  // The chunk ◀ ▶ / n p last went to, kept until the user scrolls or the
+  // editor remounts: a centred or end-clamped chunk doesn't sit at the
+  // viewport top, so stepping from the viewport alone could repeat it.
+  let navIndex: number | null = null;
+  function dropNav() {
+    if (navIndex === null) return;
+    navIndex = null;
+    scheduleOverview(false);
+  }
+  const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Enter"]);
+
   function stepChunk(dir: 1 | -1) {
     const v = mergeView?.b ?? unifiedView;
-    if (v) (dir > 0 ? goToNextChunk : goToPreviousChunk)(v);
+    if (!v) return;
+    const chunks = getChunks(v.state)?.chunks ?? [];
+    const end = v.state.doc.length;
+    const tops = chunks.map((c) => v.lineBlockAt(Math.min(c.fromB, end)).top);
+    const i = nextChunkIndex(tops, viewportTopY(v), dir, navIndex);
+    if (i < 0) return;
+    const pos = Math.min(chunks[i].fromB, end);
+    navIndex = i;
+    v.dispatch({
+      selection: { anchor: pos },
+      effects: EditorView.scrollIntoView(pos, { y: "center" }),
+      userEvent: "select.byChunk",
+    });
+    scheduleOverview(false);
   }
 
   // VS Code-style responsive diff: side-by-side needs horizontal room, so when
@@ -525,7 +567,7 @@
         ...collapse,
         diffConfig,
       });
-      setActiveDiffView(mergeView.b);
+      setActiveDiffView(mergeView.b, stepChunk);
     } else {
       unifiedView = new EditorView({
         state: EditorState.create({
@@ -543,7 +585,7 @@
         }),
         parent: host,
       });
-      setActiveDiffView(unifiedView);
+      setActiveDiffView(unifiedView, stepChunk);
     }
     scheduleOverview(true);
 
@@ -554,6 +596,8 @@
     // tab's remembered file — switching to a different file resets to top.
     const reveal = appState.revealLine;
     const view = mergeView?.b ?? unifiedView;
+    const keep = keepTop;
+    keepTop = null;
     if (commitViewActive() && reveal && reveal.path === file.path && reveal.repoIdx === (file.repoIdx ?? 0)) {
       appState.revealLine = null;
       if (view) {
@@ -563,6 +607,12 @@
           view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "center" }) });
         });
       }
+    } else if (keep && keep.path === file.path && view) {
+      // A "Changes only" toggle: back to the line that was at the top.
+      const pos = view.state.doc.line(Math.min(keep.line, view.state.doc.lines)).from;
+      requestAnimationFrame(() => {
+        view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "start" }) });
+      });
     } else if (!source) {
       const mem = appState.tabMemory.get(file.repoIdx ?? 0);
       if (mem?.filePath === file.path && typeof mem.scrollPos === "number" && view) {
@@ -593,6 +643,7 @@
     unifiedView?.destroy();
     unifiedView = null;
     mounted = null;
+    navIndex = null;
     if (host) host.innerHTML = "";
     scheduleOverview(true);
   }
@@ -774,7 +825,16 @@
 
   <div class="pane" class:hidden={diff?.kind !== "text" || showSvgPreview}>
     <!-- Capture: side-by-side scrolls .host, unified the editor's own scroller. -->
-    <div class="host" bind:this={host} onscrollcapture={() => scheduleOverview(false)}></div>
+    <!-- User scrolling (not ◀ ▶) ends stepping from the last-visited chunk. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="host"
+      bind:this={host}
+      onscrollcapture={() => scheduleOverview(false)}
+      onwheel={dropNav}
+      onpointerdown={dropNav}
+      onkeydown={(e) => SCROLL_KEYS.has(e.key) && dropNav()}
+    ></div>
     <div class="overview">
       {#each marks as m, i (i)}
         <button

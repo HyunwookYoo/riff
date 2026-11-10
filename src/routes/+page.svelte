@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { goToNextChunk, goToPreviousChunk } from "@codemirror/merge";
   import { gotoLine, openSearchPanel } from "@codemirror/search";
   import InputBar from "$lib/ui/InputBar.svelte";
   import FileList from "$lib/ui/FileList.svelte";
@@ -51,7 +50,7 @@
   import { cycleTab, selectTab } from "$lib/tabs";
   import { applyTheme, subscribeSystemTheme } from "$lib/theme";
   import { adjustFontSize, applyFontSize, resetFontSize } from "$lib/font";
-  import { getActiveDiffView } from "$lib/diff/activeView";
+  import { getActiveDiffView, stepActiveDiff } from "$lib/diff/activeView";
   import { preheatHighlighter } from "$lib/diff/shiki";
   import { checkForUpdate } from "$lib/updater";
   import { diffRangeText } from "$lib/rangeText";
@@ -473,11 +472,7 @@
         break;
       case "n":
       case "p": {
-        const v = getActiveDiffView();
-        if (v) {
-          (e.key === "n" ? goToNextChunk : goToPreviousChunk)(v);
-          e.preventDefault();
-        }
+        if (stepActiveDiff(e.key === "n" ? 1 : -1)) e.preventDefault();
         break;
       }
     }
