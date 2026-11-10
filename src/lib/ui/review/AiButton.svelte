@@ -2,6 +2,7 @@
   import { aiState, requestAi, cancelAi } from "$lib/review/ai/aiState.svelte";
   import { hasReview } from "$lib/review/ai/rereview";
   import type { PrSummary } from "$lib/review/types";
+  import AiRunMenu from "./AiRunMenu.svelte";
 
   let { pr }: { pr: PrSummary } = $props();
 
@@ -18,6 +19,9 @@
 </script>
 
 <button type="button" class="ai-btn" onclick={click}>{label}</button>
+{#if !busy}
+  <AiRunMenu what={label} onrun={(c) => requestAi(pr, c)} />
+{/if}
 
 <style>
   .ai-btn {

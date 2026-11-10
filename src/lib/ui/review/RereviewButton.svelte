@@ -4,6 +4,7 @@
   import { aiState, cancelRereviewAi, requestRereviewAi, rereviewButtonState } from "$lib/review/ai/aiState.svelte";
   import { rereviewAvailable } from "$lib/review/ai/rereview";
   import type { PrSummary } from "$lib/review/types";
+  import AiRunMenu from "./AiRunMenu.svelte";
 
   let { pr }: { pr: PrSummary } = $props();
 
@@ -46,6 +47,10 @@
   <button type="button" class="rereview" class:failed={job?.kind === "failed"} title={btn.title ?? "Check whether the new commits address your open threads"} onclick={click}>
     {btn.text}
   </button>
+  {#if !btn.busy && login}
+    {@const me = login}
+    <AiRunMenu what="Re-review" onrun={(c) => requestRereviewAi(pr, me, c)} />
+  {/if}
 {/if}
 
 <style>

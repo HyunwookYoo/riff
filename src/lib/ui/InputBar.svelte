@@ -38,6 +38,7 @@
   import BranchChip from "./BranchChip.svelte";
   import SyncControls from "./SyncControls.svelte";
   import UnrealSettings from "./UnrealSettings.svelte";
+  import AiSettings from "./AiSettings.svelte";
 
   // Direct mode-toggle buttons. Unlike Ctrl+Shift+W (which cycles), these
   // jump to a specific workspace. Entering blame carries selectedFile over
@@ -227,6 +228,7 @@
   />
 
   <UnrealSettings />
+  <AiSettings />
 
   {#if appState.appMode === "compare" && !commitViewActive()}
     <button

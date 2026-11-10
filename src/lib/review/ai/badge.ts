@@ -24,9 +24,10 @@ export function aiBadge(
   return { text: `AI ready · ⚠${open}`, kind: "ready" };
 }
 
-/** The AI badge's tooltip: why the last run failed, else what the review ran with. */
+/** The AI badge's tooltip: why the last run failed, else what the shown review ran with. */
 export function aiBadgeTitle(job: AiJobState | undefined, result: AiResult | null | undefined): string | undefined {
   if (job?.kind === "failed") return aiErrorText(job.message);
+  if (job?.kind === "queued" || job?.kind === "running") return undefined;
   if (result && hasReview(result)) return `AI review ran with ${choiceLabel(result)}`;
   return undefined;
 }

@@ -16,6 +16,7 @@
     UNREADABLE,
   } from "$lib/review/reviewState.svelte";
   import { aiState, isStale, requestAi } from "$lib/review/ai/aiState.svelte";
+  import { choiceLabel } from "$lib/review/ai/modelChoice";
   import { chaptersFor, findingsToShow } from "$lib/review/ai/result";
   import { hasReview } from "$lib/review/ai/rereview";
   import { onRecordChanged, REVEAL_EVENT, type RevealPayload } from "$lib/review/draftStore";
@@ -114,7 +115,10 @@
     const head = reviewState.headSha;
     if (!r || !head) return null;
     const texts = staleTexts && staleTexts.sig === staleFor ? staleTexts.texts : undefined;
-    return { prKey: r.key, createdAt: r.createdAt, chapters: chaptersFor(r, reviewState.files), ...findingsToShow(r, head, reviewState.files, texts) };
+    return {
+      prKey: r.key, createdAt: r.createdAt, ranWith: choiceLabel(r), chapters: chaptersFor(r, reviewState.files),
+      ...findingsToShow(r, head, reviewState.files, texts),
+    };
   });
   const chapter = $derived(ai?.chapters.find((c) => reviewState.selectedPath !== null && c.paths.includes(reviewState.selectedPath)) ?? null);
 
@@ -485,6 +489,7 @@
             <ChapterIntent
               {chapter}
               stale={ai.stale}
+              ranWith={ai.ranWith}
               onreanalyse={() => {
                 if (summary) requestAi(summary);
               }}

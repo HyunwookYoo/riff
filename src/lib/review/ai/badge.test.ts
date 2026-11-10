@@ -66,6 +66,11 @@ describe("aiBadgeTitle", () => {
     expect(aiBadgeTitle(undefined, { ...result("h"), model: "opus", effort: "high" })).toBe("AI review ran with opus · high");
     expect(aiBadgeTitle({ kind: "done" }, result("h"))).toBe("AI review ran with default");
   });
+  it("nothing while a run is queued or running: the badge is about that run", () => {
+    const r = { ...result("h"), model: "opus" };
+    expect(aiBadgeTitle({ kind: "queued" }, r)).toBeUndefined();
+    expect(aiBadgeTitle({ kind: "running", pass: "find", startedAt: 0, lastActivity: null }, r)).toBeUndefined();
+  });
   it("a failure wins; nothing without a review", () => {
     expect(aiBadgeTitle({ kind: "failed", message: " boom " }, { ...result("h"), model: "opus" })).toBe("boom");
     expect(aiBadgeTitle(undefined, null)).toBeUndefined();

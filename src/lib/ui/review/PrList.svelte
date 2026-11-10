@@ -6,7 +6,7 @@
   import { loadRecord } from "$lib/review/draftStore";
   import type { PrKey, PrSummary } from "$lib/review/types";
   import { aiState, loadResultFor } from "$lib/review/ai/aiState.svelte";
-  import { aiBadge, aiErrorText } from "$lib/review/ai/badge";
+  import { aiBadge, aiBadgeTitle } from "$lib/review/ai/badge";
   import AiButton from "./AiButton.svelte";
   import SignInDialog from "./SignInDialog.svelte";
 
@@ -130,11 +130,10 @@
       <div class="ai-row">
         <AiButton pr={p} />
         {#if badge.kind !== "none"}
-          {@const job = aiState.jobs[p.key]}
           <span
             class="badge"
             class:warn={badge.kind === "stale" || badge.kind === "failed"}
-            title={job?.kind === "failed" ? aiErrorText(job.message) : undefined}>{badge.text}</span
+            title={aiBadgeTitle(aiState.jobs[p.key], aiState.results[p.key])}>{badge.text}</span
           >
         {/if}
       </div>

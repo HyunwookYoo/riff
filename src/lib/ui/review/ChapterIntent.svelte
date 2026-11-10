@@ -4,10 +4,13 @@
   let {
     chapter,
     stale,
+    ranWith,
     onreanalyse,
   }: {
     chapter: AiChapter;
     stale: boolean;
+    /** The review's model · effort, e.g. "opus · high". */
+    ranWith: string;
     onreanalyse: () => void;
   } = $props();
 </script>
@@ -15,6 +18,7 @@
 <div class="intent">
   <span class="title">{chapter.title}</span>
   {#if chapter.summary}<span class="summary">{chapter.summary}</span>{/if}
+  <span class="ran" title="Model · effort the AI review ran with">{ranWith}</span>
   {#if stale}
     <span class="stale">
       from an older commit ·
@@ -40,8 +44,12 @@
   .summary {
     color: var(--fg);
   }
-  .stale {
+  .ran {
     margin-left: auto;
+    color: var(--muted);
+    font-size: 0.9em;
+  }
+  .stale {
     color: var(--muted);
   }
   .link {
