@@ -8,17 +8,21 @@
   import ChapterList from "./ChapterList.svelte";
   import UnconfirmedList from "./UnconfirmedList.svelte";
   import { fileLabel } from "./pathLabel";
+  import { fileFindingBadges, findingIndex, type FindingRow } from "$lib/review/ai/findingIndex";
 
   let {
     ai,
     onevidence,
     onpickfile,
+    onfinding,
   }: {
     /** The open PR's AI result, as shown; null without one. */
     ai: { prKey: PrKey; createdAt: string; chapters: AiChapter[]; inline: ShownFinding[]; offDiff: ShownFinding[]; unconfirmed: ShownFinding[] } | null;
     onevidence: (path: string, line: number | null) => void;
     /** A file row was clicked (the main area switches to the files tab). */
     onpickfile?: () => void;
+    /** An entry in the AI findings list was clicked: open its file at its line. */
+    onfinding?: (r: FindingRow) => void;
   } = $props();
 
   const paths = $derived(sortedPaths(reviewState.files));
@@ -40,6 +44,10 @@
     }
     return m;
   });
+
+  const findingRows = $derived(ai ? findingIndex(ai.inline, ai.offDiff) : []);
+  const findingBadges = $derived(fileFindingBadges([...(ai?.inline ?? []), ...(ai?.offDiff ?? [])]));
+  const inPr = (path: string) => reviewState.files.some((x) => x.path === path);
 
   const findingCounts = $derived.by(() => {
     const m = new Map<string, number>();
@@ -67,6 +75,10 @@
       <span class="badge">{threadCounts.get(p)} thread{threadCounts.get(p) === 1 ? "" : "s"}</span>
     {/if}
     {#if draftCounts.get(p)}<span class="badge draft">draft {draftCounts.get(p)}</span>{/if}
+    {#if findingBadges.get(p)}
+      {@const fb = findingBadges.get(p)!}
+      <span class="badge finding sev-{fb.severity}" title="{fb.count} AI finding{fb.count === 1 ? '' : 's'} (most severe: {fb.severity})">⚠ {fb.count}</span>
+    {/if}
   </button>
 {/snippet}
 
@@ -74,6 +86,25 @@
   {#if !ai}<div class="chapter">All files <span class="muted">{paths.length}</span></div>{/if}
   <div class="scroll">
     {#if ai}
+      {#if findingRows.length > 0}
+        <details class="findings" open>
+          <summary>AI findings ({findingRows.length})</summary>
+          {#each findingRows as r (`${ai.createdAt}:${r.id}`)}
+            {@const label = fileLabel(r.path)}
+            <button
+              type="button"
+              class="finding-row"
+              disabled={!inPr(r.path)}
+              title="{r.path}:{r.line}{r.offDiff ? ' (not on a diff line)' : ''}"
+              onclick={() => onfinding?.(r)}
+            >
+              <span class="dot sev-{r.severity}" aria-label={r.severity}></span>
+              <span class="loc">{label.name}:{r.line}</span>
+              <span class="summary">{r.summary}</span>
+            </button>
+          {/each}
+        </details>
+      {/if}
       <ChapterList chapters={ai.chapters} {findingCounts} {row} />
       <UnconfirmedList prKey={ai.prKey} createdAt={ai.createdAt} findings={ai.unconfirmed} {onevidence} />
       {#if ai.offDiff.length > 0}
@@ -173,6 +204,66 @@
     padding: 0 6px;
     border-radius: 8px;
     border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .badge.finding {
+    border-color: transparent;
+    color: #fff;
+  }
+  .sev-high {
+    background: var(--danger, #cf222e);
+  }
+  .sev-medium {
+    background: var(--warn-fg, #d29922);
+  }
+  .sev-low {
+    background: var(--muted);
+  }
+  .findings {
+    border-bottom: 1px solid var(--border);
+    padding: 4px 0;
+    font-size: 0.85em;
+  }
+  .findings summary {
+    padding: 2px 8px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .finding-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 3px 8px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+  }
+  .finding-row:hover:not(:disabled) {
+    background: var(--hover);
+  }
+  .finding-row:disabled {
+    cursor: default;
+    opacity: 0.7;
+  }
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .loc {
+    flex: none;
+    font-family: var(--mono);
+  }
+  .summary {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--muted);
   }
   .badge.draft {

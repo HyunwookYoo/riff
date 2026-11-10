@@ -367,6 +367,15 @@
     reveal = at.line !== null ? { path: at.path, side: at.side, line: at.line } : null;
   }
 
+  // An entry in the AI findings list: open its file at the finding's own side and line.
+  function showFinding(r: { path: string; side: Side; line: number }) {
+    if (!fileHunks(r.path)) return;
+    newSinceOpen = false;
+    tab = "files";
+    reviewState.selectedPath = r.path;
+    reveal = { path: r.path, side: r.side, line: r.line };
+  }
+
   // An AI finding's evidence: select its file (in the PR) and reveal the line.
   function showEvidence(path: string, line: number | null) {
     if (!fileHunks(path)) return;
@@ -431,7 +440,7 @@
       {#if !prCollapsed}
         <div class="row-resizer" role="separator" aria-orientation="horizontal" aria-label="Resize pull request list" onpointerdown={onPrResize}></div>
       {/if}
-      <ReviewFiles {ai} onevidence={showEvidence} onpickfile={() => (tab = "files")} />
+      <ReviewFiles {ai} onevidence={showEvidence} onpickfile={() => (tab = "files")} onfinding={showFinding} />
     {/if}
   </div>
   <div class="col-resizer" role="separator" aria-orientation="vertical" aria-label="Resize side panel" onpointerdown={onLeftResize}></div>
