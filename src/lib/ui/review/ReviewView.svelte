@@ -482,7 +482,7 @@
             />
           {/if}
           {#if source}
-            <DiffView {source} {sideExtensions} {markers} forceSideBySide />
+            <DiffView {source} {sideExtensions} {markers} markersPath={reviewState.selectedPath} forceSideBySide />
           {:else if !reviewState.headSha && !reviewState.error}
             <div class="placeholder">Loading PR…</div>
           {:else}

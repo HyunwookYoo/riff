@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
-  import { EditorView, keymap, lineNumbers } from "@codemirror/view";
+  import { BlockType, EditorView, keymap, lineNumbers } from "@codemirror/view";
   import { EditorState, type Extension } from "@codemirror/state";
   import {
     MergeView,
@@ -23,8 +23,10 @@
   import { setActiveDiffView } from "$lib/diff/activeView";
   import {
     currentChunkIndex,
+    keepNavIndex,
     mapAToB,
     nextChunkIndex,
+    readingAnchor,
     overviewMarks,
     type DiffMarker,
     type OverviewMark,
@@ -41,6 +43,7 @@
     sideExtensions,
     forceSideBySide = false,
     markers,
+    markersPath,
   }: {
     source?: {
       repoPath: string;
@@ -54,6 +57,8 @@
     forceSideBySide?: boolean;
     /** Review annotations drawn on the change map (1-based lines per side). */
     markers?: DiffMarker[];
+    /** The file `markers` belong to: drawn only while that file is mounted. */
+    markersPath?: string | null;
   } = $props();
 
   const file = $derived(source?.file ?? appState.selectedFile);
@@ -103,17 +108,24 @@
   const changesOnly = $derived(
     source ? appState.reviewChangesOnly : appState.changesOnly,
   );
-  // The toggle remounts the editor: carry its first visible line across.
-  let keepTop: { path: string; line: number } | null = null;
+  // The toggle remounts the editor: carry the first visible text line (not a
+  // collapse bar's first hidden line) and its px offset from the top across.
+  let keepTop: { path: string; line: number; offset: number } | null = null;
   function toggleChangesOnly() {
     const v = mergeView?.b ?? unifiedView;
-    keepTop =
-      v && file
-        ? {
-            path: file.path,
-            line: v.state.doc.lineAt(v.lineBlockAtHeight(viewportTopY(v)).from).number,
-          }
-        : null;
+    if (v && file) {
+      const at = readingAnchor(
+        (h) => {
+          const e = v.elementAtHeight(h);
+          return { from: e.from, to: e.to, top: e.top, bottom: e.bottom, text: e.type === BlockType.Text };
+        },
+        viewportTopY(v),
+        v.contentHeight,
+      );
+      keepTop = { path: file.path, line: v.state.doc.lineAt(at.pos).number, offset: at.offset };
+    } else {
+      keepTop = null;
+    }
     if (source) appState.reviewChangesOnly = !appState.reviewChangesOnly;
     else appState.changesOnly = !appState.changesOnly;
   }
@@ -123,7 +135,7 @@
   // collapsed runs and block widgets don't skew them; recomputed on geometry
   // changes, the counter on scroll. Both coalesce into one frame.
   let marks = $state.raw<OverviewMark[]>([]);
-  let chunkAt = $state.raw<{ index: number; count: number }>({ index: -1, count: 0 });
+  let chunkAt = $state.raw({ index: -1, count: 0, prev: false, next: false });
   let overviewFrame = 0;
   let needMarks = false;
 
@@ -142,7 +154,7 @@
     const b = mergeView?.b ?? unifiedView;
     if (!b) {
       marks = [];
-      chunkAt = { index: -1, count: 0 };
+      chunkAt = { index: -1, count: 0, prev: false, next: false };
       return;
     }
     const chunks = getChunks(b.state)?.chunks ?? [];
@@ -156,9 +168,8 @@
         const posB = Math.min(mapAToB(chunks, fromA), b.state.doc.length);
         return { ...m, side: "b", line: b.state.doc.lineAt(posB).number };
       };
-      const ms = (untrack(() => markers) ?? []).map((m) =>
-        m.side === "a" && !a ? onB(m) : m,
-      );
+      const own = !!markers && markersPath != null && markersPath === mounted?.path;
+      const ms = (own ? markers! : []).map((m) => (m.side === "a" && !a ? onB(m) : m));
       marks = overviewMarks(chunks, ms, {
         doc: (side) => (side === "a" ? docA : b.state.doc),
         span: (side, pos) => {
@@ -169,12 +180,20 @@
         },
       });
     }
-    const top = b.lineBlockAtHeight(viewportTopY(b)).from;
-    const index =
-      navIndex !== null && navIndex < chunks.length
-        ? navIndex
-        : currentChunkIndex(chunks, top);
-    chunkAt = { index, count: chunks.length };
+    const y = viewportTopY(b);
+    const tops = chunkTops(b, chunks);
+    navIndex = keepNavIndex(tops, navIndex, y, host.clientHeight);
+    chunkAt = {
+      index: navIndex ?? currentChunkIndex(chunks, b.lineBlockAtHeight(y).from),
+      count: chunks.length,
+      prev: nextChunkIndex(tops, y, -1, navIndex) >= 0,
+      next: nextChunkIndex(tops, y, 1, navIndex) >= 0,
+    };
+  }
+
+  function chunkTops(v: EditorView, chunks: readonly { fromB: number }[]): number[] {
+    const end = v.state.doc.length;
+    return chunks.map((c) => v.lineBlockAt(Math.min(c.fromB, end)).top);
   }
 
   /** The viewport top, in px from the scrolled editor's document top. */
@@ -188,18 +207,30 @@
 
   $effect(() => {
     void markers;
-    untrack(() => scheduleOverview(true));
+    void markersPath;
+    scheduleOverview(true);
   });
 
-  function revealMark(m: OverviewMark) {
-    dropNav();
-    const v = m.side === "a" && mergeView ? mergeView.a : (mergeView?.b ?? unifiedView);
-    v?.dispatch({ effects: EditorView.scrollIntoView(m.pos, { y: "center" }) });
+  // The scroll an editor dispatch asks for runs in its next measure frame:
+  // queue the overview behind it so keepNavIndex sees where it landed.
+  function scheduleAfterScroll() {
+    cancelAnimationFrame(overviewFrame);
+    overviewFrame = 0;
+    scheduleOverview(false);
   }
 
-  // The chunk ◀ ▶ / n p last went to, kept until the user scrolls or the
-  // editor remounts: a centred or end-clamped chunk doesn't sit at the
-  // viewport top, so stepping from the viewport alone could repeat it.
+  function revealMark(m: OverviewMark) {
+    const v = m.side === "a" && mergeView ? mergeView.a : (mergeView?.b ?? unifiedView);
+    if (!v) return;
+    navIndex = m.chunk;
+    v.dispatch({ effects: EditorView.scrollIntoView(m.pos, { y: "center" }) });
+    scheduleAfterScroll();
+  }
+
+  // The chunk ◀ ▶ / n p (or a change-map click) last went to: a centred or
+  // end-clamped chunk doesn't sit at the viewport top, so stepping from the
+  // viewport alone could repeat it. Dropped on user scrolling, on a remount,
+  // and once a scroll moves it out of view (keepNavIndex).
   let navIndex: number | null = null;
   function dropNav() {
     if (navIndex === null) return;
@@ -212,19 +243,26 @@
     const v = mergeView?.b ?? unifiedView;
     if (!v) return;
     const chunks = getChunks(v.state)?.chunks ?? [];
-    const end = v.state.doc.length;
-    const tops = chunks.map((c) => v.lineBlockAt(Math.min(c.fromB, end)).top);
-    const i = nextChunkIndex(tops, viewportTopY(v), dir, navIndex);
+    const tops = chunkTops(v, chunks);
+    const y = viewportTopY(v);
+    const from = keepNavIndex(tops, navIndex, y, host.clientHeight);
+    const i = nextChunkIndex(tops, y, dir, from);
     if (i < 0) return;
-    const pos = Math.min(chunks[i].fromB, end);
+    const pos = Math.min(chunks[i].fromB, v.state.doc.length);
     navIndex = i;
     v.dispatch({
       selection: { anchor: pos },
       effects: EditorView.scrollIntoView(pos, { y: "center" }),
       userEvent: "select.byChunk",
     });
-    scheduleOverview(false);
+    scheduleAfterScroll();
   }
+
+  $effect(() => {
+    const el = host;
+    el.addEventListener("wheel", dropNav, { passive: true });
+    return () => el.removeEventListener("wheel", dropNav);
+  });
 
   // VS Code-style responsive diff: side-by-side needs horizontal room, so when
   // the diff pane is narrower than this (e.g. the graph mode's left detail
@@ -608,10 +646,12 @@
         });
       }
     } else if (keep && keep.path === file.path && view) {
-      // A "Changes only" toggle: back to the line that was at the top.
+      // A "Changes only" toggle: the line read before, at the same offset.
       const pos = view.state.doc.line(Math.min(keep.line, view.state.doc.lines)).from;
       requestAnimationFrame(() => {
-        view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "start" }) });
+        view.dispatch({
+          effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: keep.offset }),
+        });
       });
     } else if (!source) {
       const mem = appState.tabMemory.get(file.repoIdx ?? 0);
@@ -710,14 +750,14 @@
         <button
           type="button"
           onclick={() => stepChunk(-1)}
-          disabled={chunkAt.count === 0}
+          disabled={!chunkAt.prev}
           title="Previous change (p)"
           aria-label="Previous change"
         >◀</button>
         <button
           type="button"
           onclick={() => stepChunk(1)}
-          disabled={chunkAt.count === 0}
+          disabled={!chunkAt.next}
           title="Next change (n)"
           aria-label="Next change"
         >▶</button>
@@ -831,7 +871,6 @@
       class="host"
       bind:this={host}
       onscrollcapture={() => scheduleOverview(false)}
-      onwheel={dropNav}
       onpointerdown={dropNav}
       onkeydown={(e) => SCROLL_KEYS.has(e.key) && dropNav()}
     ></div>

@@ -29,6 +29,8 @@ export interface OverviewMark {
   side: "a" | "b";
   pos: number;
   label: string;
+  /** Index into the chunk list for change marks; null for markers. */
+  chunk: number | null;
 }
 
 interface DocLike {
@@ -72,7 +74,7 @@ export function overviewMarks(
   const docA = g.doc("a");
   const docB = g.doc("b");
   const out: OverviewMark[] = [];
-  for (const c of chunks) {
+  chunks.forEach((c, i) => {
     const kind = chunkKind(c);
     const from = Math.min(c.fromB, docB.length);
     const top = g.span("b", from).top;
@@ -85,8 +87,8 @@ export function overviewMarks(
         : kind === "deleted"
           ? `deleted ${lines(nA)}`
           : `modified ${nA} → ${lines(nB)}`;
-    out.push({ kind, top: pct(top), height: pct(bottom) - pct(top), side: "b", pos: from, label });
-  }
+    out.push({ kind, top: pct(top), height: pct(bottom) - pct(top), side: "b", pos: from, label, chunk: i });
+  });
   for (const m of markers) {
     const doc = g.doc(m.side);
     const pos = doc.line(Math.min(Math.max(1, m.line), doc.lines)).from;
@@ -98,6 +100,7 @@ export function overviewMarks(
       side: m.side,
       pos,
       label: `${MARKER_LABEL[m.kind]} · line ${m.line}`,
+      chunk: null,
     });
   }
   return out;
@@ -146,4 +149,50 @@ export function nextChunkIndex(
   }
   if (dir > 0) return tops.findIndex((t) => t > viewportTop + eps);
   return tops.findLastIndex((t) => t < viewportTop - eps);
+}
+
+/**
+ * The chunk last stepped to stays the stepping origin only while its start
+ * (`tops`, px) is still inside the viewport; a scroll elsewhere (find-next,
+ * a reveal, the user) hands stepping back to the viewport.
+ */
+export function keepNavIndex(
+  tops: readonly number[],
+  navIndex: number | null,
+  viewportTop: number,
+  viewportHeight: number,
+): number | null {
+  if (navIndex === null || navIndex < 0 || navIndex >= tops.length) return null;
+  const t = tops[navIndex];
+  return t >= viewportTop - 1 && t <= viewportTop + viewportHeight ? navIndex : null;
+}
+
+/** An editor height-map block: `text` = a single rendered text line (not a widget/replaced run). */
+export interface BlockLike {
+  from: number;
+  to: number;
+  top: number;
+  bottom: number;
+  text: boolean;
+}
+
+/**
+ * The reading position to carry across a remount: the first text line at or
+ * below the viewport top (skipping collapse bars and other widgets, whose
+ * `from` is not what's being read) and its px offset from the viewport top.
+ */
+export function readingAnchor(
+  blockAt: (height: number) => BlockLike,
+  viewportTop: number,
+  contentHeight: number,
+): { pos: number; offset: number } {
+  const first = blockAt(viewportTop);
+  let b = first;
+  while (!b.text && b.bottom < contentHeight) {
+    const next = blockAt(b.bottom);
+    if (next.bottom <= b.bottom) break;
+    b = next;
+  }
+  if (!b.text) b = first;
+  return { pos: b.from, offset: b.top - viewportTop };
 }

@@ -3,8 +3,11 @@ import { Text } from "@codemirror/state";
 import {
   chunkKind,
   currentChunkIndex,
+  keepNavIndex,
   nextChunkIndex,
   mapAToB,
+  readingAnchor,
+  type BlockLike,
   overviewMarks,
   type ChunkSpan,
   type OverviewGeometry,
@@ -59,6 +62,11 @@ describe("overviewMarks", () => {
     expect(marks[0].height).toBeCloseTo((2 / 12) * 100);
     expect(marks[0].side).toBe("b");
     expect(marks[0].pos).toBe(b.line(3).from);
+  });
+
+  it("tags change marks with their chunk index and markers with null", () => {
+    const marks = overviewMarks(chunks, [{ side: "b", line: 1, kind: "thread" }], geometry(a, b));
+    expect(marks.map((m) => m.chunk)).toEqual([0, 1, 2, null]);
   });
 
   it("gives a delete-only chunk zero height at its side-b position", () => {
@@ -189,5 +197,86 @@ describe("nextChunkIndex", () => {
     expect(nextChunkIndex(tops, 150, -1, 1)).toBe(0);
     expect(nextChunkIndex(tops, 150, 1, 2)).toBe(-1);
     expect(nextChunkIndex(tops, 150, -1, 0)).toBe(-1);
+  });
+});
+
+describe("keepNavIndex", () => {
+  const tops = [100, 400, 900];
+
+  it("keeps the stepped-to chunk while its start is in the viewport", () => {
+    expect(keepNavIndex(tops, 1, 150, 300)).toBe(1);
+    expect(keepNavIndex(tops, 1, 400, 300)).toBe(1);
+  });
+
+  it("drops it once a scroll moved its start out of view", () => {
+    expect(keepNavIndex(tops, 1, 500, 300)).toBe(null);
+    expect(keepNavIndex(tops, 1, 0, 300)).toBe(null);
+  });
+
+  it("drops a missing or out-of-range index", () => {
+    expect(keepNavIndex(tops, null, 0, 300)).toBe(null);
+    expect(keepNavIndex(tops, 3, 0, 1000)).toBe(null);
+  });
+});
+
+describe("readingAnchor", () => {
+  // Blocks stacked from height 0: text lines of 20px, plus widgets.
+  function blocks(list: Omit<BlockLike, "top" | "bottom">[], heights: number[]) {
+    let y = 0;
+    const out = list.map((b, i) => {
+      const r = { ...b, top: y, bottom: y + heights[i] };
+      y += heights[i];
+      return r;
+    });
+    return {
+      end: y,
+      at: (h: number) => out.find((b) => h < b.bottom) ?? out[out.length - 1],
+    };
+  }
+
+  it("anchors on the text line at the viewport top, keeping its pixel offset", () => {
+    const { at, end } = blocks(
+      [
+        { from: 0, to: 9, text: true },
+        { from: 10, to: 19, text: true },
+      ],
+      [20, 20],
+    );
+    expect(readingAnchor(at, 25, end)).toEqual({ pos: 10, offset: -5 });
+  });
+
+  it("skips a collapse bar at the top to the first text line after it", () => {
+    const { at, end } = blocks(
+      [
+        { from: 0, to: 9, text: true },
+        { from: 10, to: 99, text: false }, // collapsed run
+        { from: 100, to: 109, text: true },
+      ],
+      [20, 30, 20],
+    );
+    expect(readingAnchor(at, 30, end)).toEqual({ pos: 100, offset: 20 });
+  });
+
+  it("skips several widgets in a row", () => {
+    const { at, end } = blocks(
+      [
+        { from: 0, to: 0, text: false },
+        { from: 0, to: 0, text: false },
+        { from: 0, to: 9, text: true },
+      ],
+      [10, 10, 20],
+    );
+    expect(readingAnchor(at, 5, end)).toEqual({ pos: 0, offset: 15 });
+  });
+
+  it("falls back to the top block when no text line follows", () => {
+    const { at, end } = blocks(
+      [
+        { from: 0, to: 9, text: true },
+        { from: 10, to: 99, text: false },
+      ],
+      [20, 30],
+    );
+    expect(readingAnchor(at, 25, end)).toEqual({ pos: 10, offset: -5 });
   });
 });
