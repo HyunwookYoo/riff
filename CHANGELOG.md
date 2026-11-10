@@ -3,6 +3,24 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v2.6.4
+
+AI 리뷰에 쓸 **모델과 effort를 고를 수** 있게 했습니다.
+
+### ✨ 개선
+
+- **AI 설정** — 상단 툴바의 `AI` 버튼에서 기본 모델(Default / opus / sonnet / haiku / fable / Custom…)과 effort(Default / low / medium / high / xhigh / max)를 고릅니다. AI 리뷰의 찾기·검증 단계와 재리뷰 모두에 적용되며, Default는 Claude Code 설정을 따릅니다. 설정은 재시작 후에도 유지됩니다.
+- **실행별 선택** — PR 목록의 **AI review** / **Re-review** 버튼 옆 `▾` 에서 이번 실행에만 쓸 모델과 effort를 골라 실행할 수 있습니다. 버튼을 그냥 누르면 기본값으로 실행합니다.
+- **사용한 모델 표시** — AI 배지 툴팁과 챕터 배너에 그 결과를 만든 모델과 effort를 `opus · high` 형태로 보여줍니다.
+
+### 🐛 수정
+
+- 창이 좁을 때 `UE` / `AI` 설정 창이 왼쪽 밖으로 잘리던 문제를 고쳤습니다.
+
+### 📦 설치 / 업그레이드
+
+- 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+
 ## v2.6.3
 
 AI 리뷰 결과가 **어느 파일 어디에 있는지** 파일을 하나씩 열지 않고 볼 수 있게 했습니다.
