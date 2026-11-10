@@ -145,6 +145,11 @@ class AppState {
   parseUnrealAssets = $state<boolean>(true);
   uassetguiPath = $state<string | null>(null);
   ueVersionByRepo = $state<Record<string, string>>({});
+  // Default Claude Code model / effort for AI review and re-review (null = the
+  // CLI's own setting). Mirrored from PersistedState.ai_model / ai_effort on
+  // load; written back via git.ts setters. A run can override them.
+  aiModel = $state<string | null>(null);
+  aiEffort = $state<string | null>(null);
   // History browser (commit log) state. Session-only. `commits` is the loaded
   // window (paginated via "load more"); `selectedCommitSha` highlights the row
   // whose parent..self diff is showing; `historyRef` anchors the log ("" =

@@ -320,6 +320,9 @@ export interface PersistedState {
   uassetgui_path: string | null;
   /// Per-main-repo Unreal Engine version string (e.g. "5.3"), keyed by repo path.
   ue_version_by_repo: Record<string, string>;
+  /// Claude Code --model / --effort for AI review and re-review; null = the CLI's default.
+  ai_model?: string | null;
+  ai_effort?: string | null;
 }
 
 /// A repo-qualified file path. Used by the unified blame picker

@@ -6,6 +6,7 @@ import type { PrKey, PrSummary } from "../types";
 import { loadAiResult, saveAiResult } from "./aiStore";
 import { cancelJob, createRunner, requestJob, requestRereview, runJob } from "./job";
 import { recordReaction } from "./memory";
+import type { AiChoice } from "./modelChoice";
 import { notifyReady } from "./notify";
 import { emptyQueue, type Queue } from "./queue";
 import { runRereview, withRereview } from "./rereview";
@@ -14,7 +15,7 @@ import { applyHandled } from "./result";
 import type { AiJobState, AiResult, RereviewResult } from "./types";
 
 export { isStale } from "./aiStore";
-export { aiBadge, aiErrorText, rereviewButtonState, shouldLoad } from "./badge";
+export { aiBadge, aiBadgeTitle, aiErrorText, rereviewButtonState, shouldLoad } from "./badge";
 import { shouldLoad } from "./badge";
 
 class AiState {
@@ -80,9 +81,14 @@ const runner = createRunner({
   remember: recordReaction,
 });
 
-/** Queues an AI review of `pr` (only ever on the user's request). */
-export function requestAi(pr: PrSummary): void {
-  requestJob(runner, pr, appState.repos[pr.repoIdx].path);
+/** The model/effort the settings name for a run nobody overrode. */
+export function aiDefaults(): AiChoice {
+  return { model: appState.aiModel, effort: appState.aiEffort };
+}
+
+/** Queues an AI review of `pr` (only ever on the user's request), with `choice` or the defaults. */
+export function requestAi(pr: PrSummary, choice: AiChoice = aiDefaults()): void {
+  requestJob(runner, pr, appState.repos[pr.repoIdx].path, choice);
 }
 
 export function cancelAi(key: PrKey): void {
@@ -90,8 +96,8 @@ export function cancelAi(key: PrKey): void {
 }
 
 /** Queues a re-review of `login`'s open threads on `pr` (only ever on the user's request). */
-export function requestRereviewAi(pr: PrSummary, login: string): void {
-  requestRereview(runner, pr, appState.repos[pr.repoIdx].path, login);
+export function requestRereviewAi(pr: PrSummary, login: string, choice: AiChoice = aiDefaults()): void {
+  requestRereview(runner, pr, appState.repos[pr.repoIdx].path, login, choice);
 }
 
 export function cancelRereviewAi(key: PrKey): void {

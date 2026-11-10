@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiBadge, aiErrorText, rereviewButtonState, shouldLoad } from "./badge";
+import { aiBadge, aiBadgeTitle, aiErrorText, rereviewButtonState, shouldLoad } from "./badge";
 import type { AiFinding, AiResult } from "./types";
 
 const finding = (id: string, status: AiFinding["status"]): AiFinding => ({
@@ -58,6 +58,19 @@ describe("aiBadge", () => {
     const rereview = { fromHead: "o", toHead: "h", createdAt: "", verdicts: [] };
     expect(aiBadge(undefined, { ...result(""), rereview }, "h", 0)).toEqual({ text: "", kind: "none" });
     expect(aiBadge({ kind: "failed", message: "x" }, { ...result(""), rereview }, "h", 0).kind).toBe("failed");
+  });
+});
+
+describe("aiBadgeTitle", () => {
+  it("names the model and effort the review ran with", () => {
+    expect(aiBadgeTitle(undefined, { ...result("h"), model: "opus", effort: "high" })).toBe("AI review ran with opus · high");
+    expect(aiBadgeTitle({ kind: "done" }, result("h"))).toBe("AI review ran with default");
+  });
+  it("a failure wins; nothing without a review", () => {
+    expect(aiBadgeTitle({ kind: "failed", message: " boom " }, { ...result("h"), model: "opus" })).toBe("boom");
+    expect(aiBadgeTitle(undefined, null)).toBeUndefined();
+    const rereview = { fromHead: "o", toHead: "h", createdAt: "", verdicts: [] };
+    expect(aiBadgeTitle(undefined, { ...result(""), rereview })).toBeUndefined();
   });
 });
 

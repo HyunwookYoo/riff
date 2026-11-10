@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { AiChoice } from "./modelChoice";
 
 type AiEvent =
   | { kind: "activity"; text: string }
@@ -14,7 +15,8 @@ let nextRunId = crypto.getRandomValues(new Uint32Array(1))[0] >>> 1;
  * One read-only Claude Code run in the repo at `path`. `onActivity` gets a
  * line per tool call; `done` resolves to the output matching `schema`, or
  * rejects with the CLI's message, or "cancelled" after `cancel()`.
- * `instructions` (the repo's CLAUDE.md) is appended to the system prompt.
+ * `instructions` (the repo's CLAUDE.md) is appended to the system prompt. `choice` sets
+ * `--model` / `--effort` (null parts leave the CLI's default; the backend rejects invalid ones).
  */
 export function aiRun(
   path: string,
@@ -22,6 +24,7 @@ export function aiRun(
   schema: object,
   onActivity: (t: string) => void,
   instructions: string | null,
+  choice: AiChoice,
 ): { done: Promise<unknown>; cancel: () => void } {
   const id = nextRunId++;
   const channel = new Channel<AiEvent>();
@@ -32,7 +35,8 @@ export function aiRun(
     path,
     prompt,
     schema: JSON.stringify(schema),
-    model: null,
+    model: choice.model,
+    effort: choice.effort,
     instructions,
     id,
     onEvent: channel,

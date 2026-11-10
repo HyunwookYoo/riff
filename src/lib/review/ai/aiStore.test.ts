@@ -50,6 +50,13 @@ describe("aiStore", () => {
     expect(await loadAiResult(K)).toEqual(result());
   });
 
+  it("the model/effort a review ran with is optional: set, unset or absent (older records)", async () => {
+    for (const v of [{ ...result(), model: "opus", effort: "high" }, { ...result(), model: null, effort: null }, result()]) {
+      m.loadReview.mockResolvedValueOnce(v);
+      expect(await loadAiResult(K)).toEqual(v);
+    }
+  });
+
   it("invalid stored result loads as null", async () => {
     const bad: unknown[] = [
       null, "x", { version: 2 },
@@ -59,6 +66,8 @@ describe("aiStore", () => {
       { ...result(), findings: [{ ...result().findings[0], side: "UP" }] },
       { ...result(), findings: [{ ...result().findings[0], quote: "x" }] },
       { ...result(), handled: { f0: "maybe" } },
+      { ...result(), model: 1 },
+      { ...result(), effort: {} },
       { ...result(), rereview: null },
       { ...result(), rereview: { ...rereview(), toHead: 1 } },
       { ...result(), rereview: { ...rereview(), verdicts: [{ threadId: "t", verdict: "maybe", reason: "", evidence: [] }] } },

@@ -3,6 +3,7 @@ import { cancelJob, createRunner, requestJob, requestRereview, runJob, type AiCt
 import { FIND_SCHEMA, VERIFY_SCHEMA } from "./prompts";
 import { emptyQueue } from "./queue";
 import { REREVIEW_SCHEMA, runRereview } from "./rereview";
+import type { AiChoice } from "./modelChoice";
 import type { AiResult, RereviewResult } from "./types";
 import type { PrDetail, PrSummary } from "../types";
 
@@ -24,7 +25,7 @@ const cand = (o: object) => ({ path: "a.ts", side: "RIGHT", line: 2, startLine: 
 
 /** Deps for a repo where node `N<n>` has head `H<n>`, base `B<n>`, merge-base `MB<n>`. */
 function deps(find: unknown, verify: unknown = { verdicts: [] }) {
-  const runs: { schema: object; instructions: string | null; cancel: ReturnType<typeof vi.fn> }[] = [];
+  const runs: { schema: object; instructions: string | null; choice: AiChoice; cancel: ReturnType<typeof vi.fn> }[] = [];
   const d = {
     fetchPr: vi.fn(async (_p: string, _r: string, n: number) => `H${n}`),
     prDetail: vi.fn(async (_h: string, node: string) => detail(`H${node.slice(1)}`, `B${node.slice(1)}`)),
@@ -38,9 +39,9 @@ function deps(find: unknown, verify: unknown = { verdicts: [] }) {
       if (path !== "a.ts") throw new Error("missing");
       return rev.startsWith("MB") ? "old1\nold2\nold3\n" : "one\ntwo\nthree\n";
     }),
-    aiRun: vi.fn((_p: string, _prompt: string, schema: object, _a: (t: string) => void, instructions: string | null) => {
+    aiRun: vi.fn((_p: string, _prompt: string, schema: object, _a: (t: string) => void, instructions: string | null, choice: AiChoice) => {
       const cancel = vi.fn();
-      runs.push({ schema, instructions, cancel });
+      runs.push({ schema, instructions, choice, cancel });
       const answer = schema === FIND_SCHEMA ? find : schema === REREVIEW_SCHEMA ? { verdicts: [] } : verify;
       return { done: Promise.resolve(answer), cancel };
     }),
@@ -132,6 +133,19 @@ describe("runJob", () => {
     expect(missing.runs.map((x) => x.instructions)).toEqual([null, null]);
   });
 
+  it("both passes run with the job's model/effort, and the result records them", async () => {
+    const find = { chapters: [], findings: [cand({})] };
+    const { d, runs } = deps(find, { verdicts: [] });
+    const r = await runJob(d, summary(1), "/repo", () => {}, { model: "opus", effort: "high" });
+    expect(runs.map((x) => x.choice)).toEqual([{ model: "opus", effort: "high" }, { model: "opus", effort: "high" }]);
+    expect([r.model, r.effort]).toEqual(["opus", "high"]);
+
+    const unset = deps(find, { verdicts: [] });
+    const u = await runJob(unset.d, summary(1), "/repo", () => {}, { model: null, effort: null });
+    expect(unset.runs.map((x) => x.choice)).toEqual([{ model: null, effort: null }, { model: null, effort: null }]);
+    expect([u.model, u.effort]).toEqual([null, null]);
+  });
+
   it("fails when the fetched head is not the detail's head", async () => {
     const { d } = deps({ chapters: [], findings: [] });
     d.fetchPr.mockResolvedValueOnce("H999");
@@ -181,9 +195,9 @@ describe("runner", () => {
     const { d, runs } = deps({ chapters: [], findings: [] });
     // The first run hangs until cancelled, then rejects like the backend does.
     let rejectFirst: (e: Error) => void = () => {};
-    d.aiRun.mockImplementationOnce((_p, _prompt, schema, _a, instructions) => {
+    d.aiRun.mockImplementationOnce((_p, _prompt, schema, _a, instructions, choice) => {
       const cancel = vi.fn(() => rejectFirst(new Error("cancelled")));
-      runs.push({ schema, instructions, cancel });
+      runs.push({ schema, instructions, choice, cancel });
       return { done: new Promise((_, rej) => (rejectFirst = rej)), cancel };
     });
     const runJobSpy = vi.fn(runJob);
@@ -283,6 +297,22 @@ describe("runner", () => {
       content: `riff review (o/r): reviewer's comment thread in "a.ts" was judged addressed`,
       project: "o/r", concepts: ["riff-review", "thread-addressed", "repo-o-r"],
     });
+  });
+
+  it("a job runs with the model/effort it was queued with", async () => {
+    const { d, runs } = deps({ chapters: [], findings: [] });
+    withMyThread(d);
+    const r = createRunner(runnerDeps({ ctx: ctx(), jobDeps: d }));
+    const a = { model: "opus", effort: "max" };
+    const b = { model: null, effort: "low" };
+    const c = { model: "claude-x[1m]", effort: null };
+    requestJob(r, summary(1), "/repo", a);
+    requestJob(r, summary(2), "/repo", b);
+    requestRereview(r, summary(3, { myLastReviewSha: "R3" }), "/repo", "me", c);
+    await flush();
+    await flush();
+    await flush();
+    expect(runs.map((x) => [x.schema, x.choice])).toEqual([[FIND_SCHEMA, a], [FIND_SCHEMA, b], [REREVIEW_SCHEMA, c]]);
   });
 
   it("a failed re-review stores nothing", async () => {

@@ -1,3 +1,4 @@
+import { choiceLabel } from "./modelChoice";
 import { hasReview } from "./rereview";
 import type { AiJobState, AiResult } from "./types";
 
@@ -21,6 +22,13 @@ export function aiBadge(
   if (result.headSha !== headSha) return { text: "PR updated · re-analyse", kind: "stale" };
   const open = result.findings.filter((f) => f.status === "confirmed" && !result.handled[f.id]).length;
   return { text: `AI ready · ⚠${open}`, kind: "ready" };
+}
+
+/** The AI badge's tooltip: why the last run failed, else what the review ran with. */
+export function aiBadgeTitle(job: AiJobState | undefined, result: AiResult | null | undefined): string | undefined {
+  if (job?.kind === "failed") return aiErrorText(job.message);
+  if (result && hasReview(result)) return `AI review ran with ${choiceLabel(result)}`;
+  return undefined;
 }
 
 /** The Re-review button's text; `busy` = a click cancels, `title` = why the last run failed. */

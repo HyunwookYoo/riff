@@ -191,6 +191,8 @@
       appState.parseUnrealAssets = s.parse_unreal_assets ?? true;
       appState.uassetguiPath = s.uassetgui_path ?? null;
       appState.ueVersionByRepo = s.ue_version_by_repo ?? {};
+      appState.aiModel = s.ai_model ?? null;
+      appState.aiEffort = s.ai_effort ?? null;
     } catch {
       // First-run / corrupt state: keep defaults silently.
     }

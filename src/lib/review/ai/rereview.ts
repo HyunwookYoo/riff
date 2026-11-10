@@ -1,6 +1,7 @@
 import type { FileCompare } from "../gh";
 import type { GhRepo, PrKey, PrSummary, ReviewThread } from "../types";
-import { baseInstructions, type JobDeps } from "./job";
+import { CLI_DEFAULT, baseInstructions, type JobDeps } from "./job";
+import type { AiChoice } from "./modelChoice";
 import { MAX_DIFF_CHARS, UNTRUSTED_END, UNTRUSTED_START, evidenceItem, fenced, gitRules, memoryRules } from "./prompts";
 import { evidenceOf } from "./result";
 import { NO_ANSWER, type AiJobState, type AiResult, type RereviewResult, type ThreadVerdict, type Verdict } from "./types";
@@ -151,10 +152,11 @@ export function normalizeVerdicts(raw: unknown, threads: ReviewThread[]): Thread
 
 /**
  * Checks `login`'s open threads on `pr` against the commits since their last submitted review
- * (`pr.myLastReviewSha`), at the PR's current head and base (from a fresh detail).
+ * (`pr.myLastReviewSha`), at the PR's current head and base (from a fresh detail), with `choice`.
  */
 export async function runRereview(
   d: JobDeps, pr: PrSummary, repoPath: string, login: string, onState: (s: AiJobState) => void,
+  choice: AiChoice = CLI_DEFAULT,
 ): Promise<RereviewResult> {
   const startedAt = d.now();
   onState({ kind: "running", pass: "rereview", startedAt, lastActivity: null });
@@ -177,7 +179,7 @@ export async function runRereview(
     d.prHunks(repoPath, base, head).then(({ mergeBase }) => baseInstructions(d, repoPath, mergeBase)),
   ]);
   const run = d.aiRun(repoPath, rereviewPrompt({ repo: pr.repo, head, oldHead, threads, compares }), REREVIEW_SCHEMA, (t) =>
-    onState({ kind: "running", pass: "rereview", startedAt, lastActivity: t }), instructions);
+    onState({ kind: "running", pass: "rereview", startedAt, lastActivity: t }), instructions, choice);
   const verdicts = normalizeVerdicts(await run.done, threads);
   return { fromHead: oldHead, toHead: head, createdAt: new Date(d.now()).toISOString(), verdicts };
 }

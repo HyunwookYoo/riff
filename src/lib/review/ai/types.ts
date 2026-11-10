@@ -21,6 +21,8 @@ export interface AiResult {
   createdAt: string; chapters: AiChapter[]; findings: AiFinding[];
   handled: Record<string, "added" | "discarded">;   // finding id → what the user did
   rereview?: RereviewResult;
+  /** What the review ran with (null = the CLI's default); absent in records from before riff chose. */
+  model?: string | null; effort?: string | null;
 }
 export type AiJobState =
   | { kind: "queued" }

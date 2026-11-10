@@ -10,6 +10,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 const isStr = (v: unknown): v is string => typeof v === "string";
 const isStrs = (v: unknown): v is string[] => Array.isArray(v) && v.every(isStr);
 const isInt = (v: unknown): v is number => Number.isInteger(v);
+const isOptStr = (v: unknown): boolean => v === undefined || v === null || isStr(v);
 
 const isEvidence = (v: unknown): boolean => Array.isArray(v) && v.every((e) =>
   isObj(e) && isStr(e.path) && (e.line === null || isInt(e.line)) && isStr(e.quote));
@@ -35,7 +36,8 @@ function isAiResult(v: unknown, key: PrKey): v is AiResult {
     && Array.isArray(v.chapters) && v.chapters.every((c) => isObj(c) && isStr(c.title) && isStr(c.summary) && isStrs(c.paths))
     && Array.isArray(v.findings) && v.findings.every(isFinding)
     && isObj(v.handled) && Object.values(v.handled).every((h) => h === "added" || h === "discarded")
-    && (v.rereview === undefined || isRereview(v.rereview));
+    && (v.rereview === undefined || isRereview(v.rereview))
+    && isOptStr(v.model) && isOptStr(v.effort);
 }
 
 /** The cached result for `prKey`; null when absent or not a valid result. */

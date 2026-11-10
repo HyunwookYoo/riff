@@ -4,6 +4,7 @@ import type { aiRun } from "./run";
 import { verdictReactions, type Reaction } from "./memory";
 import { FIND_SCHEMA, VERIFY_SCHEMA, findPrompt, verifyPrompt } from "./prompts";
 import { fillQuotes, mergeVerdicts, normalizeFind } from "./result";
+import type { AiChoice } from "./modelChoice";
 import { cancel, enqueue, finish, type JobKind, type Queue, type QueueEntry } from "./queue";
 import type { runRereview } from "./rereview";
 import type { AiFinding, AiJobState, AiResult, RereviewResult } from "./types";
@@ -50,9 +51,15 @@ async function findingTexts(
   return texts;
 }
 
-/** Find → verify for one PR, at the PR's current head (from a fresh detail, not `pr`). */
+/** The CLI's own model and effort. */
+export const CLI_DEFAULT: AiChoice = { model: null, effort: null };
+
+/**
+ * Find → verify for one PR, at the PR's current head (from a fresh detail, not `pr`). Both
+ * passes run with `choice`, which the result records.
+ */
 export async function runJob(
-  d: JobDeps, pr: PrSummary, repoPath: string, onState: (s: AiJobState) => void,
+  d: JobDeps, pr: PrSummary, repoPath: string, onState: (s: AiJobState) => void, choice: AiChoice = CLI_DEFAULT,
 ): Promise<AiResult> {
   const startedAt = d.now();
   onState({ kind: "running", pass: "find", startedAt, lastActivity: null });
@@ -71,7 +78,7 @@ export async function runJob(
   const pass = async (which: "find" | "verify", prompt: string, schema: object): Promise<unknown> => {
     onState({ kind: "running", pass: which, startedAt, lastActivity: null });
     const run = d.aiRun(repoPath, prompt, schema, (t) =>
-      onState({ kind: "running", pass: which, startedAt, lastActivity: t }), instructions);
+      onState({ kind: "running", pass: which, startedAt, lastActivity: t }), instructions, choice);
     return run.done;
   };
 
@@ -90,6 +97,7 @@ export async function runJob(
   return {
     version: 1, key: pr.key, headSha: head, baseSha: base, mergeBase,
     createdAt: new Date(d.now()).toISOString(), chapters, findings, handled: {},
+    model: choice.model, effort: choice.effort,
   };
 }
 
@@ -119,7 +127,8 @@ export interface RunnerDeps {
 }
 
 interface Active { entry: QueueEntry; cancelled: boolean; cancel: () => void }
-interface Spec { pr: PrSummary; repoPath: string; login: string }
+/** `choice` is fixed when the job is queued: a settings change while it waits doesn't move it. */
+interface Spec { pr: PrSummary; repoPath: string; login: string; choice: AiChoice }
 
 const specKey = (e: QueueEntry): string => `${e.key}|${e.kind}`;
 
@@ -150,13 +159,15 @@ function request(r: Runner, e: QueueEntry, spec: Spec): void {
   if (q.running === null) startNext(r);
 }
 
-export function requestJob(r: Runner, pr: PrSummary, repoPath: string): void {
-  request(r, { key: pr.key, kind: "review" }, { pr, repoPath, login: "" });
+export function requestJob(r: Runner, pr: PrSummary, repoPath: string, choice: AiChoice = CLI_DEFAULT): void {
+  request(r, { key: pr.key, kind: "review" }, { pr, repoPath, login: "", choice });
 }
 
 /** Queues a check of whether `pr`'s new commits address `login`'s open threads. */
-export function requestRereview(r: Runner, pr: PrSummary, repoPath: string, login: string): void {
-  request(r, { key: pr.key, kind: "rereview" }, { pr, repoPath, login });
+export function requestRereview(
+  r: Runner, pr: PrSummary, repoPath: string, login: string, choice: AiChoice = CLI_DEFAULT,
+): void {
+  request(r, { key: pr.key, kind: "rereview" }, { pr, repoPath, login, choice });
 }
 
 export function cancelJob(r: Runner, key: PrKey, kind: JobKind = "review"): void {
@@ -198,9 +209,9 @@ async function runOne(r: Runner, entry: QueueEntry): Promise<void> {
       threads = detail.threads;
       return detail;
     },
-    aiRun: (path, prompt, schema, onActivity, instructions) => {
+    aiRun: (path, prompt, schema, onActivity, instructions, choice) => {
       if (a.cancelled) return { done: Promise.reject(new Error("cancelled")), cancel: () => {} };
-      const run = r.jobDeps.aiRun(path, prompt, schema, onActivity, instructions);
+      const run = r.jobDeps.aiRun(path, prompt, schema, onActivity, instructions, choice);
       a.cancel = run.cancel;
       return run;
     },
@@ -210,7 +221,7 @@ async function runOne(r: Runner, entry: QueueEntry): Promise<void> {
   };
   try {
     if (entry.kind === "rereview") {
-      const rr = await r.runRereview(jobDeps, spec.pr, spec.repoPath, spec.login, onState);
+      const rr = await r.runRereview(jobDeps, spec.pr, spec.repoPath, spec.login, onState, spec.choice);
       if (a.cancelled) return;
       await r.saveRereview(key, rr);
       if (a.cancelled) return;
@@ -218,7 +229,7 @@ async function runOne(r: Runner, entry: QueueEntry): Promise<void> {
       for (const m of verdictReactions(rr, threads, spec.pr.repo)) r.remember(m);
       return;
     }
-    const result = await r.runJob(jobDeps, spec.pr, spec.repoPath, onState);
+    const result = await r.runJob(jobDeps, spec.pr, spec.repoPath, onState, spec.choice);
     if (a.cancelled) return;
     const saved = await r.save(result);
     r.ctx.results = { ...r.ctx.results, [key]: saved }; // keep memory in step with disk

@@ -92,6 +92,14 @@ export function setUassetguiPath(path: string | null): Promise<void> {
   return invoke("set_uassetgui_path", { path });
 }
 
+export function setAiModel(model: string | null): Promise<void> {
+  return invoke("set_ai_model", { model });
+}
+
+export function setAiEffort(effort: string | null): Promise<void> {
+  return invoke("set_ai_effort", { effort });
+}
+
 export function setUeVersionForRepo(
   repo: string,
   version: string,
