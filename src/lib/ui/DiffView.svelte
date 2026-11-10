@@ -79,7 +79,17 @@
     mode: string;
     dark: boolean;
     lang: string | null;
+    collapse: boolean;
   } | null = null;
+
+  // "Changes only" (collapseUnchanged), held per screen kind in appState.
+  const changesOnly = $derived(
+    source ? appState.reviewChangesOnly : appState.changesOnly,
+  );
+  function toggleChangesOnly() {
+    if (source) appState.reviewChangesOnly = !appState.reviewChangesOnly;
+    else appState.changesOnly = !appState.changesOnly;
+  }
 
   // VS Code-style responsive diff: side-by-side needs horizontal room, so when
   // the diff pane is narrower than this (e.g. the graph mode's left detail
@@ -191,6 +201,8 @@
     void ov;
     void cm;
     void uv;
+    // Collapse is fixed at construction: a toggle must remount.
+    void changesOnly;
     void appState.bcDiffRange;
     // The range is resolved untracked inside load(): a picker or override
     // change reloads the diff through these, a watcher refresh alone
@@ -321,7 +333,8 @@
         mounted.new === next.new_content &&
         mounted.mode === effectiveViewMode &&
         mounted.dark === guardDark &&
-        mounted.lang === guardLang
+        mounted.lang === guardLang &&
+        mounted.collapse === changesOnly
       ) {
         diff = next; // refresh the toolbar/badge; editor + scroll untouched
         return;
@@ -388,10 +401,13 @@
         ? toCMChanges(diff.changes, (a, b, c, d) => new Change(a, b, c, d))
         : [];
     const diffConfig = { override: () => changes.slice() };
-    // Not with `source` (PR Review): riff's diff (CRLF-normalised) can differ
-    // from git's hunks, so a collapsed run could hide commentable lines,
-    // threads or drafts.
-    const collapse = source ? {} : { collapseUnchanged: { margin: 3, minSize: 4 } };
+    // Off by default with `source` (PR Review): riff's diff (CRLF-normalised)
+    // can differ from git's hunks, so a collapsed run could hide commentable
+    // lines, threads or drafts — a wider margin there when the user opts in.
+    const collapseOn = changesOnly;
+    const collapse = collapseOn
+      ? { collapseUnchanged: { margin: source ? 5 : 3, minSize: 4 } }
+      : {};
 
     if (effectiveViewMode === "side-by-side") {
       mergeView = new MergeView({
@@ -471,6 +487,7 @@
       mode: effectiveViewMode,
       dark,
       lang: effectiveLang,
+      collapse: collapseOn,
     };
   }
 
@@ -539,6 +556,17 @@
         </button>
       {/if}
       {#if !svgPreview}
+      <button
+        type="button"
+        class="changes-only"
+        class:active={changesOnly}
+        onclick={toggleChangesOnly}
+        title={source
+          ? "Changes only: collapse unchanged lines. Collapsed runs can hide context, commentable lines or threads"
+          : "Changes only: collapse unchanged lines"}
+      >
+        Changes only
+      </button>
       <div class="font-size" title="Diff font size (Ctrl +/- / 0)">
         <button type="button" onclick={() => adjustFontSize(-1)} aria-label="Decrease font size">A−</button>
         <button
@@ -695,6 +723,9 @@
   .font-size {
     display: inline-flex;
     gap: 0;
+    margin-right: 8px;
+  }
+  .modes .changes-only {
     margin-right: 8px;
   }
   .font-size button {
