@@ -30,6 +30,10 @@
   --diff-del-line: rgba(248, 81, 73, 0.08);
   --diff-del-token: rgba(248, 81, 73, 0.32);
   --diff-del-border: #cf222e;
+  /* Diff change map: modified chunks and PR Review annotations. */
+  --diff-mod-border: #0969da;
+  --mark-thread: #bf8700;
+  --mark-finding: #e16f24;
   --mono: "JetBrains Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
   --diff-font-size: 13px;
 }
@@ -58,6 +62,9 @@
   --diff-del-line: rgba(248, 81, 73, 0.14);
   --diff-del-token: rgba(248, 81, 73, 0.42);
   --diff-del-border: #f85149;
+  --diff-mod-border: #58a6ff;
+  --mark-thread: #d29922;
+  --mark-finding: #f0883e;
 }
 
 :root {

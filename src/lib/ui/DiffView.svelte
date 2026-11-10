@@ -2,7 +2,15 @@
   import { onDestroy, untrack } from "svelte";
   import { EditorView, keymap, lineNumbers } from "@codemirror/view";
   import { EditorState, type Extension } from "@codemirror/state";
-  import { MergeView, unifiedMergeView, Change } from "@codemirror/merge";
+  import {
+    MergeView,
+    unifiedMergeView,
+    Change,
+    getChunks,
+    getOriginalDoc,
+    goToNextChunk,
+    goToPreviousChunk,
+  } from "@codemirror/merge";
   import { search, searchKeymap } from "@codemirror/search";
   import { appState } from "$lib/store.svelte";
   import { commitViewActive } from "$lib/history";
@@ -15,6 +23,13 @@
   import { fullLineChangePlugin } from "$lib/diff/fullLine";
   import { toCMChanges } from "$lib/diff/changes";
   import { setActiveDiffView } from "$lib/diff/activeView";
+  import {
+    currentChunkIndex,
+    mapAToB,
+    overviewMarks,
+    type DiffMarker,
+    type OverviewMark,
+  } from "$lib/diff/overview";
   import { adjustFontSize, resetFontSize } from "$lib/font";
   import Dropdown from "./Dropdown.svelte";
   import ImageDiff from "./ImageDiff.svelte";
@@ -26,6 +41,7 @@
     source,
     sideExtensions,
     forceSideBySide = false,
+    markers,
   }: {
     source?: {
       repoPath: string;
@@ -37,6 +53,8 @@
     /** Extra extensions per side-by-side editor: "a" = old, "b" = new. */
     sideExtensions?: (side: "a" | "b") => Extension[];
     forceSideBySide?: boolean;
+    /** Review annotations drawn on the change map (1-based lines per side). */
+    markers?: DiffMarker[];
   } = $props();
 
   const file = $derived(source?.file ?? appState.selectedFile);
@@ -89,6 +107,81 @@
   function toggleChangesOnly() {
     if (source) appState.reviewChangesOnly = !appState.reviewChangesOnly;
     else appState.changesOnly = !appState.changesOnly;
+  }
+
+  // Change map beside the scrollbar + the toolbar's "i / N changes". Marks are
+  // placed by the scrolled editor's (side b / unified) rendered line blocks so
+  // collapsed runs and block widgets don't skew them; recomputed on geometry
+  // changes, the counter on scroll. Both coalesce into one frame.
+  let marks = $state.raw<OverviewMark[]>([]);
+  let chunkAt = $state.raw<{ index: number; count: number }>({ index: -1, count: 0 });
+  let overviewFrame = 0;
+  let needMarks = false;
+
+  function scheduleOverview(withMarks: boolean) {
+    needMarks ||= withMarks;
+    if (overviewFrame) return;
+    overviewFrame = requestAnimationFrame(() => {
+      overviewFrame = 0;
+      const m = needMarks;
+      needMarks = false;
+      refreshOverview(m);
+    });
+  }
+
+  function refreshOverview(withMarks: boolean) {
+    const b = mergeView?.b ?? unifiedView;
+    if (!b) {
+      marks = [];
+      chunkAt = { index: -1, count: 0 };
+      return;
+    }
+    const chunks = getChunks(b.state)?.chunks ?? [];
+    if (withMarks) {
+      const a = mergeView?.a ?? null;
+      const docA = a ? a.state.doc : getOriginalDoc(b.state);
+      // Unified has no old-side editor: old-side markers sit at their mapped
+      // new-side line.
+      const onB = (m: DiffMarker): DiffMarker => {
+        const fromA = docA.line(Math.min(Math.max(1, m.line), docA.lines)).from;
+        const posB = Math.min(mapAToB(chunks, fromA), b.state.doc.length);
+        return { ...m, side: "b", line: b.state.doc.lineAt(posB).number };
+      };
+      const ms = (untrack(() => markers) ?? []).map((m) =>
+        m.side === "a" && !a ? onB(m) : m,
+      );
+      marks = overviewMarks(chunks, ms, {
+        doc: (side) => (side === "a" ? docA : b.state.doc),
+        span: (side, pos) => {
+          const v = side === "a" && a ? a : b;
+          const h = v.contentHeight || 1;
+          const blk = v.lineBlockAt(pos);
+          return { top: blk.top / h, bottom: blk.bottom / h };
+        },
+      });
+    }
+    const y = host.getBoundingClientRect().top - b.documentTop;
+    const top = b.lineBlockAtHeight(Math.max(0, y)).from;
+    chunkAt = { index: currentChunkIndex(chunks, top), count: chunks.length };
+  }
+
+  const overviewListener = EditorView.updateListener.of((u) => {
+    if (u.geometryChanged || u.docChanged) scheduleOverview(true);
+  });
+
+  $effect(() => {
+    void markers;
+    untrack(() => scheduleOverview(true));
+  });
+
+  function revealMark(m: OverviewMark) {
+    const v = m.side === "a" && mergeView ? mergeView.a : (mergeView?.b ?? unifiedView);
+    v?.dispatch({ effects: EditorView.scrollIntoView(m.pos, { y: "center" }) });
+  }
+
+  function stepChunk(dir: 1 | -1) {
+    const v = mergeView?.b ?? unifiedView;
+    if (v) (dir > 0 ? goToNextChunk : goToPreviousChunk)(v);
   }
 
   // VS Code-style responsive diff: side-by-side needs horizontal room, so when
@@ -388,6 +481,7 @@
       search({ top: true }),
       keymap.of(searchKeymap),
       fullLineChangePlugin,
+      overviewListener,
     ];
 
     // Inject the backend's diff so the editor renders it verbatim instead of
@@ -451,6 +545,7 @@
       });
       setActiveDiffView(unifiedView);
     }
+    scheduleOverview(true);
 
     // A Blame drill-in names the line it came from: scroll the after side to
     // it once (it is a line the commit changed, so never in a collapsed run).
@@ -499,9 +594,13 @@
     unifiedView = null;
     mounted = null;
     if (host) host.innerHTML = "";
+    scheduleOverview(true);
   }
 
-  onDestroy(teardown);
+  onDestroy(() => {
+    teardown();
+    cancelAnimationFrame(overviewFrame);
+  });
 
   function loadAnyway() {
     void load(true);
@@ -556,6 +655,25 @@
         </button>
       {/if}
       {#if !svgPreview}
+      <div class="chunk-nav">
+        <button
+          type="button"
+          onclick={() => stepChunk(-1)}
+          disabled={chunkAt.count === 0}
+          title="Previous change (p)"
+          aria-label="Previous change"
+        >◀</button>
+        <button
+          type="button"
+          onclick={() => stepChunk(1)}
+          disabled={chunkAt.count === 0}
+          title="Next change (n)"
+          aria-label="Next change"
+        >▶</button>
+        <span class="chunk-count">
+          {chunkAt.count > 0 ? `${chunkAt.index + 1} / ${chunkAt.count} changes` : "—"}
+        </span>
+      </div>
       <button
         type="button"
         class="changes-only"
@@ -654,11 +772,23 @@
     <SubmoduleDiff {diff} />
   {/if}
 
-  <div
-    class="host"
-    bind:this={host}
-    class:hidden={diff?.kind !== "text" || showSvgPreview}
-  ></div>
+  <div class="pane" class:hidden={diff?.kind !== "text" || showSvgPreview}>
+    <!-- Capture: side-by-side scrolls .host, unified the editor's own scroller. -->
+    <div class="host" bind:this={host} onscrollcapture={() => scheduleOverview(false)}></div>
+    <div class="overview">
+      {#each marks as m, i (i)}
+        <button
+          type="button"
+          tabindex="-1"
+          class="mark {m.kind}"
+          style="top: {m.top}%; height: {m.height}%"
+          title={m.label}
+          aria-label={m.label}
+          onclick={() => revealMark(m)}
+        ></button>
+      {/each}
+    </div>
+  </div>
 </div>
 
 <style>
@@ -772,15 +902,88 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .pane {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  .pane.hidden {
+    display: none;
+  }
   .host {
     flex: 1;
     overflow: auto;
     min-height: 0;
+    min-width: 0;
     font-family: var(--mono);
     font-size: var(--diff-font-size);
   }
-  .host.hidden {
-    display: none;
+  .overview {
+    position: relative;
+    flex: none;
+    width: 10px;
+    border-left: 1px solid var(--border);
+    background: var(--bar-bg);
+  }
+  .mark {
+    position: absolute;
+    left: 1px;
+    right: 1px;
+    min-height: 2px;
+    padding: 0;
+    border: none;
+    border-radius: 1px;
+    cursor: pointer;
+  }
+  .mark:hover {
+    filter: brightness(1.25);
+    outline: 1px solid var(--fg);
+  }
+  .mark.added {
+    background: var(--diff-add-border);
+  }
+  .mark.deleted {
+    background: var(--diff-del-border);
+  }
+  .mark.modified {
+    background: var(--diff-mod-border);
+  }
+  /* Review annotations sit on top of the change bars. */
+  .mark.thread,
+  .mark.finding,
+  .mark.draft {
+    left: 0;
+    right: 0;
+    min-height: 3px;
+    z-index: 1;
+  }
+  .mark.thread {
+    background: var(--mark-thread);
+  }
+  .mark.finding {
+    background: var(--mark-finding);
+  }
+  .mark.draft {
+    background: var(--accent);
+  }
+  .chunk-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-right: 8px;
+  }
+  .modes .chunk-nav button {
+    padding: 2px 6px;
+  }
+  .modes .chunk-nav button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .chunk-count {
+    margin-left: 4px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   .state {
     padding: 16px;
