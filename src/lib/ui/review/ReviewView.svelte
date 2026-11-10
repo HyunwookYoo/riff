@@ -23,6 +23,7 @@
   import { isCommentable } from "$lib/review/commentable";
   import type { FileHunks, Side } from "$lib/review/types";
   import type { ChangedFile } from "$lib/types";
+  import type { DiffMarker } from "$lib/diff/overview";
   import DiffView from "../DiffView.svelte";
   import PrList from "./PrList.svelte";
   import ReviewFiles from "./ReviewFiles.svelte";
@@ -307,6 +308,25 @@
     return out;
   }
 
+  // The change map's markers: the same threads, drafts and shown findings itemsFor places inline.
+  const markers = $derived.by(() => {
+    const path = reviewState.selectedPath;
+    const side = (s: Side) => (s === "LEFT" ? "a" : "b");
+    const out: DiffMarker[] = [];
+    for (const t of reviewState.detail?.threads ?? []) {
+      if (t.path === path && isInlineThread(t)) out.push({ side: side(t.side), line: t.line!, kind: "thread" });
+    }
+    for (const i of reviewState.record?.items ?? []) {
+      const tg = i.target;
+      if (tg.kind === "line" && tg.path === path && !i.unplaced) out.push({ side: side(tg.side), line: tg.line, kind: "draft" });
+    }
+    for (const f of ai?.inline ?? []) {
+      const tg = f.target;
+      if (tg.kind === "line" && tg.path === path) out.push({ side: side(tg.side), line: tg.line, kind: "finding" });
+    }
+    return out;
+  });
+
   $effect(() => {
     const path = reviewState.selectedPath;
     const targets: [Tracked | null, InlineItem[]][] = [
@@ -462,7 +482,7 @@
             />
           {/if}
           {#if source}
-            <DiffView {source} {sideExtensions} forceSideBySide />
+            <DiffView {source} {sideExtensions} {markers} forceSideBySide />
           {:else if !reviewState.headSha && !reviewState.error}
             <div class="placeholder">Loading PR…</div>
           {:else}
