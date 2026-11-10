@@ -544,6 +544,7 @@ async fn ai_run(
     prompt: String,
     schema: String,
     model: Option<String>,
+    effort: Option<String>,
     instructions: Option<String>,
     id: u32,
     on_event: tauri::ipc::Channel<ai::AiEvent>,
@@ -555,6 +556,7 @@ async fn ai_run(
             &prompt,
             &schema,
             model.as_deref(),
+            effort.as_deref(),
             instructions.as_deref(),
             &mut |ev| {
                 let _ = on_event.send(ev);
@@ -787,6 +789,16 @@ fn set_uassetgui_path(app: tauri::AppHandle, path: Option<String>) -> Result<(),
 }
 
 #[tauri::command]
+fn set_ai_model(app: tauri::AppHandle, model: Option<String>) -> Result<(), StoreError> {
+    store::set_ai_model(&app, model)
+}
+
+#[tauri::command]
+fn set_ai_effort(app: tauri::AppHandle, effort: Option<String>) -> Result<(), StoreError> {
+    store::set_ai_effort(&app, effort)
+}
+
+#[tauri::command]
 fn set_ue_version_for_repo(
     app: tauri::AppHandle,
     repo: String,
@@ -969,6 +981,8 @@ pub fn run() {
             set_graph_row_height,
             set_parse_unreal_assets,
             set_uassetgui_path,
+            set_ai_model,
+            set_ai_effort,
             set_ue_version_for_repo,
             add_manual_repo,
             remove_manual_repo,

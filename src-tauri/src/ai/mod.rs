@@ -90,16 +90,33 @@ pub fn agentmemory_mcp_config(claude_json: &Value) -> Value {
     }
 }
 
+/// The `--effort` values `claude --help` lists.
+const EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+/// A model alias or id (`opus`, `claude-opus-5-5`, `opus[1m]`): 1-64 of
+/// `A-Za-z0-9._:[]-`, not led by `-` so it can't read as another flag.
+fn model_ok(m: &str) -> bool {
+    (1..=64).contains(&m.len())
+        && !m.starts_with('-')
+        && m.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:[]-".contains(&b))
+}
+
 /// `guard_exe` is riff's own executable, run as the Bash PreToolUse hook in
 /// `AI_BASH_GUARD_FLAG` mode (see `guard_decision`). `instructions_file`
-/// holds `instructions_prompt`, appended to the system prompt.
+/// holds `instructions_prompt`, appended to the system prompt. `model` and
+/// `effort` (None = the CLI's default) come from the UI, so are checked here.
 pub fn claude_args(
     schema_json: &str,
     mcp_config_path: &Path,
     guard_exe: &Path,
     instructions_file: Option<&Path>,
     model: Option<&str>,
-) -> Vec<String> {
+    effort: Option<&str>,
+) -> Result<Vec<String>, AiError> {
+    if !model.is_none_or(model_ok) || !effort.is_none_or(|e| EFFORTS.contains(&e)) {
+        return Err(AiError::Failed("invalid model/effort".into()));
+    }
     let mut args: Vec<String> = [
         "-p",
         "--output-format",
@@ -155,7 +172,11 @@ pub fn claude_args(
         args.push("--model".into());
         args.push(m.into());
     }
-    args
+    if let Some(e) = effort {
+        args.push("--effort".into());
+        args.push(e.into());
+    }
+    Ok(args)
 }
 
 /// argv[1] that makes riff.exe act as the PreToolUse hook (handled in
@@ -796,12 +817,14 @@ fn instructions_prompt(claude_md: &str) -> Option<String> {
 /// One read-only Claude Code run in `cwd`. `on_event` gets tool activity and
 /// the result line; `cancelled` is polled while claude runs and true kills it.
 /// `claude_md` is the repo's CLAUDE.md, read by the caller from the base
-/// branch. Returns the structured output matching `schema_json`.
+/// branch. `model`/`effort` None leaves the CLI's default. Returns the
+/// structured output matching `schema_json`.
 pub fn run(
     cwd: &Path,
     prompt: &str,
     schema_json: &str,
     model: Option<&str>,
+    effort: Option<&str>,
     claude_md: Option<&str>,
     on_event: &mut dyn FnMut(AiEvent),
     cancelled: &dyn Fn() -> bool,
@@ -833,7 +856,8 @@ pub fn run(
         &guard_exe,
         instructions.as_ref().map(|f| f.0.as_path()),
         model,
-    ))
+        effort,
+    )?)
     .current_dir(cwd)
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
@@ -1172,32 +1196,95 @@ mod tests {
             let parsed: Value = serde_json::from_str(&args[at]).unwrap();
             (args[..at].to_vec(), parsed, args[at + 1..].to_vec())
         };
+        let args = |md: Option<&Path>, model, effort| {
+            split(claude_args(schema, &cfg, &exe, md, model, effort).unwrap())
+        };
+        let strs = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
-            split(claude_args(schema, &cfg, &exe, None, None)),
+            args(None, None, None),
             (base.clone(), settings.clone(), vec![])
         );
         assert_eq!(
-            split(claude_args(schema, &cfg, &exe, None, Some("sonnet"))),
-            (
-                base.clone(),
-                settings.clone(),
-                vec!["--model".into(), "sonnet".into()]
-            )
+            args(None, Some("sonnet"), None),
+            (base.clone(), settings.clone(), strs(&["--model", "sonnet"]))
+        );
+        assert_eq!(
+            args(None, None, Some("high")),
+            (base.clone(), settings.clone(), strs(&["--effort", "high"]))
         );
         let md = PathBuf::from(r"C:\tmp\riff-ai-instructions-1-0.md");
         assert_eq!(
-            split(claude_args(schema, &cfg, &exe, Some(&md), Some("sonnet"))),
+            args(Some(&md), Some("claude-opus-5-5[1m]"), Some("xhigh")),
             (
                 base.clone(),
                 settings,
-                vec![
-                    "--append-system-prompt-file".into(),
-                    r"C:\tmp\riff-ai-instructions-1-0.md".into(),
-                    "--model".into(),
-                    "sonnet".into()
-                ]
+                strs(&[
+                    "--append-system-prompt-file",
+                    r"C:\tmp\riff-ai-instructions-1-0.md",
+                    "--model",
+                    "claude-opus-5-5[1m]",
+                    "--effort",
+                    "xhigh"
+                ])
             )
         );
+    }
+
+    #[test]
+    fn claude_args_accepts_model_aliases_ids_and_efforts() {
+        let p = Path::new("x");
+        for model in [
+            "opus",
+            "sonnet",
+            "haiku",
+            "fable",
+            "claude-opus-5-5",
+            "opus[1m]",
+            "us.anthropic.claude:v1_2",
+        ] {
+            assert!(
+                claude_args("{}", p, p, None, Some(model), None).is_ok(),
+                "{model}"
+            );
+        }
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            assert!(
+                claude_args("{}", p, p, None, None, Some(effort)).is_ok(),
+                "{effort}"
+            );
+        }
+        assert!(claude_args("{}", p, p, None, Some(&"a".repeat(64)), None).is_ok());
+    }
+
+    #[test]
+    fn claude_args_rejects_invalid_model_or_effort() {
+        let p = Path::new("x");
+        let invalid = Err(AiError::Failed("invalid model/effort".into()));
+        let long = "a".repeat(65);
+        // A leading `-` could read as another CLI flag.
+        for model in [
+            "",
+            "opus 4",
+            "opus;x",
+            "a/b",
+            "--dangerously-skip-permissions",
+            "-p",
+            "é",
+            long.as_str(),
+        ] {
+            assert_eq!(
+                claude_args("{}", p, p, None, Some(model), None),
+                invalid,
+                "{model:?}"
+            );
+        }
+        for effort in ["", "HIGH", "extreme", "high ", "--model"] {
+            assert_eq!(
+                claude_args("{}", p, p, None, None, Some(effort)),
+                invalid,
+                "{effort:?}"
+            );
+        }
     }
 
     #[test]

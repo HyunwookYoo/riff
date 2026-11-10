@@ -52,7 +52,7 @@ const DISALLOWED_TOOLS = [
   "Bash(*--ext-diff*)",
 ];
 
-function claudeArgs(schemaJson, mcpConfigPath, guardExe, instructionsFile, model) {
+function claudeArgs(schemaJson, mcpConfigPath, guardExe, instructionsFile, model, effort) {
   const settings = {
     disableAllHooks: false,
     hooks: {
@@ -89,6 +89,7 @@ function claudeArgs(schemaJson, mcpConfigPath, guardExe, instructionsFile, model
     JSON.stringify(settings),
     ...(instructionsFile ? ["--append-system-prompt-file", instructionsFile] : []),
     ...(model ? ["--model", model] : []),
+    ...(effort ? ["--effort", effort] : []),
   ];
 }
 

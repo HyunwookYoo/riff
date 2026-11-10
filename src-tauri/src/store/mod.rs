@@ -66,6 +66,12 @@ pub struct PersistedState {
     /// version, so this is stored per-repo rather than globally.
     #[serde(default)]
     pub ue_version_by_repo: HashMap<String, String>,
+    /// Claude Code `--model` / `--effort` for AI review and re-review. None
+    /// leaves the CLI's own setting. Checked again in `ai::claude_args`.
+    #[serde(default)]
+    pub ai_model: Option<String>,
+    #[serde(default)]
+    pub ai_effort: Option<String>,
 }
 
 const MIN_PICKER_WIDTH: u32 = 200;
@@ -121,6 +127,8 @@ impl Default for PersistedState {
             parse_unreal_assets: default_true(),
             uassetgui_path: None,
             ue_version_by_repo: HashMap::new(),
+            ai_model: None,
+            ai_effort: None,
         }
     }
 }
@@ -247,6 +255,23 @@ pub fn set_uassetgui_path(app: &AppHandle, path: Option<String>) -> Result<(), S
     save(app, &state)
 }
 
+pub fn set_ai_model(app: &AppHandle, model: Option<String>) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    state.ai_model = non_blank(model);
+    save(app, &state)
+}
+
+pub fn set_ai_effort(app: &AppHandle, effort: Option<String>) -> Result<(), StoreError> {
+    let mut state = load(app)?;
+    state.ai_effort = non_blank(effort);
+    save(app, &state)
+}
+
+/// Trimmed; empty means unset.
+fn non_blank(v: Option<String>) -> Option<String> {
+    v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
 pub fn set_ue_version_for_repo(
     app: &AppHandle,
     repo: String,
@@ -309,4 +334,28 @@ pub fn set_tab_order(
         state.tab_order_by_main.insert(main_repo, order);
     }
     save(app, &state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ai_model_and_effort_default_to_unset() {
+        let old: PersistedState = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!((old.ai_model, old.ai_effort), (None, None));
+        let set: PersistedState =
+            serde_json::from_str(r#"{"ai_model":"opus","ai_effort":"high"}"#).unwrap();
+        assert_eq!(
+            (set.ai_model.as_deref(), set.ai_effort.as_deref()),
+            (Some("opus"), Some("high"))
+        );
+    }
+
+    #[test]
+    fn non_blank_trims_and_drops_empty() {
+        assert_eq!(non_blank(Some(" opus ".into())), Some("opus".into()));
+        assert_eq!(non_blank(Some("  ".into())), None);
+        assert_eq!(non_blank(None), None);
+    }
 }
