@@ -267,9 +267,12 @@ findings.)*
   the wrong result it leads to. riff drops a finding whose scenario is empty;
   the verify pass checks the scenario holds. Findings are limited to changed
   lines, but the AI must read callers and surrounding code before claiming.
-- Asset and binary files (`.uasset .umap .uexp .ubulk .fbx .png .tga .psd
-  .wav .mp3 .bin`, and git's "Binary files differ" sections) are cut from the
-  diff the AI gets; the prompt lists how many were left out.
+- Asset files (`.uasset .umap .uexp .ubulk .fbx .png .tga .psd .wav .mp3
+  .bin`) are cut from the diff the AI gets; the prompt lists how many were
+  left out. Other files git shows as binary stay, and the AI is told to read
+  them with `git show` if they are text. riff's diff uses the merge-base's
+  `.gitattributes` (`--attr-source`), so a checked-out PR branch can't mark
+  source files `-diff` to hide them.
 - **Repo rules:** riff lists the repo's `.claude/skills/*/SKILL.md` as
   committed at the merge-base (name and `description` only) in the find and
   verify prompts. The AI reads the relevant ones itself with `git show
@@ -296,16 +299,26 @@ behaviour still matches Roblox's.
   date and an **Update now** button.
 - **How the AI gets the docs, without widening the guard:** the find pass
   also names the Roblox APIs whose behaviour the change implements or touches
-  (`robloxApis`, e.g. `BasePart`, `Humanoid`, `Enum.HumanoidStateType`). riff
-  reads those reference files from the docs clone itself and passes them to a
-  **third, Roblox pass** as reference text (capped). The guard stays as is.
+  (`robloxApis`: members such as `BasePart.Touched`, `Humanoid:TakeDamage`,
+  classes for general behaviour, `Enum.HumanoidStateType`, and `LuaGlobals` /
+  `RobloxGlobals` for globals). riff reads those reference files from the
+  docs clone itself and passes them to a **third, Roblox pass** as reference
+  text. Core class files are 80-120 KB, so per file riff sends the header
+  (without code samples), an index of all member names, and the full entries
+  of the members asked for; a class asked alone goes whole when it fits.
+  Caps: 12 files, 60 000 chars per file, 150 000 in total. The AI is told
+  that a member only in the index, or cut text, is "not shown", not
+  "absent". The guard stays as is.
 - **Roblox pass:** compares the changed behaviour with the reference. Before
   reporting a difference it searches the project's own docs at head (`git
   grep`) for a recorded, intentional divergence and skips those. Each finding
   must cite the reference: an evidence item with path
-  `roblox:<kind>/<Name>.yaml` and a quote. riff checks every such quote is
-  really in the file it gave; a finding left with no checked Roblox quote is
-  shown only as unconfirmed.
+  `roblox:<kind>/<Name>.yaml` and a quote of at least 20 non-space
+  characters. riff checks every such quote is really in the text it sent
+  (its own index and truncation lines don't count); a finding left with no
+  checked Roblox quote is shown only as unconfirmed. If the Roblox pass
+  fails, the review keeps the find results and records why parity was
+  skipped.
 - **Verify:** Roblox findings go through the same verify pass as the others,
   with the cited reference files in its prompt.
 - **Display:** Roblox findings carry a `Roblox` tag in the inline card, the
