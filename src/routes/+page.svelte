@@ -193,6 +193,7 @@
       appState.ueVersionByRepo = s.ue_version_by_repo ?? {};
       appState.aiModel = s.ai_model ?? null;
       appState.aiEffort = s.ai_effort ?? null;
+      appState.robloxParityRepos = s.roblox_parity_repos ?? [];
     } catch {
       // First-run / corrupt state: keep defaults silently.
     }

@@ -50,7 +50,7 @@ const COMMIT_LOG_FORMAT: &str =
 
 /// `Command::new("git")` with `CREATE_NO_WINDOW` on Windows so spawning git
 /// from a GUI app doesn't flash a console window. No-op on other platforms.
-pub(super) fn git_command() -> Command {
+pub(crate) fn git_command() -> Command {
     let cmd = Command::new("git");
     #[cfg(windows)]
     {
@@ -292,7 +292,7 @@ impl GitCli {
         }
     }
 
-    pub(super) fn run(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+    pub(crate) fn run(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
         let output = git_command().arg("-C").arg(path).args(args).output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -305,7 +305,7 @@ impl GitCli {
     /// terminal credential prompt so a GUI launch never hangs waiting on stdin.
     /// The user's credential helper (e.g. Git Credential Manager) still supplies
     /// cached creds or pops its own dialog; otherwise the command fails fast.
-    pub(super) fn run_network(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+    pub(crate) fn run_network(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
         let output = git_command()
             .arg("-C")
             .arg(path)

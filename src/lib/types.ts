@@ -323,6 +323,21 @@ export interface PersistedState {
   /// Claude Code --model / --effort for AI review and re-review; null = the CLI's default.
   ai_model?: string | null;
   ai_effort?: string | null;
+  /// GitHub repos (`host/owner/name`) whose AI review also checks Roblox parity.
+  roblox_parity_repos?: string[];
+}
+
+/// The downloaded Roblox API reference commit (`date`: ISO 8601 committer date).
+export interface DocsInfo {
+  sha: string;
+  date: string;
+}
+
+/// One Roblox API reference file; `path` is `<kind>/<Name>.yaml` (e.g. `classes/BasePart.yaml`).
+export interface ApiDoc {
+  name: string;
+  path: string;
+  text: string;
 }
 
 /// A repo-qualified file path. Used by the unified blame picker

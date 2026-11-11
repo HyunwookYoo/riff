@@ -3,6 +3,7 @@ pub mod diff;
 pub mod git;
 pub mod github;
 pub mod memory;
+pub mod roblox_docs;
 pub mod store;
 pub mod watch;
 
@@ -570,6 +571,47 @@ async fn ai_run(
     .map_err(|e| ai::AiError::Failed(e.to_string()))?
 }
 
+fn roblox_docs_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, GitError> {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join(roblox_docs::DIR_NAME))
+        .map_err(|e| GitError::CommandFailed(e.to_string()))
+}
+
+/// Clone or fetch the Roblox API reference; a network transfer, so it runs on
+/// a blocking-pool thread like `ai_run`.
+#[tauri::command]
+async fn roblox_docs_update(app: tauri::AppHandle) -> Result<roblox_docs::DocsInfo, GitError> {
+    let dir = roblox_docs_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        roblox_docs::update(&app.state::<GitCli>(), &dir, roblox_docs::DOCS_URL)
+    })
+    .await
+    .map_err(|e| GitError::CommandFailed(e.to_string()))?
+}
+
+#[tauri::command]
+async fn roblox_docs_info(app: tauri::AppHandle) -> Result<Option<roblox_docs::DocsInfo>, GitError> {
+    let dir = roblox_docs_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || roblox_docs::info(&app.state::<GitCli>(), &dir))
+        .await
+        .map_err(|e| GitError::CommandFailed(e.to_string()))?
+}
+
+#[tauri::command]
+async fn roblox_docs_read(
+    app: tauri::AppHandle,
+    sha: String,
+    names: Vec<String>,
+) -> Result<Vec<roblox_docs::ApiDoc>, GitError> {
+    let dir = roblox_docs_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        roblox_docs::read_apis(&app.state::<GitCli>(), &dir, &sha, &names)
+    })
+    .await
+    .map_err(|e| GitError::CommandFailed(e.to_string()))?
+}
+
 #[tauri::command]
 fn cancel_ai_run(runs: tauri::State<'_, AiRuns>, id: u32) {
     runs.0.lock().unwrap().insert(id);
@@ -809,6 +851,11 @@ fn set_ai_effort(app: tauri::AppHandle, effort: Option<String>) -> Result<(), St
 }
 
 #[tauri::command]
+fn set_roblox_parity(app: tauri::AppHandle, repo: String, on: bool) -> Result<(), StoreError> {
+    store::set_roblox_parity(&app, repo, on)
+}
+
+#[tauri::command]
 fn set_ue_version_for_repo(
     app: tauri::AppHandle,
     repo: String,
@@ -965,6 +1012,9 @@ pub fn run() {
             cancel_gh_login,
             ai_run,
             cancel_ai_run,
+            roblox_docs_update,
+            roblox_docs_info,
+            roblox_docs_read,
             record_review_memory,
             pr_hunks,
             pr_diff_text,
@@ -994,6 +1044,7 @@ pub fn run() {
             set_uassetgui_path,
             set_ai_model,
             set_ai_effort,
+            set_roblox_parity,
             set_ue_version_for_repo,
             add_manual_repo,
             remove_manual_repo,

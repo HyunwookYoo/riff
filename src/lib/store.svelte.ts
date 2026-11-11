@@ -150,6 +150,9 @@ class AppState {
   // load; written back via git.ts setters. A run can override them.
   aiModel = $state<string | null>(null);
   aiEffort = $state<string | null>(null);
+  // GitHub repos (`host/owner/name`) with Roblox parity on. Mirrored from
+  // PersistedState.roblox_parity_repos on load; written back via setRobloxParity.
+  robloxParityRepos = $state<string[]>([]);
   // History browser (commit log) state. Session-only. `commits` is the loaded
   // window (paginated via "load more"); `selectedCommitSha` highlights the row
   // whose parent..self diff is showing; `historyRef` anchors the log ("" =

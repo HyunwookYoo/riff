@@ -72,6 +72,10 @@ pub struct PersistedState {
     pub ai_model: Option<String>,
     #[serde(default)]
     pub ai_effort: Option<String>,
+    /// GitHub repos (`host/owner/name`) whose AI review also checks Roblox
+    /// parity. Validated on save.
+    #[serde(default)]
+    pub roblox_parity_repos: Vec<String>,
 }
 
 const MIN_PICKER_WIDTH: u32 = 200;
@@ -129,6 +133,7 @@ impl Default for PersistedState {
             ue_version_by_repo: HashMap::new(),
             ai_model: None,
             ai_effort: None,
+            roblox_parity_repos: Vec::new(),
         }
     }
 }
@@ -280,6 +285,27 @@ fn ai_value(v: Option<String>, ok: fn(&str) -> bool) -> Result<Option<String>, S
     }
 }
 
+pub fn set_roblox_parity(app: &AppHandle, repo: String, on: bool) -> Result<(), StoreError> {
+    if !repo_key_ok(&repo) {
+        return Err(StoreError::Invalid("invalid repo key (expected host/owner/name)"));
+    }
+    let mut state = load(app)?;
+    state.roblox_parity_repos.retain(|r| r != &repo);
+    if on {
+        state.roblox_parity_repos.push(repo);
+    }
+    save(app, &state)
+}
+
+/// `host/owner/name`: three non-empty segments of `[A-Za-z0-9._-]`.
+fn repo_key_ok(key: &str) -> bool {
+    let segments: Vec<&str> = key.split('/').collect();
+    segments.len() == 3
+        && segments.iter().all(|s| {
+            !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        })
+}
+
 pub fn set_ue_version_for_repo(
     app: &AppHandle,
     repo: String,
@@ -381,5 +407,33 @@ mod tests {
                 .to_string(),
             crate::ai::INVALID_CHOICE
         );
+    }
+
+    #[test]
+    fn roblox_parity_repos_default_to_empty() {
+        let old: PersistedState = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert!(old.roblox_parity_repos.is_empty());
+        let set: PersistedState =
+            serde_json::from_str(r#"{"roblox_parity_repos":["github.com/o/n"]}"#).unwrap();
+        assert_eq!(set.roblox_parity_repos, vec!["github.com/o/n"]);
+    }
+
+    #[test]
+    fn repo_key_needs_three_plain_segments() {
+        for ok in ["github.com/owner/name", "ghe.example.com/my-org/repo_1.x"] {
+            assert!(repo_key_ok(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "owner/name",
+            "github.com/owner/name/extra",
+            "github.com//name",
+            "github.com/owner/",
+            "github.com/own er/name",
+            "github.com/owner/na:me",
+            r"github.com\owner\name",
+        ] {
+            assert!(!repo_key_ok(bad), "{bad}");
+        }
     }
 }

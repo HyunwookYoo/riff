@@ -7,10 +7,12 @@ import type {
   ChangedFile,
   Commit,
   CommitFind,
+  ApiDoc,
   Containment,
   ContainmentDetail,
   ConflictVersions,
   DiffMode,
+  DocsInfo,
   FileDiff,
   FileStatus,
   FileViewMode,
@@ -98,6 +100,26 @@ export function setAiModel(model: string | null): Promise<void> {
 
 export function setAiEffort(effort: string | null): Promise<void> {
   return invoke("set_ai_effort", { effort });
+}
+
+/** Turn Roblox parity on or off for the GitHub repo `host/owner/name`. */
+export function setRobloxParity(repo: string, on: boolean): Promise<void> {
+  return invoke("set_roblox_parity", { repo, on });
+}
+
+/** Clone or fetch the Roblox API reference; rejects when the network fails (the last copy stays). */
+export function robloxDocsUpdate(): Promise<DocsInfo> {
+  return invoke("roblox_docs_update");
+}
+
+/** The downloaded Roblox API reference commit, or null before the first download. */
+export function robloxDocsInfo(): Promise<DocsInfo | null> {
+  return invoke("roblox_docs_info");
+}
+
+/** Reference files for `names` (`BasePart`, `Enum.HumanoidStateType`) at docs commit `sha`; unknown names are skipped. */
+export function robloxDocsRead(sha: string, names: string[]): Promise<ApiDoc[]> {
+  return invoke("roblox_docs_read", { sha, names });
 }
 
 export function setUeVersionForRepo(
