@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkRobloxEvidence, citedDocs, downgradeUnchecked, repoKey, robloxApisOf } from "./roblox";
+import { checkRobloxEvidence, citedDocs, docsDateLabel, downgradeUnchecked, repoKey, robloxApisOf, withParity } from "./roblox";
 import type { AiFinding } from "./types";
 import type { ApiDoc } from "../../types";
 
@@ -67,5 +67,21 @@ describe("downgradeUnchecked", () => {
     const bad = f({ tag: "roblox", ...ev("roblox:enums/Material.yaml", "Wood") });
     const plain = f({ ...ev("a.ts", "Wood") });
     expect(downgradeUnchecked([good, bad, plain], docs)).toEqual([good, { ...bad, status: "unconfirmed" }, plain]);
+  });
+});
+
+describe("withParity", () => {
+  it("appends the key once when on and drops it when off", () => {
+    expect(withParity(["a/b/c"], "h/o/n", true)).toEqual(["a/b/c", "h/o/n"]);
+    expect(withParity(["h/o/n", "a/b/c"], "h/o/n", true)).toEqual(["a/b/c", "h/o/n"]);
+    expect(withParity(["h/o/n", "a/b/c"], "h/o/n", false)).toEqual(["a/b/c"]);
+    expect(withParity([], "h/o/n", false)).toEqual([]);
+  });
+});
+
+describe("docsDateLabel", () => {
+  it("is the date part of the commit date, or not downloaded", () => {
+    expect(docsDateLabel({ date: "2026-11-10T21:04:00+09:00" })).toBe("2026-11-10");
+    expect(docsDateLabel(null)).toBe("not downloaded");
   });
 });

@@ -101,6 +101,7 @@
   <div class="head">
     <span class="sev {f.severity}">{f.severity}</span>
     {#if unconfirmed}<span class="tag">Unconfirmed</span>{/if}
+    {#if f.tag === "roblox"}<span class="tag">Roblox</span>{/if}
     {#if showPath}<span class="loc" title={f.path}>{where(f.path, f.line)}</span>{/if}
     <span class="spacer"></span>
     {#if !editing}

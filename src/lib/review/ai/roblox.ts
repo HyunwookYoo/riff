@@ -45,3 +45,12 @@ export function downgradeUnchecked(findings: AiFinding[], docs: ApiDoc[]): AiFin
   return findings.map((f) =>
     f.tag === "roblox" && f.status === "confirmed" && !checkRobloxEvidence(f, docs) ? { ...f, status: "unconfirmed" as const } : f);
 }
+
+/** The parity list after `setRobloxParity(key, on)` succeeded; mirrors the store (drop, then append when on). */
+export function withParity(list: string[], key: string, on: boolean): string[] {
+  const rest = list.filter((r) => r !== key);
+  return on ? [...rest, key] : rest;
+}
+
+/** The AI settings' Roblox docs row: the local copy's date, or "not downloaded". */
+export const docsDateLabel = (info: { date: string } | null): string => (info ? info.date.slice(0, 10) : "not downloaded");

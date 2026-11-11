@@ -20,7 +20,7 @@
 
 <button type="button" class="ai-btn" onclick={click}>{label}</button>
 {#if !busy}
-  <AiRunMenu what={label} onrun={(c) => requestAi(pr, c)} />
+  <AiRunMenu what={label} repo={pr.repo} onrun={(c) => requestAi(pr, c)} />
 {/if}
 
 <style>

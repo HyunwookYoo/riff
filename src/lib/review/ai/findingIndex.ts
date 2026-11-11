@@ -14,6 +14,8 @@ export interface FindingRow {
   summary: string;
   /** Not on a diff line: it would go in as a file or review-body comment. */
   offDiff: boolean;
+  /** "roblox": from the Roblox parity pass. */
+  tag?: "roblox";
 }
 
 /** Every shown (confirmed) finding across the PR, most severe first, then by path and line. */
@@ -26,6 +28,7 @@ export function findingIndex(inline: ShownFinding[], offDiff: ShownFinding[]): F
     severity: f.severity,
     summary: f.body.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "",
     offDiff: off,
+    tag: f.tag,
   });
   return [...inline.map((f) => row(f, false)), ...offDiff.map((f) => row(f, true))].sort(
     (a, b) => RANK[a.severity] - RANK[b.severity] || a.path.localeCompare(b.path) || a.line - b.line,

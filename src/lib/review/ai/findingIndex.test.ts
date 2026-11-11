@@ -25,6 +25,11 @@ describe("findingIndex", () => {
     const [r] = findingIndex([f("a", "x.ts", 1, "low", "\n  Null check missing here.\nMore text")], []);
     expect(r.summary).toBe("Null check missing here.");
   });
+
+  it("carries the Roblox tag", () => {
+    const rows = findingIndex([{ ...f("a", "x.ts", 1, "low"), tag: "roblox" }], [f("b", "y.ts", 1, "low")]);
+    expect(rows.map((r) => r.tag)).toEqual(["roblox", undefined]);
+  });
 });
 
 describe("fileFindingBadges", () => {

@@ -100,6 +100,7 @@
             >
               <span class="dot sev-{r.severity}" aria-label={r.severity}></span>
               <span class="loc">{label.name}:{r.line}</span>
+              {#if r.tag === "roblox"}<span class="tag">Roblox</span>{/if}
               <span class="summary">{r.summary}</span>
             </button>
           {/each}
@@ -257,6 +258,15 @@
   .loc {
     flex: none;
     font-family: var(--mono);
+  }
+  /* Same look as InlineFinding's tags. */
+  .tag {
+    flex: none;
+    font-weight: 600;
+    padding: 0 6px;
+    border-radius: 8px;
+    border: 1px solid currentColor;
+    color: var(--muted);
   }
   .summary {
     flex: 1;

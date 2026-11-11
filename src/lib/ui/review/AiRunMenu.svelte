@@ -1,12 +1,17 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { aiDefaults } from "$lib/review/ai/aiState.svelte";
+  import { repoKey, withParity } from "$lib/review/ai/roblox";
+  import type { GhRepo } from "$lib/review/types";
+  import { setRobloxParity } from "$lib/git";
+  import { appState } from "$lib/store.svelte";
   import { choiceFromForm, formFromChoice, type AiChoice, type ChoiceForm } from "$lib/review/ai/modelChoice";
   import AiModelFields from "./AiModelFields.svelte";
   import { popoverPlace } from "./popoverPlace";
 
   // The ▾ beside a run button: this run only, with a model/effort other than the defaults.
-  let { what, onrun }: { what: string; onrun: (c: AiChoice) => void } = $props();
+  // `repo` (AI review only, not re-review) adds its Roblox parity setting, saved at once.
+  let { what, onrun, repo }: { what: string; onrun: (c: AiChoice) => void; repo?: GhRepo } = $props();
 
   const WIDTH = 260;
   let moreEl = $state<HTMLButtonElement>();
@@ -17,11 +22,34 @@
   const pos = $derived(anchor && popoverPlace(anchor, { width: WIDTH, height }, { width: window.innerWidth, height: window.innerHeight }));
   let form = $state<ChoiceForm>({ model: "", custom: "", effort: "" });
   const choice = $derived(choiceFromForm(form));
+  const parityKey = $derived(repo ? repoKey(repo) : null);
+  const parityOn = $derived(parityKey !== null && appState.robloxParityRepos.includes(parityKey));
+  let paritySaving = $state(false);
+  let parityError = $state<string | null>(null);
+
+  async function setParity(e: Event & { currentTarget: HTMLInputElement }) {
+    const input = e.currentTarget;
+    const key = parityKey;
+    if (!key) return;
+    const on = input.checked;
+    paritySaving = true;
+    parityError = null;
+    try {
+      await setRobloxParity(key, on);
+      appState.robloxParityRepos = withParity(appState.robloxParityRepos, key, on);
+    } catch (err) {
+      input.checked = !on; // appState didn't change, so nothing redraws the box
+      parityError = `Not saved: ${String(err).slice(0, 200)}`;
+    } finally {
+      paritySaving = false;
+    }
+  }
 
   async function toggle(e: MouseEvent) {
     e.stopPropagation();
     if (anchor) return close();
     form = formFromChoice(aiDefaults());
+    parityError = null;
     anchor = (e.currentTarget as HTMLElement).getBoundingClientRect();
     await tick();
     menuEl?.querySelector("select")?.focus();
@@ -81,6 +109,14 @@
     style:width="{WIDTH}px"
   >
     <AiModelFields {form} onchange={(f) => (form = f)} />
+    {#if repo}
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+      <label class="parity" onclick={(e) => e.stopPropagation()}>
+        <input type="checkbox" checked={parityOn} disabled={paritySaving} onchange={setParity} />
+        <span>Roblox parity for {repo.owner}/{repo.name} <span class="saved">(saved for this repo)</span></span>
+      </label>
+      {#if parityError}<p class="error">{parityError}</p>{/if}
+    {/if}
     <div class="actions">
       <span class="note">This run only</span>
       <button type="button" class="primary" disabled={!choice} onclick={run}>Run</button>
@@ -119,6 +155,24 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .parity {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 0.85em;
+    word-break: break-word;
+  }
+  .parity input {
+    margin: 2px 0 0;
+  }
+  .saved {
+    opacity: 0.65;
+  }
+  .error {
+    margin: 0;
+    font-size: 0.8em;
+    color: var(--error-fg);
   }
   .note {
     flex: 1;

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { appState } from "$lib/store.svelte";
-  import { setAiEffort, setAiModel } from "$lib/git";
+  import { robloxDocsInfo, robloxDocsUpdate, setAiEffort, setAiModel } from "$lib/git";
+  import { docsDateLabel } from "$lib/review/ai/roblox";
+  import type { DocsInfo } from "$lib/types";
   import { choiceFromForm, choiceLabel, formFromChoice, type ChoiceForm } from "$lib/review/ai/modelChoice";
   import AiModelFields from "./review/AiModelFields.svelte";
   import { popoverPlace } from "./review/popoverPlace";
@@ -11,9 +13,41 @@
   const pos = $derived(open_ && trigger ? popoverPlace(trigger.getBoundingClientRect(), { width: 300, height: 0 }, { width: window.innerWidth, height: window.innerHeight }) : null);
   let form = $state<ChoiceForm>({ model: "", custom: "", effort: "" });
 
+  // The Roblox API reference copy: undefined while loading.
+  let docs = $state<DocsInfo | null | undefined>(undefined);
+  let docsBusy = $state(false);
+  let docsError = $state<string | null>(null);
+
   function toggle() {
-    if (!open_) form = formFromChoice({ model: appState.aiModel, effort: appState.aiEffort });
+    if (!open_) {
+      form = formFromChoice({ model: appState.aiModel, effort: appState.aiEffort });
+      if (!docsBusy) loadDocs();
+    }
     open_ = !open_;
+  }
+
+  function loadDocs() {
+    docs = undefined;
+    docsError = null;
+    robloxDocsInfo().then(
+      (d) => (docs = d),
+      (e) => {
+        docs = null;
+        docsError = String(e).slice(0, 200);
+      },
+    );
+  }
+
+  async function updateDocs() {
+    docsBusy = true;
+    docsError = null;
+    try {
+      docs = await robloxDocsUpdate();
+    } catch (e) {
+      docsError = `Update failed: ${String(e).slice(0, 200)}`;
+    } finally {
+      docsBusy = false;
+    }
   }
 
   // The form shows what was picked, even an empty or invalid custom id; only a valid choice is
@@ -60,6 +94,12 @@
         <p class="unsaved">Enter a valid model id to save it; runs use {choiceLabel({ model: appState.aiModel, effort: appState.aiEffort })} until then.</p>
       {/if}
       <p class="hint">Applies to AI review and re-review. Uses your Claude Code login.</p>
+      <div class="docs">
+        <span class="name">Roblox docs</span>
+        <span class="date">{docsBusy ? "updating…" : docs === undefined ? "…" : docsDateLabel(docs)}</span>
+        <button type="button" disabled={docsBusy} onclick={() => void updateDocs()}>Update now</button>
+      </div>
+      {#if docsError}<p class="unsaved">{docsError}</p>{/if}
     </div>
   {/if}
 </div>
@@ -118,6 +158,19 @@
     margin: 0;
     font-size: 0.8em;
     color: var(--error-fg);
+  }
+  .docs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85em;
+  }
+  .docs .name {
+    opacity: 0.75;
+  }
+  .docs .date {
+    flex: 1;
+    font-family: var(--mono);
   }
   .hint {
     margin: 0;
