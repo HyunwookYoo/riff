@@ -250,6 +250,68 @@ If the PR head moves, the result is marked stale and the user may re-analyse.
 Draft comment bodies are written in the language of the PR description.
 *(My call.)*
 
+### Review quality and Roblox parity
+
+*(User decisions, 2026-11-11. Ideas borrowed from the user's `/code-review`
+command, which can't run inside riff: it needs agents, file reads and writes
+that the read-only guard forbids, and it outputs a report, not anchored
+findings.)*
+
+**Sharper find pass (every repo).**
+
+- The PR's stated intent (Objectives, AS-IS/TO-BE or whatever the
+  description says it is for) is the review baseline: findings include cases
+  where the change does not do what it says. Classes or functions the author
+  asks reviewers to look at must each be examined.
+- Each finding carries a **failure scenario**: a concrete input or state and
+  the wrong result it leads to. riff drops a finding whose scenario is empty;
+  the verify pass checks the scenario holds. Findings are limited to changed
+  lines, but the AI must read callers and surrounding code before claiming.
+- Asset and binary files (`.uasset .umap .uexp .ubulk .fbx .png .tga .psd
+  .wav .mp3 .bin`, and git's "Binary files differ" sections) are cut from the
+  diff the AI gets; the prompt lists how many were left out.
+- **Repo rules:** riff lists the repo's `.claude/skills/*/SKILL.md` as
+  committed at the merge-base (name and `description` only) in the find and
+  verify prompts. The AI reads the relevant ones itself with `git show
+  <mergeBase>:<path>`, so no guard change is needed. Skills from the PR head
+  are not used (the PR could plant them).
+
+**Roblox parity (opt-in per GitHub repo).**
+
+Some projects (sandbox, client) aim to behave like Roblox. For a repo with
+**Roblox parity** switched on, the review also checks whether changed
+behaviour still matches Roblox's.
+
+- **Toggle:** a per-repo checkbox in the AI review `▾` menu ("Roblox parity
+  for owner/name"), persisted by repo (`host/owner/name`). It is a setting,
+  not a per-run choice.
+- **Source of truth:** Roblox's public API reference
+  (`github.com/Roblox/creator-docs`, `content/en-us/reference/engine/
+  {classes,datatypes,enums,globals,libraries}/*.yaml`). riff keeps a shallow
+  bare clone in its app data folder. Before every run with parity on, riff
+  (not the AI) fetches it; if the fetch fails, the last copy is used. The
+  docs commit and date are recorded in the result and shown in the badge
+  tooltip ("Roblox docs 2026-11-10"). With no copy at all, the parity pass is
+  skipped and the result says why. The AI settings popover shows the docs
+  date and an **Update now** button.
+- **How the AI gets the docs, without widening the guard:** the find pass
+  also names the Roblox APIs whose behaviour the change implements or touches
+  (`robloxApis`, e.g. `BasePart`, `Humanoid`, `Enum.HumanoidStateType`). riff
+  reads those reference files from the docs clone itself and passes them to a
+  **third, Roblox pass** as reference text (capped). The guard stays as is.
+- **Roblox pass:** compares the changed behaviour with the reference. Before
+  reporting a difference it searches the project's own docs at head (`git
+  grep`) for a recorded, intentional divergence and skips those. Each finding
+  must cite the reference: an evidence item with path
+  `roblox:<kind>/<Name>.yaml` and a quote. riff checks every such quote is
+  really in the file it gave; a finding left with no checked Roblox quote is
+  shown only as unconfirmed.
+- **Verify:** Roblox findings go through the same verify pass as the others,
+  with the cited reference files in its prompt.
+- **Display:** Roblox findings carry a `Roblox` tag in the inline card, the
+  AI findings list and the Unconfirmed area.
+- **Cost:** one extra AI run per review of a parity repo (verify is shared).
+
 ### Mapping findings to GitHub comments
 
 GitHub only accepts inline review comments on lines that appear in the PR's
