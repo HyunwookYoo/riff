@@ -22,7 +22,8 @@ describe("findPrompt", () => {
     const p = findPrompt(base);
     const s = p.indexOf(UNTRUSTED_START);
     for (const r of ["stated intent", "does not achieve", "asks reviewers to look at", "only on changed lines",
-      "callers, headers and surrounding code", "failureScenario", "concrete input or state", "do not report it"]) {
+      "callers, headers and surrounding code", "failureScenario", "concrete input or state", "do not report it",
+      "`Binary files ... differ` may still be text", "read it with `git show <head>:<path>`"]) {
       expect(p.indexOf(r), r).toBeGreaterThan(-1);
       expect(p.indexOf(r), r).toBeLessThan(s);
     }
@@ -30,10 +31,10 @@ describe("findPrompt", () => {
   it("notes the left-out asset files inside the untrusted section, at most 50 named", () => {
     expect(findPrompt(base)).not.toContain("left out of the diff");
     const two = findPrompt({ ...base, omitted: ["a.uasset", "b.png"] });
-    expect(two).toContain("2 asset/binary files were left out of the diff:");
+    expect(two).toContain("2 asset files were left out of the diff:");
     expect(two.indexOf("a.uasset\nb.png")).toBeGreaterThan(two.indexOf(UNTRUSTED_START));
     const many = findPrompt({ ...base, omitted: Array.from({ length: 53 }, (_, i) => `f${i}.png`) });
-    expect(many).toContain("53 asset/binary files were left out of the diff:");
+    expect(many).toContain("53 asset files were left out of the diff:");
     expect(many).toContain("f49.png\nand 3 more");
     expect(many).not.toContain("f50.png");
   });
@@ -174,7 +175,7 @@ describe("Roblox parity", () => {
     for (const r of ["never modify", "Repository: acme/widgets", "Repository review rules", "git show aaa111:<path>",
       "Roblox API reference (from github.com/Roblox/creator-docs at d0c5)", "roblox:classes/BasePart.yaml",
       "git grep -n -i -e <api> bbb222 -- docs", "intentional", "failureScenario", "roblox:<kind>/<Name>.yaml", "normal prose",
-      "at least 20 characters", "lines starting [riff index]", "is not shown here; that does not mean Roblox lacks it", "whose entry you were not given"]) {
+      "at least 20 characters", "`Binary files ... differ` may still be text", "lines starting [riff index]", "is not shown here; that does not mean Roblox lacks it", "whose entry you were not given"]) {
       expect(p.indexOf(r), r).toBeGreaterThan(-1);
       expect(p.indexOf(r), r).toBeLessThan(s);
     }

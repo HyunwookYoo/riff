@@ -126,7 +126,7 @@ describe("runJob", () => {
     const [find, verify] = d.aiRun.mock.calls.map((c) => c[1]);
     expect(find).toContain("diff --git a/a.ts b/a.ts\n+code");
     expect(find).not.toContain("diff --git a/Hero.uasset");
-    expect(find).toContain("1 asset/binary files were left out of the diff:");
+    expect(find).toContain("1 asset files were left out of the diff:");
     expect(verify).toContain("scenario one");
   });
 

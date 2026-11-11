@@ -123,6 +123,9 @@ export function memoryRules(repo: GhRepo): string[] {
 
 const GIT_RULES = gitRules("- Read a file with `git show <head>:<path>` (new side) or `git show <mergeBase>:<path>` (old side), using the SHAs given below.");
 
+/** trimDiff keeps non-asset sections git shows as binary: attributes can mark source files -diff. */
+const BINARY_NOTE = "- A file the diff shows only as `Binary files ... differ` may still be text (the repository's attributes can mark source files as binary): if its path looks like text, read it with `git show <head>:<path>` and `git show <mergeBase>:<path>` and review it like the rest.";
+
 /**
  * The repo's skills as committed at the merge-base (see repoRules.ts). They come from the base
  * branch, like CLAUDE.md, so they go outside the untrusted section.
@@ -143,7 +146,7 @@ function omittedNote(omitted: string[]): string[] {
   if (!omitted.length) return [];
   const named = omitted.slice(0, MAX_OMITTED_NAMED);
   if (omitted.length > named.length) named.push(`and ${omitted.length - named.length} more`);
-  return [`${omitted.length} asset/binary files were left out of the diff:`, fenced(named.join("\n"))];
+  return [`${omitted.length} asset files were left out of the diff:`, fenced(named.join("\n"))];
 }
 
 /** The PR's own content, inside the untrusted section. `diff` is already trimmed (see diffTrim.ts). */
@@ -196,6 +199,7 @@ export function findPrompt(a: PrContent & { repoPath: string; mergeBase: string;
     "- The stated intent in the PR description (its objectives, AS-IS/TO-BE, or whatever it says the change is for) is your baseline: also report cases where the change does not achieve it.",
     "- If the description names classes or functions it asks reviewers to look at, examine each of them.",
     "- Report problems only on changed lines, but read the callers, headers and surrounding code before claiming one.",
+    BINARY_NOTE,
     "- Every finding needs a failureScenario: a concrete input or state and the wrong result it leads to. If you cannot write one, do not report it.",
     "",
     BODY_STYLE,
@@ -243,6 +247,7 @@ export function robloxPrompt(
     "Rules for findings:",
     `- Before reporting a difference, search the project's own docs at head for a recorded, intentional divergence (\`git grep -n -i -e <api> ${a.head} -- docs\`, with the API's name). Skip a difference the docs record as intentional.`,
     "- Report problems only on changed lines (path, side and line as in the diff), but read the callers and surrounding code before claiming one.",
+    BINARY_NOTE,
     "- Every finding needs a failureScenario: a concrete input or state, what this change does with it and what Roblox does instead. If you cannot write one, do not report it.",
     `- Every finding needs an evidence item whose path is the reference file's id, \`roblox:<kind>/<Name>.yaml\`, and whose quote is copied exactly from that file's entries (at least ${MIN_QUOTE_CHARS} characters, not from riff's index or [truncated] lines); add evidence from the code as well. Report nothing the reference does not back.`,
     "- Do not report style, naming or taste comments.",

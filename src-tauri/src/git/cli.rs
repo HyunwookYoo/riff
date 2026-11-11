@@ -2353,9 +2353,14 @@ impl GitLayer for GitCli {
     fn pr_diff_text(&self, path: &Path, merge_base: &str, head: &str) -> Result<String, GitError> {
         let merge_base = validate_ref(merge_base)?;
         let head = validate_ref(head)?;
+        // Attributes from the merge-base, not the working tree: a checked-out
+        // PR branch's .gitattributes (`*.cpp -diff`) would hide source files
+        // from the review. `--attr-source` needs git 2.40.
+        let attr_source = format!("--attr-source={merge_base}");
         let out = self.run(
             path,
             &[
+                &attr_source,
                 "-c",
                 "core.quotePath=false",
                 "diff",
@@ -3940,6 +3945,38 @@ new3
         GitCli::new().fetch_commit(&clone, "origin", &topic).unwrap();
         assert!(GitCli::new().has_commit(&clone, &topic).unwrap());
         assert_eq!(rev_parse(&clone, &format!("refs/riff/pr/review-{}", &topic[..12])), topic);
+    }
+
+    #[test]
+    fn pr_diff_text_reads_attributes_from_the_merge_base() {
+        let repo = pr_fixture("pr-diff-attrs");
+        let mb = rev_parse(&repo, "main");
+        // The PR marks text files binary and is checked out, so its
+        // .gitattributes is in the working tree.
+        git_in(&repo, &["checkout", "-q", "topic"]);
+        commit_file(&repo, ".gitattributes", "*.txt -diff\n", "hide text");
+        let head = rev_parse(&repo, "topic");
+        let plain = git_command()
+            .arg("-C")
+            .arg(&repo)
+            .args(["diff", &mb, &head])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&plain.stdout).contains("Binary files a/a.txt"));
+        let got = GitCli::new().pr_diff_text(&repo, &mb, &head).unwrap();
+        assert!(got.contains("+LINE10"), "{got}");
+        assert!(!got.contains("Binary files"), "{got}");
+
+        // Attributes the base branch has still apply.
+        git_in(&repo, &["checkout", "-q", "main"]);
+        commit_file(&repo, ".gitattributes", "b.txt -diff\n", "base attrs");
+        let mb = rev_parse(&repo, "main");
+        git_in(&repo, &["checkout", "-q", "topic"]);
+        commit_file(&repo, "b.txt", "changed\n", "edit b");
+        let head = rev_parse(&repo, "topic");
+        let got = GitCli::new().pr_diff_text(&repo, &mb, &head).unwrap();
+        assert!(got.contains("Binary files a/b.txt and b/b.txt differ"), "{got}");
+        assert!(got.contains("+LINE10"), "{got}");
     }
 
     #[test]

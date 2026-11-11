@@ -33,12 +33,12 @@ describe("trimDiff", () => {
     expect(r.omitted).toEqual(["snd/hit.wav"]);
   });
 
-  it("drops binary sections whatever the extension", () => {
-    const bin = "diff --git a/data/blob b/data/blob\nindex 1111111..2222222 100644\nBinary files a/data/blob and b/data/blob differ\n";
+  it("keeps binary sections of non-asset files (a .gitattributes may mark source -diff)", () => {
+    const bin = (p: string) => `diff --git a/${p} b/${p}\nindex 1111111..2222222 100644\nBinary files a/${p} and b/${p} differ\n`;
     const patch = "diff --git a/x.dat b/x.dat\nnew file mode 100644\nindex 0000000..2222222\nGIT binary patch\nliteral 3\nKcmZQz\n\nliteral 0\nHcmV?d00001\n\n";
-    const r = trimDiff(bin + text("a.ts") + patch);
-    expect(r.diff).toBe(text("a.ts"));
-    expect(r.omitted).toEqual(["data/blob", "x.dat"]);
+    const r = trimDiff(bin("Source/Hero.cpp") + text("a.ts") + patch + bin("Content/T.png"));
+    expect(r.diff).toBe(bin("Source/Hero.cpp") + text("a.ts") + patch);
+    expect(r.omitted).toEqual(["Content/T.png"]);
   });
 
   it("keeps a text line that only mentions a binary marker", () => {

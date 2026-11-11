@@ -18,16 +18,17 @@ function sectionPath(lines: string[]): string {
   return rest.startsWith("a/") ? rest.slice(2, (rest.length - 1) / 2) : rest;
 }
 
-/** `diff` (git's unified output) without asset and binary file sections; `omitted` = their paths. */
+/**
+ * `diff` (git's unified output) without the sections of asset files (by extension);
+ * `omitted` = their paths. Other sections git shows as binary stay: a `.gitattributes` can mark
+ * source files `-diff`, and the prompts tell the AI to read those with git show.
+ */
 export function trimDiff(diff: string): { diff: string; omitted: string[] } {
   const omitted: string[] = [];
   const kept = diff.split(/^(?=diff --git )/m).filter((s) => {
     if (!s.startsWith(HEADER)) return true;
-    const lines = s.split(/\r?\n/);
-    // Hunk lines start with " ", "+" or "-", so these can only be git's own markers.
-    const binary = lines.some((l) => l.startsWith("Binary files ") || l === "GIT binary patch");
-    const path = sectionPath(lines);
-    if (!binary && !ASSET.test(path)) return true;
+    const path = sectionPath(s.split(/\r?\n/));
+    if (!ASSET.test(path)) return true;
     omitted.push(path);
     return false;
   });
