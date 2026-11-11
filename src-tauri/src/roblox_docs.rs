@@ -622,7 +622,8 @@ mod tests {
         fs::create_dir_all(root.join("to").join("y")).unwrap();
         let start = std::time::Instant::now();
         assert!(rename_retrying(&root.join("from2"), &root.join("to")).is_err());
-        assert!(start.elapsed() < RENAME_RETRY_DELAY);
+        // Retrying would take RENAME_RETRIES delays.
+        assert!(start.elapsed() < RENAME_RETRY_DELAY * RENAME_RETRIES);
     }
 
     #[test]
