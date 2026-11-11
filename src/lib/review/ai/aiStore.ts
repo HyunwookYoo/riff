@@ -20,8 +20,12 @@ function isFinding(f: unknown): boolean {
     && isInt(f.line) && (f.startLine === null || isInt(f.startLine))
     && (f.severity === "high" || f.severity === "medium" || f.severity === "low")
     && isStr(f.body) && (f.status === "confirmed" || f.status === "unconfirmed") && isStrs(f.quote)
-    && isEvidence(f.evidence) && (f.failureScenario === undefined || isStr(f.failureScenario));
+    && isEvidence(f.evidence) && (f.failureScenario === undefined || isStr(f.failureScenario))
+    && (f.tag === undefined || f.tag === "roblox");
 }
+
+const isRobloxParity = (v: unknown): boolean =>
+  isObj(v) && ((isStr(v.docsSha) && isStr(v.docsDate)) || isStr(v.skipped));
 
 function isRereview(r: unknown): boolean {
   return isObj(r) && isStr(r.fromHead) && isStr(r.toHead) && isStr(r.createdAt)
@@ -37,6 +41,7 @@ function isAiResult(v: unknown, key: PrKey): v is AiResult {
     && Array.isArray(v.findings) && v.findings.every(isFinding)
     && isObj(v.handled) && Object.values(v.handled).every((h) => h === "added" || h === "discarded")
     && (v.rereview === undefined || isRereview(v.rereview))
+    && (v.roblox === undefined || isRobloxParity(v.roblox))
     && isOptStr(v.model) && isOptStr(v.effort);
 }
 

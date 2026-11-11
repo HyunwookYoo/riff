@@ -66,6 +66,12 @@ describe("aiBadgeTitle", () => {
     expect(aiBadgeTitle(undefined, { ...result("h"), model: "opus", effort: "high" })).toBe("AI review ran with opus · high");
     expect(aiBadgeTitle({ kind: "done" }, result("h"))).toBe("AI review ran with default");
   });
+  it("adds the Roblox docs date, or why the Roblox parity check was skipped", () => {
+    const roblox = { docsSha: "d0c5", docsDate: "2026-11-10T08:00:00+09:00" };
+    expect(aiBadgeTitle(undefined, { ...result("h"), roblox })).toBe("AI review ran with default · Roblox docs 2026-11-10");
+    expect(aiBadgeTitle(undefined, { ...result("h"), roblox: { skipped: "Roblox docs not downloaded" } }))
+      .toBe("AI review ran with default · Roblox parity skipped: Roblox docs not downloaded");
+  });
   it("nothing while a run is queued or running: the badge is about that run", () => {
     const r = { ...result("h"), model: "opus" };
     expect(aiBadgeTitle({ kind: "queued" }, r)).toBeUndefined();

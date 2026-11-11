@@ -63,6 +63,18 @@ describe("aiStore", () => {
     expect(await loadAiResult(K)).toEqual(v);
   });
 
+  it("a finding's Roblox tag and the result's Roblox parity record are optional", async () => {
+    const tagged = { ...result(), findings: [{ ...result().findings[0], tag: "roblox" }] };
+    for (const v of [
+      tagged,
+      { ...result(), roblox: { docsSha: "d0c5", docsDate: "2026-11-10T08:00:00+09:00" } },
+      { ...result(), roblox: { skipped: "Roblox docs not downloaded" } },
+    ]) {
+      m.loadReview.mockResolvedValueOnce(v);
+      expect(await loadAiResult(K)).toEqual(v);
+    }
+  });
+
   it("invalid stored result loads as null", async () => {
     const bad: unknown[] = [
       null, "x", { version: 2 },
@@ -73,6 +85,13 @@ describe("aiStore", () => {
       { ...result(), findings: [{ ...result().findings[0], quote: "x" }] },
       { ...result(), findings: [{ ...result().findings[0], failureScenario: 1 }] },
       { ...result(), findings: [{ ...result().findings[0], failureScenario: null }] },
+      { ...result(), findings: [{ ...result().findings[0], tag: "unity" }] },
+      { ...result(), findings: [{ ...result().findings[0], tag: null }] },
+      { ...result(), roblox: null },
+      { ...result(), roblox: {} },
+      { ...result(), roblox: { docsSha: "d0c5" } },
+      { ...result(), roblox: { docsSha: 1, docsDate: "x" } },
+      { ...result(), roblox: { skipped: 1 } },
       { ...result(), handled: { f0: "maybe" } },
       { ...result(), model: 1 },
       { ...result(), effort: {} },

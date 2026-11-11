@@ -144,6 +144,7 @@ function deps(answer: unknown = { verdicts: [] }) {
     prFileCompare: vi.fn(async (_p: string, _b: string, _o: string, _n: string, files: string[]) =>
       files.map((path) => ({ path, oldPatch: `old ${path}`, newPatch: `new ${path}` }))),
     fetchCommit: vi.fn(async () => {}),
+    robloxDocs: { update: vi.fn(async () => ({ sha: "", date: "" })), info: vi.fn(async () => null), read: vi.fn(async () => []) },
     aiRun: vi.fn((_p: string, prompt: string, schema: object, _a: (t: string) => void, instructions: string | null) => {
       runs.push({ prompt, schema, instructions });
       return { done: Promise.resolve(answer), cancel: vi.fn() };

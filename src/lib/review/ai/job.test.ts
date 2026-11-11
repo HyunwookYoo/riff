@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { cancelJob, createRunner, requestJob, requestRereview, runJob, type AiCtx, type JobDeps, type RunnerDeps } from "./job";
-import { FIND_SCHEMA, VERIFY_SCHEMA } from "./prompts";
+import { CLI_DEFAULT, cancelJob, createRunner, requestJob, requestRereview, runJob, type AiCtx, type JobDeps, type RunnerDeps } from "./job";
+import { FIND_SCHEMA, ROBLOX_SCHEMA, VERIFY_SCHEMA, findSchema } from "./prompts";
 import { emptyQueue } from "./queue";
 import { REREVIEW_SCHEMA, runRereview } from "./rereview";
 import type { AiChoice } from "./modelChoice";
 import type { AiResult, RereviewResult } from "./types";
 import type { PrDetail, PrSummary } from "../types";
+import type { ApiDoc, DocsInfo } from "../../types";
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -25,7 +26,7 @@ const cand = (o: object) => ({ path: "a.ts", side: "RIGHT", line: 2, startLine: 
   failureScenario: "s", ...o });
 
 /** Deps for a repo where node `N<n>` has head `H<n>`, base `B<n>`, merge-base `MB<n>`. */
-function deps(find: unknown, verify: unknown = { verdicts: [] }) {
+function deps(find: unknown, verify: unknown = { verdicts: [] }, roblox: unknown = { findings: [] }) {
   const runs: { schema: object; instructions: string | null; choice: AiChoice; cancel: ReturnType<typeof vi.fn> }[] = [];
   const d = {
     fetchPr: vi.fn(async (_p: string, _r: string, n: number) => `H${n}`),
@@ -44,12 +45,21 @@ function deps(find: unknown, verify: unknown = { verdicts: [] }) {
     aiRun: vi.fn((_p: string, _prompt: string, schema: object, _a: (t: string) => void, instructions: string | null, choice: AiChoice) => {
       const cancel = vi.fn();
       runs.push({ schema, instructions, choice, cancel });
-      const answer = schema === FIND_SCHEMA ? find : schema === REREVIEW_SCHEMA ? { verdicts: [] } : verify;
+      const answer = schema === FIND_SCHEMA || schema === findSchema(true) ? find
+        : schema === ROBLOX_SCHEMA ? roblox : schema === REREVIEW_SCHEMA ? { verdicts: [] } : verify;
       return { done: Promise.resolve(answer), cancel };
     }),
     prFileCompare: vi.fn(async (_p: string, _b: string, _o: string, _n: string, files: string[]) =>
       files.map((path) => ({ path, oldPatch: "", newPatch: "" }))),
     fetchCommit: vi.fn(async () => {}),
+    robloxDocs: {
+      update: vi.fn(async (): Promise<DocsInfo> => ({ sha: "d0c5", date: "2026-11-10T08:00:00+09:00" })),
+      info: vi.fn(async (): Promise<DocsInfo | null> => null),
+      // The clone knows BasePart and Humanoid only.
+      read: vi.fn(async (_sha: string, names: string[]): Promise<ApiDoc[]> => names
+        .filter((n) => n === "BasePart" || n === "Humanoid")
+        .map((n) => ({ name: n, path: `classes/${n}.yaml`, text: `name: ${n}\ndescription: ${n} doc text\n` }))),
+    },
     now: () => Date.UTC(2026, 10, 9),
   } satisfies JobDeps;
   return { d, runs };
@@ -172,6 +182,92 @@ describe("runJob", () => {
     const u = await runJob(unset.d, summary(1), "/repo", () => {}, { model: null, effort: null });
     expect(unset.runs.map((x) => x.choice)).toEqual([{ model: null, effort: null }, { model: null, effort: null }]);
     expect([u.model, u.effort]).toEqual([null, null]);
+  });
+
+  it("with Roblox parity off nothing about Roblox runs, even if the AI names APIs", async () => {
+    const { d, runs } = deps({ chapters: [], findings: [cand({})], robloxApis: ["BasePart"] });
+    const r = await runJob(d, summary(1), "/repo", () => {});
+    expect(runs.map((x) => x.schema)).toEqual([FIND_SCHEMA, VERIFY_SCHEMA]);
+    expect(d.aiRun.mock.calls[0][1]).not.toContain("robloxApis");
+    expect(d.robloxDocs.update).not.toHaveBeenCalled();
+    expect(d.robloxDocs.read).not.toHaveBeenCalled();
+    expect(r).not.toHaveProperty("roblox");
+  });
+
+  it("with parity on and no Roblox API named: no docs update, no Roblox pass", async () => {
+    const { d, runs } = deps({ chapters: [], findings: [cand({})], robloxApis: [] });
+    const r = await runJob(d, summary(1), "/repo", () => {}, CLI_DEFAULT, true);
+    expect(runs.map((x) => x.schema)).toEqual([findSchema(true), VERIFY_SCHEMA]);
+    expect(d.aiRun.mock.calls[0][1]).toContain("3. robloxApis:");
+    expect(d.robloxDocs.update).not.toHaveBeenCalled();
+    expect(r.roblox).toEqual({ skipped: "the change touches no Roblox API" });
+  });
+
+  it("with parity on: find, Roblox pass on the read reference, one verify for all", async () => {
+    const find = { chapters: [], findings: [cand({ body: "find one" })], robloxApis: ["BasePart", "Nope"] };
+    const rbx = { findings: [
+      cand({ body: "checked", evidence: [...ev, { path: "roblox:classes/BasePart.yaml", line: 2, quote: "BasePart  doc\ntext" }] }),
+      cand({ body: "made up", evidence: [...ev, { path: "roblox:classes/BasePart.yaml", line: 2, quote: "not in it" }] }),
+      cand({ body: "no scenario", failureScenario: "" }),
+    ] };
+    const verify = { verdicts: [0, 1, 2].map((index) => ({ index, verdict: "confirmed", reason: "r", evidence: [] })) };
+    const { d, runs } = deps(find, verify, rbx);
+    const states: string[] = [];
+    const choice = { model: "opus", effort: "high" };
+    const r = await runJob(d, summary(1), "/repo", (s) => states.push(s.kind === "running" ? s.pass : s.kind), choice, true);
+    expect(runs.map((x) => x.schema)).toEqual([findSchema(true), ROBLOX_SCHEMA, VERIFY_SCHEMA]);
+    expect(runs.map((x) => x.choice)).toEqual([choice, choice, choice]);
+    expect([...new Set(states)]).toEqual(["find", "roblox", "verify"]);
+    expect(d.robloxDocs.update).toHaveBeenCalledTimes(1);
+    expect(d.robloxDocs.read).toHaveBeenCalledWith("d0c5", ["BasePart", "Nope"]);
+    const [, rbxPrompt, verifyPrompt] = d.aiRun.mock.calls.map((c) => c[1]);
+    expect(rbxPrompt).toContain("creator-docs at d0c5");
+    expect(rbxPrompt).toContain("roblox:classes/BasePart.yaml\n`````\nname: BasePart");
+    expect(rbxPrompt).toContain("diff --git a/a.ts b/a.ts");
+    expect(verifyPrompt).toContain("roblox:classes/BasePart.yaml\n`````\nname: BasePart");
+    expect(verifyPrompt).toContain("find one");
+    expect(r.findings.map((f) => [f.body, f.status, f.tag])).toEqual([
+      ["find one", "confirmed", undefined],
+      ["checked", "confirmed", "roblox"],
+      ["made up", "unconfirmed", "roblox"],
+    ]);
+    expect(r.roblox).toEqual({ docsSha: "d0c5", docsDate: "2026-11-10T08:00:00+09:00" });
+  });
+
+  it("verify gets only the reference files the Roblox candidates cite", async () => {
+    const find = { chapters: [], findings: [], robloxApis: ["BasePart", "Humanoid"] };
+    const rbx = { findings: [cand({ evidence: [...ev, { path: "roblox:classes/Humanoid.yaml", line: 1, quote: "q" }] })] };
+    const { d } = deps(find, { verdicts: [] }, rbx);
+    await runJob(d, summary(1), "/repo", () => {}, CLI_DEFAULT, true);
+    const [, rbxPrompt, verifyPrompt] = d.aiRun.mock.calls.map((c) => c[1]);
+    expect(rbxPrompt).toContain("roblox:classes/BasePart.yaml");
+    expect(verifyPrompt).toContain("roblox:classes/Humanoid.yaml\n`````");
+    expect(verifyPrompt).not.toContain("roblox:classes/BasePart.yaml");
+  });
+
+  it("a failed docs update falls back to the last copy", async () => {
+    const { d, runs } = deps({ chapters: [], findings: [], robloxApis: ["BasePart"] });
+    d.robloxDocs.update.mockRejectedValueOnce(new Error("offline"));
+    d.robloxDocs.info.mockResolvedValueOnce({ sha: "01d", date: "2026-10-01T00:00:00Z" });
+    const r = await runJob(d, summary(1), "/repo", () => {}, CLI_DEFAULT, true);
+    expect(d.robloxDocs.read).toHaveBeenCalledWith("01d", ["BasePart"]);
+    expect(runs.map((x) => x.schema)).toEqual([findSchema(true), ROBLOX_SCHEMA]);
+    expect(r.roblox).toEqual({ docsSha: "01d", docsDate: "2026-10-01T00:00:00Z" });
+  });
+
+  it("skips the Roblox pass, recording why, with no docs, unreadable docs or no reference for the APIs", async () => {
+    const cases: [string, (d: ReturnType<typeof deps>["d"]) => void][] = [
+      ["Roblox docs not downloaded", (d) => d.robloxDocs.update.mockRejectedValueOnce(new Error("offline"))],
+      ["Roblox docs could not be read", (d) => d.robloxDocs.read.mockRejectedValueOnce(new Error("bad"))],
+      ["no Roblox reference for the APIs the change touches", (d) => d.robloxDocs.read.mockResolvedValueOnce([])],
+    ];
+    for (const [why, arrange] of cases) {
+      const { d, runs } = deps({ chapters: [], findings: [cand({})], robloxApis: ["BasePart"] });
+      arrange(d);
+      const r = await runJob(d, summary(1), "/repo", () => {}, CLI_DEFAULT, true);
+      expect(runs.map((x) => x.schema), why).toEqual([findSchema(true), VERIFY_SCHEMA]);
+      expect(r.roblox).toEqual({ skipped: why });
+    }
   });
 
   it("fails when the fetched head is not the detail's head", async () => {
@@ -341,6 +437,35 @@ describe("runner", () => {
     await flush();
     await flush();
     expect(runs.map((x) => [x.schema, x.choice])).toEqual([[FIND_SCHEMA, a], [FIND_SCHEMA, b], [REREVIEW_SCHEMA, c]]);
+  });
+
+  it("a review runs with the Roblox parity it was queued with, and cancel stops the Roblox pass", async () => {
+    const { d, runs } = deps({ chapters: [], findings: [], robloxApis: ["BasePart"] });
+    const runJobSpy = vi.fn(runJob);
+    const c = ctx();
+    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d, runJob: runJobSpy }));
+    // The Roblox pass hangs until cancelled.
+    let rejectRoblox: (e: Error) => void = () => {};
+    const answer = d.aiRun.getMockImplementation()!;
+    d.aiRun.mockImplementation((p, prompt, schema, a, instructions, choice) => {
+      if (schema !== ROBLOX_SCHEMA) return answer(p, prompt, schema, a, instructions, choice);
+      const cancel = vi.fn(() => rejectRoblox(new Error("cancelled")));
+      runs.push({ schema, instructions, choice, cancel });
+      return { done: new Promise((_, rej) => (rejectRoblox = rej)), cancel };
+    });
+    requestJob(r, summary(1), "/repo", CLI_DEFAULT, true);
+    requestJob(r, summary(2), "/repo");
+    await flush();
+    expect(runJobSpy.mock.calls[0][5]).toBe(true);
+    expect(c.jobs[summary(1).key]).toMatchObject({ kind: "running", pass: "roblox" });
+    cancelJob(r, summary(1).key);
+    expect(runs[1].cancel).toHaveBeenCalled();
+    await flush();
+    await flush();
+    expect(runJobSpy.mock.calls[1][5]).toBe(false);
+    expect(runs.map((x) => x.schema)).toEqual([findSchema(true), ROBLOX_SCHEMA, FIND_SCHEMA]);
+    expect(c.jobs[summary(1).key]).toBeUndefined();
+    expect(c.jobs[summary(2).key]).toEqual({ kind: "done" });
   });
 
   it("a failed re-review stores nothing", async () => {

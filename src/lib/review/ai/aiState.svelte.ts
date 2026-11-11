@@ -1,5 +1,5 @@
 import { appState } from "../../store.svelte";
-import { readFileAt, treePaths } from "../../git";
+import { readFileAt, robloxDocsInfo, robloxDocsRead, robloxDocsUpdate, treePaths } from "../../git";
 import { fetchCommit, fetchPr, prCommitSubjects, prDiffText, prFileCompare, prHunks } from "../gh";
 import { prDetail } from "../github";
 import type { PrKey, PrSummary } from "../types";
@@ -8,6 +8,7 @@ import { cancelJob, createRunner, requestJob, requestRereview, runJob } from "./
 import { recordReaction } from "./memory";
 import type { AiChoice } from "./modelChoice";
 import { notifyReady } from "./notify";
+import { repoKey } from "./roblox";
 import { emptyQueue, type Queue } from "./queue";
 import { runRereview, withRereview } from "./rereview";
 import { aiRun } from "./run";
@@ -71,6 +72,7 @@ const runner = createRunner({
   ctx: aiState,
   jobDeps: {
     fetchPr, prDetail, prHunks, prDiffText, prCommitSubjects, readFileAt, treePaths, prFileCompare, fetchCommit, aiRun,
+    robloxDocs: { update: robloxDocsUpdate, info: robloxDocsInfo, read: robloxDocsRead },
     now: Date.now,
   },
   runJob,
@@ -86,9 +88,13 @@ export function aiDefaults(): AiChoice {
   return { model: appState.aiModel, effort: appState.aiEffort };
 }
 
-/** Queues an AI review of `pr` (only ever on the user's request), with `choice` or the defaults. */
+/**
+ * Queues an AI review of `pr` (only ever on the user's request), with `choice` or the defaults,
+ * and Roblox parity if it is on for the repo now.
+ */
 export function requestAi(pr: PrSummary, choice: AiChoice = aiDefaults()): void {
-  requestJob(runner, pr, appState.repos[pr.repoIdx].path, choice);
+  const roblox = appState.robloxParityRepos.includes(repoKey(pr.repo));
+  requestJob(runner, pr, appState.repos[pr.repoIdx].path, choice, roblox);
 }
 
 export function cancelAi(key: PrKey): void {

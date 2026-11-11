@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chapterOf, fillQuotes, mergeVerdicts, normalizeFind, placeFinding } from "./result";
+import { chapterOf, fillQuotes, mergeVerdicts, normalizeFind, normalizeRoblox, placeFinding } from "./result";
 import type { AiFinding, AiResult } from "./types";
 import type { FileHunks } from "../types";
 
@@ -116,5 +116,23 @@ describe("fillQuotes line endings", () => {
   });
   it("strips CR from CRLF text", () => {
     expect(fillQuotes([{ ...f, startLine: 2 }], new Map([["a.ts|RIGHT", "1\r\n2\r\n3\r\n"]]))[0].quote).toEqual(["2", "3"]);
+  });
+});
+
+describe("normalizeRoblox", () => {
+  it("rejects an answer without findings", () => {
+    expect(() => normalizeRoblox({}, files)).toThrow(/ai-malformed/);
+    expect(() => normalizeRoblox(null, files)).toThrow(/ai-malformed/);
+  });
+  it("keeps the candidates normalizeFind would, tagged roblox", () => {
+    const r = normalizeRoblox({ findings: [finding(), finding({ failureScenario: "" }), finding({ evidence: [] })] }, files);
+    expect(r).toHaveLength(1);
+    expect(r[0].tag).toBe("roblox");
+    expect(r[0].failureScenario).toBe("x = null → crash");
+  });
+  it("the tag goes through verify", () => {
+    const [c] = normalizeRoblox({ findings: [finding()] }, files);
+    const out = mergeVerdicts([c], { verdicts: [{ index: 0, verdict: "confirmed", reason: "", evidence: [] }] });
+    expect(out[0].tag).toBe("roblox");
   });
 });

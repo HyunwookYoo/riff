@@ -38,9 +38,20 @@ export function normalizeFind(raw: unknown, files: FileHunks[]): { chapters: AiC
   }
   const rest = files.map((f) => f.path).filter((p) => !seen.has(p));
   if (rest.length) chapters.push({ title: "Other", summary: "", paths: rest });
+  return { chapters, candidates: candidatesOf(raw.findings, files) };
+}
 
+/** The Roblox pass's answer: its candidates, tagged "roblox". */
+export function normalizeRoblox(raw: unknown, files: FileHunks[]): Candidate[] {
+  if (!isObj(raw) || !Array.isArray(raw.findings)) throw bad("findings missing");
+  return candidatesOf(raw.findings, files).map((c) => ({ ...c, tag: "roblox" }));
+}
+
+/** Well-formed findings with a failure scenario and evidence, on or citing a PR file. */
+function candidatesOf(findings: unknown[], files: FileHunks[]): Candidate[] {
+  const known = new Set(files.map((f) => f.path));
   const candidates: Candidate[] = [];
-  for (const f of raw.findings) {
+  for (const f of findings) {
     if (!isObj(f) || !isStr(f.path) || !isStr(f.body)) continue;
     if ((f.side !== "LEFT" && f.side !== "RIGHT") || !Number.isInteger(f.line) || (f.line as number) < 1) continue;
     if (f.severity !== "high" && f.severity !== "medium" && f.severity !== "low") continue;
@@ -55,7 +66,7 @@ export function normalizeFind(raw: unknown, files: FileHunks[]): { chapters: AiC
       severity: f.severity as Severity, body: f.body, evidence, failureScenario,
     });
   }
-  return { chapters, candidates };
+  return candidates;
 }
 
 export function mergeVerdicts(candidates: Candidate[], raw: unknown): AiFinding[] {

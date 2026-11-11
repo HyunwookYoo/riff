@@ -1,6 +1,6 @@
 import { choiceLabel } from "./modelChoice";
 import { hasReview } from "./rereview";
-import type { AiJobState, AiResult } from "./types";
+import type { AiJobState, AiResult, RobloxParity } from "./types";
 
 export type AiBadgeKind = "none" | "queued" | "running" | "ready" | "stale" | "failed";
 
@@ -28,8 +28,13 @@ export function aiBadge(
 export function aiBadgeTitle(job: AiJobState | undefined, result: AiResult | null | undefined): string | undefined {
   if (job?.kind === "failed") return aiErrorText(job.message);
   if (job?.kind === "queued" || job?.kind === "running") return undefined;
-  if (result && hasReview(result)) return `AI review ran with ${choiceLabel(result)}`;
+  if (result && hasReview(result)) return `AI review ran with ${choiceLabel(result)}${robloxNote(result.roblox)}`;
   return undefined;
+}
+
+function robloxNote(p: RobloxParity | undefined): string {
+  if (!p) return "";
+  return "skipped" in p ? ` · Roblox parity skipped: ${p.skipped}` : ` · Roblox docs ${p.docsDate.slice(0, 10)}`;
 }
 
 /** The Re-review button's text; `busy` = a click cancels, `title` = why the last run failed. */

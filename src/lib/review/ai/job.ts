@@ -1,15 +1,17 @@
 import type { FileCompare } from "../gh";
+import type { ApiDoc, DocsInfo } from "../../types";
 import type { FileHunks, PrDetail, PrHunks, PrKey, PrSummary, ReviewThread } from "../types";
 import type { aiRun } from "./run";
 import { verdictReactions, type Reaction } from "./memory";
 import { trimDiff } from "./diffTrim";
-import { FIND_SCHEMA, VERIFY_SCHEMA, findPrompt, verifyPrompt } from "./prompts";
-import { fillQuotes, mergeVerdicts, normalizeFind } from "./result";
+import { ROBLOX_SCHEMA, VERIFY_SCHEMA, findPrompt, findSchema, robloxPrompt, verifyPrompt, type RobloxReference } from "./prompts";
+import { fillQuotes, mergeVerdicts, normalizeFind, normalizeRoblox } from "./result";
+import { citedDocs, downgradeUnchecked, robloxApisOf } from "./roblox";
 import { repoRules } from "./repoRules";
 import type { AiChoice } from "./modelChoice";
 import { cancel, enqueue, finish, type JobKind, type Queue, type QueueEntry } from "./queue";
 import type { runRereview } from "./rereview";
-import type { AiFinding, AiJobState, AiResult, RereviewResult } from "./types";
+import type { AiFinding, AiJobState, AiResult, RereviewResult, RobloxParity } from "./types";
 
 export interface JobDeps {
   fetchPr: (path: string, remote: string, number: number, baseRef: string, baseSha: string) => Promise<string>;
@@ -21,6 +23,12 @@ export interface JobDeps {
   treePaths: (path: string, rev: string, prefix: string) => Promise<string[]>;
   prFileCompare: (path: string, base: string, oldHead: string, newHead: string, files: string[]) => Promise<FileCompare[]>;
   fetchCommit: (path: string, remote: string, sha: string) => Promise<void>;
+  /** riff's copy of the Roblox API reference (see git.ts robloxDocsUpdate/Info/Read). */
+  robloxDocs: {
+    update: () => Promise<DocsInfo>;
+    info: () => Promise<DocsInfo | null>;
+    read: (sha: string, names: string[]) => Promise<ApiDoc[]>;
+  };
   aiRun: typeof aiRun;
   now: () => number;
 }
@@ -54,15 +62,28 @@ async function findingTexts(
   return texts;
 }
 
+/** The reference files for `apis`, from a freshly fetched copy or else the last one; or why there are none. */
+async function robloxReference(d: JobDeps, apis: string[]): Promise<{ info: DocsInfo; docs: ApiDoc[] } | { skipped: string }> {
+  const info = await d.robloxDocs.update().catch(() => d.robloxDocs.info().catch(() => null));
+  if (!info) return { skipped: "Roblox docs not downloaded" };
+  const docs = await d.robloxDocs.read(info.sha, apis).catch(() => null);
+  if (!docs) return { skipped: "Roblox docs could not be read" };
+  if (!docs.length) return { skipped: "no Roblox reference for the APIs the change touches" };
+  return { info, docs };
+}
+
 /** The CLI's own model and effort. */
 export const CLI_DEFAULT: AiChoice = { model: null, effort: null };
 
 /**
- * Find → verify for one PR, at the PR's current head (from a fresh detail, not `pr`). Both
- * passes run with `choice`, which the result records.
+ * Find → verify for one PR, at the PR's current head (from a fresh detail, not `pr`). With
+ * `roblox` (parity on for the repo), a Roblox pass runs between them when find names Roblox
+ * APIs; verify then checks its candidates too. Every pass runs with `choice`, which the result
+ * records.
  */
 export async function runJob(
   d: JobDeps, pr: PrSummary, repoPath: string, onState: (s: AiJobState) => void, choice: AiChoice = CLI_DEFAULT,
+  roblox = false,
 ): Promise<AiResult> {
   const startedAt = d.now();
   onState({ kind: "running", pass: "find", startedAt, lastActivity: null });
@@ -79,7 +100,7 @@ export async function runJob(
     repoRules(d, repoPath, mergeBase),
   ]);
 
-  const pass = async (which: "find" | "verify", prompt: string, schema: object): Promise<unknown> => {
+  const pass = async (which: "find" | "roblox" | "verify", prompt: string, schema: object): Promise<unknown> => {
     onState({ kind: "running", pass: which, startedAt, lastActivity: null });
     const run = d.aiRun(repoPath, prompt, schema, (t) =>
       onState({ kind: "running", pass: which, startedAt, lastActivity: t }), instructions, choice);
@@ -87,22 +108,40 @@ export async function runJob(
   };
 
   const { diff, omitted } = trimDiff(fullDiff);
-  const found = await pass("find", findPrompt({ repoPath, pr, detail, commits, mergeBase, head, diff, omitted, rules }), FIND_SCHEMA);
+  const content = { repoPath, pr, detail, commits, mergeBase, head, diff, omitted, rules };
+  const found = await pass("find", findPrompt({ ...content, roblox }), findSchema(roblox));
   const { chapters, candidates } = normalizeFind(found, files);
+  let parity: RobloxParity | undefined;
+  let reference: RobloxReference | undefined; // set when the Roblox pass ran
+  const apis = roblox ? robloxApisOf(found) : [];
+  if (roblox && !apis.length) parity = { skipped: "the change touches no Roblox API" };
+  if (apis.length) {
+    onState({ kind: "running", pass: "roblox", startedAt, lastActivity: null });
+    const ref = await robloxReference(d, apis);
+    if ("skipped" in ref) parity = ref;
+    else {
+      parity = { docsSha: ref.info.sha, docsDate: ref.info.date };
+      reference = { sha: ref.info.sha, docs: ref.docs };
+      const answer = await pass("roblox", robloxPrompt({ ...content, reference }), ROBLOX_SCHEMA);
+      candidates.push(...normalizeRoblox(answer, files));
+    }
+  }
   let findings: AiFinding[] = [];
   if (candidates.length) {
+    const cited = reference && { ...reference, docs: citedDocs(candidates.filter((c) => c.tag === "roblox"), reference.docs) };
     const verdicts = await pass(
       "verify",
-      verifyPrompt({ repo: pr.repo, repoPath, head, mergeBase, rules, candidates: candidates.map((c, index) => ({ index, ...c })) }),
+      verifyPrompt({ repo: pr.repo, repoPath, head, mergeBase, rules, reference: cited, candidates: candidates.map((c, index) => ({ index, ...c })) }),
       VERIFY_SCHEMA,
     );
-    findings = mergeVerdicts(candidates, verdicts);
+    findings = downgradeUnchecked(mergeVerdicts(candidates, verdicts), reference?.docs ?? []);
   }
   findings = fillQuotes(findings, await findingTexts(d, repoPath, findings, files, mergeBase, head));
   return {
     version: 1, key: pr.key, headSha: head, baseSha: base, mergeBase,
     createdAt: new Date(d.now()).toISOString(), chapters, findings, handled: {},
     model: choice.model, effort: choice.effort,
+    ...(parity ? { roblox: parity } : {}),
   };
 }
 
@@ -132,8 +171,11 @@ export interface RunnerDeps {
 }
 
 interface Active { entry: QueueEntry; cancelled: boolean; cancel: () => void }
-/** `choice` is fixed when the job is queued: a settings change while it waits doesn't move it. */
-interface Spec { pr: PrSummary; repoPath: string; login: string; choice: AiChoice }
+/**
+ * `choice` and `roblox` (Roblox parity, reviews only) are fixed when the job is queued: a
+ * settings change while it waits doesn't move it.
+ */
+interface Spec { pr: PrSummary; repoPath: string; login: string; choice: AiChoice; roblox: boolean }
 
 const specKey = (e: QueueEntry): string => `${e.key}|${e.kind}`;
 
@@ -164,15 +206,15 @@ function request(r: Runner, e: QueueEntry, spec: Spec): void {
   if (q.running === null) startNext(r);
 }
 
-export function requestJob(r: Runner, pr: PrSummary, repoPath: string, choice: AiChoice = CLI_DEFAULT): void {
-  request(r, { key: pr.key, kind: "review" }, { pr, repoPath, login: "", choice });
+export function requestJob(r: Runner, pr: PrSummary, repoPath: string, choice: AiChoice = CLI_DEFAULT, roblox = false): void {
+  request(r, { key: pr.key, kind: "review" }, { pr, repoPath, login: "", choice, roblox });
 }
 
 /** Queues a check of whether `pr`'s new commits address `login`'s open threads. */
 export function requestRereview(
   r: Runner, pr: PrSummary, repoPath: string, login: string, choice: AiChoice = CLI_DEFAULT,
 ): void {
-  request(r, { key: pr.key, kind: "rereview" }, { pr, repoPath, login, choice });
+  request(r, { key: pr.key, kind: "rereview" }, { pr, repoPath, login, choice, roblox: false });
 }
 
 export function cancelJob(r: Runner, key: PrKey, kind: JobKind = "review"): void {
@@ -234,7 +276,7 @@ async function runOne(r: Runner, entry: QueueEntry): Promise<void> {
       for (const m of verdictReactions(rr, threads, spec.pr.repo)) r.remember(m);
       return;
     }
-    const result = await r.runJob(jobDeps, spec.pr, spec.repoPath, onState, spec.choice);
+    const result = await r.runJob(jobDeps, spec.pr, spec.repoPath, onState, spec.choice, spec.roblox);
     if (a.cancelled) return;
     const saved = await r.save(result);
     r.ctx.results = { ...r.ctx.results, [key]: saved }; // keep memory in step with disk

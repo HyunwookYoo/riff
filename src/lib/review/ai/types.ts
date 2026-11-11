@@ -10,6 +10,8 @@ export interface AiFinding {
   quote: string[];            // lines startLine..line of `side` at the analysed head/merge-base, filled by riff
   /** The input or state that goes wrong and how; absent in records from before riff asked for it. */
   failureScenario?: string;
+  /** "roblox": from the Roblox parity pass. */
+  tag?: "roblox";
 }
 export type Verdict = "addressed" | "not_addressed" | "unclear";
 export interface ThreadVerdict { threadId: string; verdict: Verdict; reason: string; evidence: AiEvidence[] }
@@ -25,9 +27,13 @@ export interface AiResult {
   rereview?: RereviewResult;
   /** What the review ran with (null = the CLI's default); absent in records from before riff chose. */
   model?: string | null; effort?: string | null;
+  /** Roblox parity on: the reference commit the Roblox pass read, or why it didn't run. */
+  roblox?: RobloxParity;
 }
+/** `docsDate`: the reference commit's ISO 8601 date. */
+export type RobloxParity = { docsSha: string; docsDate: string } | { skipped: string };
 export type AiJobState =
   | { kind: "queued" }
-  | { kind: "running"; pass: "find" | "verify" | "rereview"; startedAt: number; lastActivity: string | null }
+  | { kind: "running"; pass: "find" | "roblox" | "verify" | "rereview"; startedAt: number; lastActivity: string | null }
   | { kind: "done" }
   | { kind: "failed"; message: string };

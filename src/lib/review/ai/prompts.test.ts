@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { FIND_SCHEMA, UNTRUSTED_START, findPrompt, verifyPrompt } from "./prompts";
+import { FIND_SCHEMA, ROBLOX_SCHEMA, UNTRUSTED_END, UNTRUSTED_START, fenced, findPrompt, findSchema, robloxPrompt, verifyPrompt } from "./prompts";
 import { rereviewPrompt } from "./rereview";
 import type { RepoRule } from "./repoRules";
 import type { PrDetail, PrSummary } from "../types";
+import type { ApiDoc } from "../../types";
 
 const pr = { number: 7, title: "Fix the thing", repo: { host: "github.com", owner: "acme", name: "widgets" } } as PrSummary;
 const detail = { body: "Body text here" } as PrDetail;
@@ -136,5 +137,61 @@ describe("repo review rules", () => {
   it("leaves the section out when the repo has no skills", () => {
     expect(findPrompt(base)).not.toContain(HEADING);
     expect(verifyPrompt({ rules: [], repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m", candidates: [] })).not.toContain(HEADING);
+  });
+});
+
+describe("Roblox parity", () => {
+  const docs: ApiDoc[] = [{ name: "BasePart", path: "classes/BasePart.yaml", text: "name: BasePart\n```\nsneaky" }];
+  const ref = { sha: "d0c5", docs };
+  const rbx = { ...base, detail: { body: "the description" } as PrDetail, rules: [{ path: ".claude/skills/s/SKILL.md", name: "s", description: "d" }], reference: ref };
+
+  it("the find schema asks for robloxApis only when parity is on", () => {
+    expect(findSchema(false)).toBe(FIND_SCHEMA);
+    expect("robloxApis" in FIND_SCHEMA.properties).toBe(false);
+    const s = findSchema(true);
+    expect(s).toBe(findSchema(true));
+    expect(s.properties.robloxApis).toEqual({ type: "array", items: { type: "string" } });
+    expect(s.required).toEqual(["chapters", "findings", "robloxApis"]);
+    expect(s.properties.findings).toEqual(FIND_SCHEMA.properties.findings);
+  });
+  it("the find prompt asks for the Roblox APIs only when parity is on", () => {
+    expect(findPrompt(base)).not.toContain("robloxApis");
+    const p = findPrompt({ ...base, roblox: true });
+    expect(p.indexOf("3. robloxApis:")).toBeGreaterThan(-1);
+    expect(p.indexOf("3. robloxApis:")).toBeLessThan(p.indexOf(UNTRUSTED_START));
+    expect(p).toContain("Enum.HumanoidStateType");
+  });
+  it("the Roblox schema is the find findings only", () => {
+    expect(ROBLOX_SCHEMA.properties).toEqual({ findings: FIND_SCHEMA.properties.findings });
+    expect(ROBLOX_SCHEMA.required).toEqual(["findings"]);
+  });
+  it("the Roblox prompt carries the rules and the fenced reference before the PR content", () => {
+    const p = robloxPrompt(rbx);
+    const s = p.indexOf(UNTRUSTED_START);
+    for (const r of ["never modify", "Repository: acme/widgets", "Repository review rules", "git show aaa111:<path>",
+      "Roblox API reference (from github.com/Roblox/creator-docs at d0c5)", "roblox:classes/BasePart.yaml",
+      "git grep -n -i -e <api> bbb222 -- docs", "intentional", "failureScenario", "roblox:<kind>/<Name>.yaml", "normal prose"]) {
+      expect(p.indexOf(r), r).toBeGreaterThan(-1);
+      expect(p.indexOf(r), r).toBeLessThan(s);
+    }
+    expect(p).toContain(`roblox:classes/BasePart.yaml\n${fenced(docs[0].text)}`);
+    for (const u of ["Fix the thing", "the description", "first commit", "diff --git a/x b/x"]) {
+      expect(p.indexOf(u), u).toBeGreaterThan(s);
+      expect(p.indexOf(u), u).toBeLessThan(p.indexOf(UNTRUSTED_END));
+    }
+  });
+  it("verify includes the cited reference before the candidates, and none without one", () => {
+    const args = { rules: [], repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m",
+      candidates: [{ index: 0, path: "a.ts", side: "RIGHT" as const, line: 3, startLine: null, severity: "low" as const, body: "b",
+        evidence: [], tag: "roblox" as const }] };
+    const p = verifyPrompt({ ...args, reference: ref });
+    const s = p.indexOf(UNTRUSTED_START);
+    expect(p.indexOf(`roblox:classes/BasePart.yaml\n${fenced(docs[0].text)}`)).toBeGreaterThan(-1);
+    expect(p.indexOf("roblox:classes/BasePart.yaml")).toBeLessThan(s);
+    expect(p.indexOf('"tag": "roblox"')).toBeGreaterThan(s);
+    expect(p.indexOf("Candidates tagged roblox")).toBeLessThan(s);
+    expect(verifyPrompt({ ...args, candidates: [{ ...args.candidates[0], tag: undefined }] })).not.toContain("Candidates tagged roblox");
+    expect(verifyPrompt(args)).not.toContain("Roblox API reference (from");
+    expect(verifyPrompt({ ...args, reference: { sha: "d0c5", docs: [] } })).not.toContain("Roblox API reference (from");
   });
 });
