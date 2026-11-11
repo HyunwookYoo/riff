@@ -18,8 +18,18 @@ pub const DIR_NAME: &str = "roblox-docs.git";
 
 const BRANCH_REF: &str = "refs/heads/main";
 const REFERENCE_ROOT: &str = "content/en-us/reference/engine/";
-/// Lookup order for a bare name; `Enum.X` goes to `enums/` only.
-const KINDS: [&str; 4] = ["classes", "datatypes", "globals", "libraries"];
+/// Lookup order for a name's class part; `Enum.X` goes to `enums/` only.
+/// `globals/` holds just LuaGlobals.yaml and RobloxGlobals.yaml.
+const KINDS: [&str; 5] = ["classes", "datatypes", "libraries", "enums", "globals"];
+/// Top-level keys whose list items (`  - name: BasePart.Touched`) are members.
+const MEMBER_KEYS: [&str; 6] = ["properties", "methods", "events", "callbacks", "constructors", "functions"];
+/// Top-level blocks the header leaves out: sample ids and the subclass list.
+const NOT_IN_HEADER: [&str; 2] = ["code_samples", "descendants"];
+/// Starts each member index line riff adds; src/lib/review/ai/roblox.ts
+/// strips these lines (and `[truncated]`) before checking quotes.
+const INDEX_MARK: &str = "[riff index] ";
+/// Files, not members: the asked members of these files count toward the
+/// char budget only.
 const MAX_DOCS: usize = 12;
 const MAX_FILE_CHARS: usize = 60_000;
 const MAX_TOTAL_CHARS: usize = 150_000;
@@ -51,7 +61,8 @@ pub struct DocsInfo {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ApiDoc {
-    /// The name as asked for (`BasePart`, `Enum.HumanoidStateType`).
+    /// The file's name as first asked for (`BasePart`, also for
+    /// `BasePart.Touched`; `Enum.HumanoidStateType`).
     pub name: String,
     /// `<kind>/<Name>.yaml` under the reference root, e.g. `classes/BasePart.yaml`.
     pub path: String,
@@ -198,9 +209,10 @@ fn docs_args<'a>(rest: &[&'a str]) -> Vec<&'a str> {
     DOCS_GIT.iter().chain(rest).copied().collect()
 }
 
-/// The reference files for `names` at docs commit `sha`. Invalid, repeated
-/// and unknown names are skipped; at most `MAX_DOCS` files; text capped per
-/// file and in total, cut text ending in a `[truncated]` line.
+/// The reference files for `names` (`Class`, `Class.Member` or
+/// `Class:Member`, `Enum.X`) at docs commit `sha`, one per file, each as
+/// `doc_text` makes it. Invalid and unknown names are skipped; at most
+/// `MAX_DOCS` files; text capped per file and in total.
 pub fn read_apis(git: &GitCli, dir: &Path, sha: &str, names: &[String]) -> Result<Vec<ApiDoc>, GitError> {
     let is_oid = matches!(sha.len(), 40 | 64)
         && sha.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
@@ -208,11 +220,7 @@ pub fn read_apis(git: &GitCli, dir: &Path, sha: &str, names: &[String]) -> Resul
         return Err(GitError::InvalidRef(sha.to_string()));
     }
     let mut ls = docs_args(&["ls-tree", "-r", "-z", "--name-only", sha, "--"]);
-    let specs: Vec<String> = KINDS
-        .iter()
-        .chain(&["enums"])
-        .map(|k| format!("{REFERENCE_ROOT}{k}/"))
-        .collect();
+    let specs: Vec<String> = KINDS.iter().map(|k| format!("{REFERENCE_ROOT}{k}/")).collect();
     ls.extend(specs.iter().map(String::as_str));
     let listing = git.run(dir, &ls)?;
     let listing = String::from_utf8_lossy(&listing);
@@ -221,38 +229,167 @@ pub fn read_apis(git: &GitCli, dir: &Path, sha: &str, names: &[String]) -> Resul
         .filter_map(|p| p.strip_prefix(REFERENCE_ROOT))
         .collect();
 
-    let mut seen = HashSet::new();
+    // (name, path, asked members) per file, in the order first asked.
+    let mut wants: Vec<(&str, String, Vec<&str>)> = Vec::new();
+    for name in names {
+        let Some((file, path, member)) = resolve(name, &present) else { continue };
+        let i = match wants.iter().position(|w| w.1 == path) {
+            Some(i) => i,
+            None if wants.len() < MAX_DOCS => {
+                wants.push((file, path, Vec::new()));
+                wants.len() - 1
+            }
+            None => continue,
+        };
+        if let Some(m) = member.filter(|m| !wants[i].2.contains(m)) {
+            wants[i].2.push(m);
+        }
+    }
+
     let mut docs = Vec::new();
     let mut budget = MAX_TOTAL_CHARS;
-    for name in names {
-        if docs.len() == MAX_DOCS || budget == 0 {
+    for (name, path, members) in wants {
+        if budget == 0 {
             break;
-        }
-        let Some(path) = doc_path(name, &present) else { continue };
-        if !seen.insert(path.clone()) {
-            continue;
         }
         let spec = format!("{sha}:{REFERENCE_ROOT}{path}");
         let blob = git.run(dir, &docs_args(&["cat-file", "blob", &spec]))?;
-        let (text, used) = cap_chars(&String::from_utf8_lossy(&blob), MAX_FILE_CHARS.min(budget));
+        let (text, used) = doc_text(&String::from_utf8_lossy(&blob), &members, MAX_FILE_CHARS.min(budget));
         budget -= used;
-        docs.push(ApiDoc { name: name.clone(), path, text });
+        docs.push(ApiDoc { name: name.to_string(), path, text });
     }
     Ok(docs)
 }
 
-/// `<kind>/<Name>.yaml` for a valid name that exists in `present`.
-fn doc_path(name: &str, present: &HashSet<&str>) -> Option<String> {
+/// For a valid name whose file is in `present`: the file part as asked
+/// (`BasePart`, `Enum.Material`), `<kind>/<Name>.yaml`, and the member asked.
+fn resolve<'a>(name: &'a str, present: &HashSet<&str>) -> Option<(&'a str, String, Option<&'a str>)> {
     let valid = |s: &str| {
         (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
     };
-    let candidates: Vec<String> = match name.strip_prefix("Enum.") {
-        Some(e) if valid(e) => vec![format!("enums/{e}.yaml")],
-        Some(_) => return None,
-        None if valid(name) => KINDS.iter().map(|k| format!("{k}/{name}.yaml")).collect(),
-        None => return None,
+    if let Some(e) = name.strip_prefix("Enum.") {
+        let path = format!("enums/{e}.yaml");
+        return (valid(e) && present.contains(path.as_str())).then_some((name, path, None));
+    }
+    let (class, member) = match name.split_once(['.', ':']) {
+        Some((c, m)) => (c, Some(m)),
+        None => (name, None),
     };
-    candidates.into_iter().find(|c| present.contains(c.as_str()))
+    if !valid(class) || !member.is_none_or(valid) {
+        return None;
+    }
+    let path = KINDS
+        .iter()
+        .map(|k| format!("{k}/{class}.yaml"))
+        .find(|p| present.contains(p.as_str()))?;
+    Some((class, path, member))
+}
+
+/// What riff sends of the reference file `yaml` for the asked `members`
+/// (short names). With none asked, the file without `code_samples` when that
+/// fits `limit`. Otherwise its header (the blocks that are not member
+/// sections, `code_samples` or `descendants`), an index line per member
+/// section, then the asked members' entries under their section key. Capped
+/// to `limit` chars, see `cap_chars`.
+fn doc_text(yaml: &str, members: &[&str], limit: usize) -> (String, usize) {
+    let blocks = top_blocks(yaml);
+    if members.is_empty() {
+        let whole: String = blocks.iter().filter(|b| b.0 != "code_samples").map(|b| b.1).collect();
+        if whole.chars().count() <= limit {
+            return cap_chars(&whole, limit);
+        }
+    }
+    let mut out = String::new();
+    for (key, text) in &blocks {
+        if !MEMBER_KEYS.contains(key) && !NOT_IN_HEADER.contains(key) {
+            push_lines(&mut out, text);
+        }
+    }
+    let sections: Vec<(&str, Vec<(&str, &str)>)> = blocks
+        .iter()
+        .filter(|b| MEMBER_KEYS.contains(&b.0))
+        .map(|&(key, text)| (key, member_items(text)))
+        .collect();
+    for (key, items) in &sections {
+        let mut names: Vec<&str> = Vec::new();
+        for (n, _) in items {
+            if !names.contains(n) {
+                names.push(n);
+            }
+        }
+        if !names.is_empty() {
+            push_lines(&mut out, &format!("{INDEX_MARK}{key}: {}", names.join(", ")));
+        }
+    }
+    for (key, items) in &sections {
+        let asked = |n: &str| members.iter().any(|m| m.eq_ignore_ascii_case(n));
+        let mut entries = items.iter().filter(|(n, _)| asked(n)).peekable();
+        if entries.peek().is_none() {
+            continue;
+        }
+        push_lines(&mut out, &format!("{key}:"));
+        for (_, text) in entries {
+            push_lines(&mut out, text);
+        }
+    }
+    cap_chars(&out, limit)
+}
+
+/// Appends `text`, ending it with a newline if it lacks one.
+fn push_lines(out: &mut String, text: &str) {
+    out.push_str(text);
+    if !text.ends_with('\n') {
+        out.push('\n');
+    }
+}
+
+/// `yaml` split into top-level blocks, each starting at a key in column 0
+/// and running to the next one: (key, block text). Text before the first key
+/// is a block with key "".
+fn top_blocks(yaml: &str) -> Vec<(&str, &str)> {
+    let mut blocks = Vec::new();
+    let (mut start, mut key, mut pos) = (0, "", 0);
+    for line in yaml.split_inclusive('\n') {
+        let first = line.bytes().next().unwrap_or(b' ');
+        if first.is_ascii_alphabetic() || first == b'_' {
+            if let Some((k, _)) = line.split_once(':') {
+                if pos > start {
+                    blocks.push((key, &yaml[start..pos]));
+                }
+                (start, key) = (pos, k.trim());
+            }
+        }
+        pos += line.len();
+    }
+    if pos > start {
+        blocks.push((key, &yaml[start..]));
+    }
+    blocks
+}
+
+/// The entries of a member section block: each one's short name (the part
+/// after the last `.` or `:` of `BasePart.Touched`, `Humanoid:TakeDamage`)
+/// and its text, from its `- name:` line to the next one. Nested lists
+/// (parameters) are indented deeper, so only an entry starts a line with
+/// `  - name:`.
+fn member_items(block: &str) -> Vec<(&str, &str)> {
+    let mut items = Vec::new();
+    let mut current: Option<(usize, &str)> = None;
+    let mut pos = 0;
+    for line in block.split_inclusive('\n') {
+        if let Some(rest) = line.strip_prefix("  - name:").or_else(|| line.strip_prefix("- name:")) {
+            if let Some((start, name)) = current {
+                items.push((name, &block[start..pos]));
+            }
+            let full = rest.trim().trim_matches(['"', '\'']);
+            current = Some((pos, full.rsplit(['.', ':']).next().unwrap_or(full)));
+        }
+        pos += line.len();
+    }
+    if let Some((start, name)) = current {
+        items.push((name, &block[start..]));
+    }
+    items
 }
 
 /// `s` cut to `max` chars plus a `[truncated]` line when longer; and the
@@ -316,14 +453,54 @@ mod tests {
         }
     }
 
-    const FIXTURE: [(&str, &str); 6] = [
+    /// Same-named files in several kinds check the lookup order: classes,
+    /// datatypes, libraries, enums, globals.
+    const FIXTURE: [(&str, &str); 9] = [
         ("classes/BasePart.yaml", "name: BasePart\n"),
         ("classes/Shared.yaml", "name: Shared class\n"),
         ("datatypes/Shared.yaml", "name: Shared datatype\n"),
         ("datatypes/Vector3.yaml", "name: Vector3\n"),
+        ("libraries/Vector3.yaml", "name: Vector3 library\n"),
         ("enums/HumanoidStateType.yaml", "name: HumanoidStateType\n"),
+        ("enums/math.yaml", "name: math enum\n"),
         ("libraries/math.yaml", "name: math\n"),
+        ("globals/LuaGlobals.yaml", LUA_GLOBALS),
     ];
+
+    const LUA_GLOBALS: &str = "name: LuaGlobals\ntype: global\nfunctions:\n  - name: print\n    summary: Prints.\n  - name: pairs\n    summary: Iterates.\n";
+
+    /// A class file laid out like creator-docs' BasePart.yaml (120 KB, its
+    /// events near the end): far bigger than `MAX_FILE_CHARS`.
+    fn big_class() -> String {
+        let mut s = String::from(BIG_HEADER_FULL);
+        s += "properties:\n";
+        for i in 0..80 {
+            let filler = "filler ".repeat(130);
+            s += &format!(
+                "  - name: BasePart.Prop{i}\n    summary: |\n      {filler}\n    code_samples:\n      - sample-{i}\n    type: float\n"
+            );
+        }
+        s += BIG_METHODS;
+        s += "events:\n";
+        s += TOUCHED;
+        s += TOUCH_ENDED;
+        s
+    }
+
+    const BIG_HEADER_FULL: &str = "name: BasePart\ntype: class\nsummary: |\n  The base class for parts.\ndescription: |\n  Parts are physical.\n\n  They collide.\ncode_samples:\n  - sample-anchored\ninherits:\n  - PVInstance\ndescendants:\n  - Part\n  - WedgePart\ntags:\n  - NotCreatable\ndeprecation_message: ''\n";
+    /// `BIG_HEADER_FULL` without `code_samples` and `descendants`.
+    const BIG_HEADER: &str = "name: BasePart\ntype: class\nsummary: |\n  The base class for parts.\ndescription: |\n  Parts are physical.\n\n  They collide.\ninherits:\n  - PVInstance\ntags:\n  - NotCreatable\ndeprecation_message: ''\n";
+    const BIG_METHODS: &str = "methods:\n  - name: BasePart:ApplyImpulse\n    summary: |\n      Applies an impulse.\n    parameters:\n      - name: impulse\n        type: Vector3\n";
+    const TOUCHED: &str = "  - name: BasePart.Touched\n    summary: |\n      Fires when a part comes in contact with another part.\n    parameters:\n      - name: otherPart\n        type: BasePart\n";
+    const TOUCH_ENDED: &str = "  - name: BasePart.TouchEnded\n    summary: |\n      Fires when a part stops touching another part.\n";
+
+    fn big_index() -> String {
+        let props: Vec<String> = (0..80).map(|i| format!("Prop{i}")).collect();
+        format!(
+            "[riff index] properties: {}\n[riff index] methods: ApplyImpulse\n[riff index] events: Touched, TouchEnded\n",
+            props.join(", ")
+        )
+    }
 
     #[test]
     fn info_is_none_before_download() {
@@ -446,6 +623,115 @@ mod tests {
         let start = std::time::Instant::now();
         assert!(rename_retrying(&root.join("from2"), &root.join("to")).is_err());
         assert!(start.elapsed() < RENAME_RETRY_DELAY);
+    }
+
+    #[test]
+    fn read_apis_sends_the_asked_members_of_a_big_class() {
+        let root = scratch("members");
+        let big = big_class();
+        assert!(big.len() > MAX_FILE_CHARS + 10_000);
+        let src = docs_source(&root, &[("classes/BasePart.yaml", &big)]);
+        let dir = root.join("data").join(DIR_NAME);
+        let git = GitCli::new();
+        let sha = update(&git, &dir, &file_url(&src)).unwrap().sha;
+        let read = |names: &[&str]| {
+            let names: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+            read_apis(&git, &dir, &sha, &names).unwrap()
+        };
+
+        // Header, index, then the asked entries under their section, in file
+        // order; one doc for the file. Touched lies past the old 60k cut.
+        let docs = read(&["BasePart.Touched", "BasePart", "BasePart:ApplyImpulse", "BasePart.touched"]);
+        assert_eq!(docs.len(), 1);
+        assert_eq!((docs[0].name.as_str(), docs[0].path.as_str()), ("BasePart", "classes/BasePart.yaml"));
+        let want = format!("{BIG_HEADER}{}{BIG_METHODS}events:\n{TOUCHED}", big_index());
+        assert_eq!(docs[0].text, want);
+
+        // The class alone, too big to send whole: header and index only.
+        assert_eq!(read(&["BasePart"])[0].text, format!("{BIG_HEADER}{}", big_index()));
+        // An unknown member: the same, so the AI sees what exists.
+        assert_eq!(read(&["BasePart.Nope"])[0].text, format!("{BIG_HEADER}{}", big_index()));
+    }
+
+    #[test]
+    fn doc_text_sends_a_small_class_whole_unless_members_are_asked() {
+        let small = format!("{BIG_HEADER_FULL}{BIG_METHODS}events:\n{TOUCHED}");
+        let whole = small.replace("code_samples:\n  - sample-anchored\n", "");
+        assert_eq!(doc_text(&small, &[], MAX_FILE_CHARS), (whole.clone(), whole.chars().count()));
+        let index = "[riff index] methods: ApplyImpulse\n[riff index] events: Touched\n";
+        assert_eq!(
+            doc_text(&small, &["Touched"], MAX_FILE_CHARS).0,
+            format!("{BIG_HEADER}{index}events:\n{TOUCHED}")
+        );
+        // Too big for the limit: header and index, cut.
+        let (text, used) = doc_text(&small, &[], 50);
+        assert_eq!(used, 50);
+        assert_eq!(text, format!("{}\n[truncated]", &BIG_HEADER[..50]));
+    }
+
+    #[test]
+    fn read_apis_resolves_bare_enums_and_globals_members() {
+        let root = scratch("bare");
+        let src = docs_source(&root, &FIXTURE);
+        let dir = root.join("data").join(DIR_NAME);
+        let git = GitCli::new();
+        let sha = update(&git, &dir, &file_url(&src)).unwrap().sha;
+        let names: Vec<String> = [
+            "HumanoidStateType",
+            "wait",
+            "LuaGlobals.print",
+            "Enum.HumanoidStateType.Running",
+            "BasePart.Touched.X",
+            "BasePart.",
+            ".Touched",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let docs = read_apis(&git, &dir, &sha, &names).unwrap();
+        let got: Vec<(&str, &str, &str)> =
+            docs.iter().map(|d| (d.name.as_str(), d.path.as_str(), d.text.as_str())).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("HumanoidStateType", "enums/HumanoidStateType.yaml", "name: HumanoidStateType\n"),
+                (
+                    "LuaGlobals",
+                    "globals/LuaGlobals.yaml",
+                    "name: LuaGlobals\ntype: global\n[riff index] functions: print, pairs\nfunctions:\n  - name: print\n    summary: Prints.\n"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn members_count_toward_the_budget_not_the_file_limit() {
+        let root = scratch("member-caps");
+        let texts: Vec<String> = (0..13)
+            .map(|i| format!("name: C{i}\nevents:\n  - name: C{i}.Foo\n    summary: foo\n"))
+            .collect();
+        let paths: Vec<String> = (0..13).map(|i| format!("classes/C{i}.yaml")).collect();
+        let files: Vec<(&str, &str)> = paths.iter().map(String::as_str).zip(texts.iter().map(String::as_str)).collect();
+        let src = docs_source(&root, &files);
+        let dir = root.join("data").join(DIR_NAME);
+        let git = GitCli::new();
+        let sha = update(&git, &dir, &file_url(&src)).unwrap().sha;
+        let mut names: Vec<String> = (0..13).map(|i| format!("C{i}")).collect();
+        names.push("C0.Foo".into());
+        names.push("C12.Foo".into());
+        let docs = read_apis(&git, &dir, &sha, &names).unwrap();
+        assert_eq!(docs.len(), MAX_DOCS);
+        assert_eq!(
+            docs[0].text,
+            "name: C0\n[riff index] events: Foo\nevents:\n  - name: C0.Foo\n    summary: foo\n"
+        );
+        assert_eq!(docs[1].text, texts[1]);
+        assert!(docs.iter().all(|d| d.name != "C12"));
+
+        // A big member eats the budget like any text.
+        let (text, used) = doc_text(&big_class(), &["Prop0"], 100);
+        assert_eq!(used, 100);
+        assert!(text.ends_with("\n[truncated]"));
     }
 
     #[test]

@@ -117,7 +117,7 @@ export function robloxDocsInfo(): Promise<DocsInfo | null> {
   return invoke("roblox_docs_info");
 }
 
-/** Reference files for `names` (`BasePart`, `Enum.HumanoidStateType`) at docs commit `sha`; unknown names are skipped. */
+/** Reference files for `names` (`BasePart`, `BasePart.Touched`, `Enum.HumanoidStateType`) at docs commit `sha`, one per file (see roblox_docs.rs read_apis); unknown names are skipped. */
 export function robloxDocsRead(sha: string, names: string[]): Promise<ApiDoc[]> {
   return invoke("roblox_docs_read", { sha, names });
 }

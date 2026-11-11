@@ -160,6 +160,9 @@ describe("Roblox parity", () => {
     expect(p.indexOf("3. robloxApis:")).toBeGreaterThan(-1);
     expect(p.indexOf("3. robloxApis:")).toBeLessThan(p.indexOf(UNTRUSTED_START));
     expect(p).toContain("Enum.HumanoidStateType");
+    for (const r of ["Class.Member", "Humanoid.TakeDamage", "BasePart.Touched", "LuaGlobals", "RobloxGlobals"]) {
+      expect(p, r).toContain(r);
+    }
   });
   it("the Roblox schema is the find findings only", () => {
     expect(ROBLOX_SCHEMA.properties).toEqual({ findings: FIND_SCHEMA.properties.findings });
@@ -170,7 +173,8 @@ describe("Roblox parity", () => {
     const s = p.indexOf(UNTRUSTED_START);
     for (const r of ["never modify", "Repository: acme/widgets", "Repository review rules", "git show aaa111:<path>",
       "Roblox API reference (from github.com/Roblox/creator-docs at d0c5)", "roblox:classes/BasePart.yaml",
-      "git grep -n -i -e <api> bbb222 -- docs", "intentional", "failureScenario", "roblox:<kind>/<Name>.yaml", "normal prose"]) {
+      "git grep -n -i -e <api> bbb222 -- docs", "intentional", "failureScenario", "roblox:<kind>/<Name>.yaml", "normal prose",
+      "lines starting [riff index]", "is not shown here; that does not mean Roblox lacks it", "whose entry you were not given"]) {
       expect(p.indexOf(r), r).toBeGreaterThan(-1);
       expect(p.indexOf(r), r).toBeLessThan(s);
     }
@@ -190,6 +194,7 @@ describe("Roblox parity", () => {
     expect(p.indexOf("roblox:classes/BasePart.yaml")).toBeLessThan(s);
     expect(p.indexOf('"tag": "roblox"')).toBeGreaterThan(s);
     expect(p.indexOf("Candidates tagged roblox")).toBeLessThan(s);
+    expect(p.indexOf("whose entry you were not given")).toBeLessThan(s);
     expect(verifyPrompt({ ...args, candidates: [{ ...args.candidates[0], tag: undefined }] })).not.toContain("Candidates tagged roblox");
     expect(verifyPrompt(args)).not.toContain("Roblox API reference (from");
     expect(verifyPrompt({ ...args, reference: { sha: "d0c5", docs: [] } })).not.toContain("Roblox API reference (from");
