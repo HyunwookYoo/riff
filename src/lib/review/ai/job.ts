@@ -72,14 +72,21 @@ async function robloxReference(d: JobDeps, apis: string[]): Promise<{ info: Docs
   return { info, docs };
 }
 
+/** The first line of `message`, at most 200 chars: it is shown in the review's header. */
+function shortMessage(message: string): string {
+  const line = message.trim().split("\n")[0].trim();
+  return line.length > 200 ? `${line.slice(0, 199)}…` : line;
+}
+
 /** The CLI's own model and effort. */
 export const CLI_DEFAULT: AiChoice = { model: null, effort: null };
 
 /**
  * Find → verify for one PR, at the PR's current head (from a fresh detail, not `pr`). With
  * `roblox` (parity on for the repo), a Roblox pass runs between them when find names Roblox
- * APIs; verify then checks its candidates too. Every pass runs with `choice`, which the result
- * records.
+ * APIs; verify then checks its candidates too. A failed Roblox pass (not a cancel) is recorded
+ * as skipped and verify goes on with the find candidates. Every pass runs with `choice`, which
+ * the result records.
  */
 export async function runJob(
   d: JobDeps, pr: PrSummary, repoPath: string, onState: (s: AiJobState) => void, choice: AiChoice = CLI_DEFAULT,
@@ -120,10 +127,18 @@ export async function runJob(
     const ref = await robloxReference(d, apis);
     if ("skipped" in ref) parity = ref;
     else {
-      parity = { docsSha: ref.info.sha, docsDate: ref.info.date };
-      reference = { sha: ref.info.sha, docs: ref.docs };
-      const answer = await pass("roblox", robloxPrompt({ ...content, reference }), ROBLOX_SCHEMA);
-      candidates.push(...normalizeRoblox(answer, files));
+      const r = { sha: ref.info.sha, docs: ref.docs };
+      try {
+        const answer = await pass("roblox", robloxPrompt({ ...content, reference: r }), ROBLOX_SCHEMA);
+        candidates.push(...normalizeRoblox(answer, files));
+        parity = { docsSha: ref.info.sha, docsDate: ref.info.date };
+        reference = r;
+      } catch (e) {
+        // A cancel aborts the job; any other failure costs only the Roblox findings.
+        const message = e instanceof Error ? e.message : String(e);
+        if (message === "cancelled") throw e;
+        parity = { skipped: `Roblox pass failed: ${shortMessage(message)}` };
+      }
     }
   }
   let findings: AiFinding[] = [];

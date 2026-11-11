@@ -270,6 +270,43 @@ describe("runJob", () => {
     }
   });
 
+  it("a failed Roblox pass is recorded as skipped and verify runs on the find candidates", async () => {
+    const cases: [string, unknown][] = [
+      ["Roblox pass failed: CLI exited with code 1", new Error("CLI exited with code 1\nstack and more")],
+      ["Roblox pass failed: rate limited", "rate limited"],
+      ["Roblox pass failed: ai-malformed: findings missing", null], // a malformed answer
+    ];
+    for (const [why, failure] of cases) {
+      const find = { chapters: [], findings: [cand({ body: "find one" })], robloxApis: ["BasePart"] };
+      const verify = { verdicts: [{ index: 0, verdict: "confirmed", reason: "r", evidence: [] }] };
+      const { d, runs } = deps(find, verify, failure === null ? { nope: 1 } : {});
+      if (failure !== null) {
+        const answer = d.aiRun.getMockImplementation()!;
+        d.aiRun.mockImplementation((p, prompt, schema, a, instructions, choice) => schema === ROBLOX_SCHEMA
+          ? { done: Promise.reject(failure), cancel: vi.fn() }
+          : answer(p, prompt, schema, a, instructions, choice));
+      }
+      const r = await runJob(d, summary(1), "/repo", () => {}, CLI_DEFAULT, true);
+      expect(r.roblox, why).toEqual({ skipped: why });
+      if (failure === null) expect(runs.map((x) => x.schema)).toEqual([findSchema(true), ROBLOX_SCHEMA, VERIFY_SCHEMA]);
+      const verifyPrompt = d.aiRun.mock.calls.find((c) => c[2] === VERIFY_SCHEMA)![1];
+      expect(verifyPrompt, why).not.toContain("Roblox API reference (from");
+      expect(r.findings.map((f) => [f.body, f.status])).toEqual([["find one", "confirmed"]]);
+    }
+  });
+
+  it("a cancelled Roblox pass still aborts the job", async () => {
+    for (const cancelled of ["cancelled", new Error("cancelled")]) {
+      const { d } = deps({ chapters: [], findings: [cand({})], robloxApis: ["BasePart"] });
+      const answer = d.aiRun.getMockImplementation()!;
+      d.aiRun.mockImplementation((p, prompt, schema, a, instructions, choice) => schema === ROBLOX_SCHEMA
+        ? { done: Promise.reject(cancelled), cancel: vi.fn() }
+        : answer(p, prompt, schema, a, instructions, choice));
+      await expect(runJob(d, summary(1), "/repo", () => {}, CLI_DEFAULT, true)).rejects.toBe(cancelled);
+      expect(d.aiRun.mock.calls.map((c) => c[2])).toEqual([findSchema(true), ROBLOX_SCHEMA]);
+    }
+  });
+
   it("fails when the fetched head is not the detail's head", async () => {
     const { d } = deps({ chapters: [], findings: [] });
     d.fetchPr.mockResolvedValueOnce("H999");
