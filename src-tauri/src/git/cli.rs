@@ -2355,24 +2355,26 @@ impl GitLayer for GitCli {
         let head = validate_ref(head)?;
         // Attributes from the merge-base, not the working tree: a checked-out
         // PR branch's .gitattributes (`*.cpp -diff`) would hide source files
-        // from the review. `--attr-source` needs git 2.40.
+        // from the review. `--attr-source` needs git 2.40; older git keeps the
+        // working tree's (trimDiff keeps such files and the AI can `git show` them).
         let attr_source = format!("--attr-source={merge_base}");
-        let out = self.run(
-            path,
-            &[
-                &attr_source,
-                "-c",
-                "core.quotePath=false",
-                "diff",
-                "--no-color",
-                "--no-ext-diff",
-                "-M",
-                "--src-prefix=a/",
-                "--dst-prefix=b/",
-                merge_base,
-                head,
-            ],
-        )?;
+        let mut args: Vec<&str> = Vec::new();
+        if !matches!(git_version(), Some(v) if v < (2, 40)) {
+            args.push(&attr_source);
+        }
+        args.extend([
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "-M",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            merge_base,
+            head,
+        ]);
+        let out = self.run(path, &args)?;
         Ok(String::from_utf8_lossy(&out).into_owned())
     }
 
