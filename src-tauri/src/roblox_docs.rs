@@ -5,8 +5,9 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -25,9 +26,20 @@ const MAX_TOTAL_CHARS: usize = 150_000;
 /// git aborts an HTTP transfer slower than 1 KB/s for 60 s, so a stalled
 /// fetch can't hold up a review run forever.
 const STALL_GUARD: [&str; 4] = ["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60"];
+/// With `git -C <dir>`: the docs repo named explicitly, so git never searches
+/// upward from a `dir` that is not a repo into a parent one (say a dotfiles
+/// repo in the home folder) and fetches into its `main`. An explicit git dir
+/// also works under `safe.bareRepository=explicit`; the `-c` (command-line
+/// config is protected config, and `all` is git's default) keeps that true
+/// whatever the user set.
+const DOCS_GIT: [&str; 3] = ["--git-dir=.", "-c", "safe.bareRepository=all"];
+const RENAME_RETRIES: u32 = 5;
+const RENAME_RETRY_DELAY: Duration = Duration::from_millis(200);
+/// A partial clone untouched this long belongs to a process that is gone.
+const STALE_PARTIAL_AGE: Duration = Duration::from_secs(60 * 60);
 
 /// Serializes updates in this process: two runs starting together must not
-/// both clone into the same temp dir.
+/// both clone into the same partial dir.
 static UPDATE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -47,12 +59,14 @@ pub struct ApiDoc {
 }
 
 /// Clone `url`'s `main` into `dir` when absent, else fetch it; then `info`.
-/// The first clone goes to a temp dir renamed into place on success, so a
-/// failed or interrupted clone never leaves a `dir` that looks downloaded.
+/// The first clone goes to a per-process partial dir renamed into place on
+/// success, so a failed or interrupted clone never leaves a `dir` that looks
+/// downloaded. A `dir` that exists but is not a downloaded copy is replaced.
 pub fn update(git: &GitCli, dir: &Path, url: &str) -> Result<DocsInfo, GitError> {
     let _guard = UPDATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if dir.exists() {
-        let mut args = STALL_GUARD.to_vec();
+    if downloaded(dir) {
+        let mut args = DOCS_GIT.to_vec();
+        args.extend(STALL_GUARD);
         args.extend([
             "fetch",
             "--depth",
@@ -64,48 +78,110 @@ pub fn update(git: &GitCli, dir: &Path, url: &str) -> Result<DocsInfo, GitError>
         ]);
         git.run_network(dir, &args)?;
     } else {
-        let parent = dir
-            .parent()
-            .ok_or_else(|| GitError::CommandFailed("docs dir has no parent".into()))?;
-        fs::create_dir_all(parent)?;
-        let partial = dir.with_extension("git.partial");
-        let _ = fs::remove_dir_all(&partial);
-        let partial_arg = partial.to_string_lossy();
-        let mut args = STALL_GUARD.to_vec();
-        args.extend([
-            "clone",
-            "--bare",
-            "--depth",
-            "1",
-            "--single-branch",
-            "--branch",
-            "main",
-            "--no-tags",
-            "--",
-            url,
-            &partial_arg,
-        ]);
-        if let Err(e) = git.run_network(parent, &args) {
-            let _ = fs::remove_dir_all(&partial);
-            return Err(e);
-        }
-        if let Err(e) = fs::rename(&partial, dir) {
-            let _ = fs::remove_dir_all(&partial);
-            // Another riff process may have finished its clone first.
-            if !dir.exists() {
-                return Err(e.into());
-            }
-        }
+        clone(git, dir, url)?;
     }
     info(git, dir)?.ok_or_else(|| GitError::CommandFailed("Roblox docs missing after update".into()))
 }
 
+fn clone(git: &GitCli, dir: &Path, url: &str) -> Result<(), GitError> {
+    let parent = dir
+        .parent()
+        .ok_or_else(|| GitError::CommandFailed("docs dir has no parent".into()))?;
+    fs::create_dir_all(parent)?;
+    if dir.exists() {
+        fs::remove_dir_all(dir).or_else(|_| fs::remove_file(dir))?;
+    }
+    remove_stale_partials(dir, STALE_PARTIAL_AGE);
+    let partial = partial_dir(dir, std::process::id());
+    let _ = fs::remove_dir_all(&partial);
+    let partial_arg = partial.to_string_lossy();
+    let mut args = STALL_GUARD.to_vec();
+    args.extend([
+        "clone",
+        "--bare",
+        "--depth",
+        "1",
+        "--single-branch",
+        "--branch",
+        "main",
+        "--no-tags",
+        "--",
+        url,
+        &partial_arg,
+    ]);
+    if let Err(e) = git.run_network(parent, &args) {
+        let _ = fs::remove_dir_all(&partial);
+        return Err(e);
+    }
+    if let Err(e) = rename_retrying(&partial, dir) {
+        let _ = fs::remove_dir_all(&partial);
+        // Another riff process may have finished its clone first.
+        if !downloaded(dir) {
+            return Err(e.into());
+        }
+    }
+    Ok(())
+}
+
+/// Whether `dir` holds a downloaded copy: a git dir always has a HEAD file.
+fn downloaded(dir: &Path) -> bool {
+    dir.join("HEAD").is_file()
+}
+
+/// `<dir>.partial-<pid>`: each process clones into its own, so two riff
+/// processes never delete each other's clone in progress.
+fn partial_dir(dir: &Path, pid: u32) -> PathBuf {
+    dir.with_file_name(format!("{}{pid}", partial_prefix(dir)))
+}
+
+fn partial_prefix(dir: &Path) -> String {
+    let name = dir.file_name().unwrap_or_default().to_string_lossy();
+    format!("{name}.partial-")
+}
+
+/// Removes `dir`'s partial clones (`partial_dir` names only) untouched for
+/// `max_age`: left by a riff process that crashed or was killed mid-clone.
+fn remove_stale_partials(dir: &Path, max_age: Duration) {
+    let (Some(parent), prefix) = (dir.parent(), partial_prefix(dir)) else { return };
+    let Ok(entries) = fs::read_dir(parent) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|n| n.strip_prefix(&prefix)) else { continue };
+        if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t.elapsed().is_ok_and(|age| age >= max_age));
+        if stale {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// `fs::rename`, retried a few times while `to` is still absent: on Windows
+/// an indexer or virus scanner briefly holding a file of a fresh clone makes
+/// renaming its folder fail.
+fn rename_retrying(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut retries = 0;
+    loop {
+        match fs::rename(from, to) {
+            Err(_) if retries < RENAME_RETRIES && !to.exists() => {
+                retries += 1;
+                std::thread::sleep(RENAME_RETRY_DELAY);
+            }
+            r => return r,
+        }
+    }
+}
+
 /// The downloaded docs commit, or None when nothing was downloaded yet.
 pub fn info(git: &GitCli, dir: &Path) -> Result<Option<DocsInfo>, GitError> {
-    if !dir.exists() {
+    if !downloaded(dir) {
         return Ok(None);
     }
-    let out = git.run(dir, &["log", "-1", "--format=%H%n%cI", BRANCH_REF, "--"])?;
+    let out = git.run(dir, &docs_args(&["log", "-1", "--format=%H%n%cI", BRANCH_REF, "--"]))?;
     let text = String::from_utf8_lossy(&out);
     let mut lines = text.lines();
     match (lines.next(), lines.next()) {
@@ -117,6 +193,11 @@ pub fn info(git: &GitCli, dir: &Path) -> Result<Option<DocsInfo>, GitError> {
     }
 }
 
+/// `DOCS_GIT` then `rest`, for `git.run(dir, …)`.
+fn docs_args<'a>(rest: &[&'a str]) -> Vec<&'a str> {
+    DOCS_GIT.iter().chain(rest).copied().collect()
+}
+
 /// The reference files for `names` at docs commit `sha`. Invalid, repeated
 /// and unknown names are skipped; at most `MAX_DOCS` files; text capped per
 /// file and in total, cut text ending in a `[truncated]` line.
@@ -126,7 +207,7 @@ pub fn read_apis(git: &GitCli, dir: &Path, sha: &str, names: &[String]) -> Resul
     if !is_oid {
         return Err(GitError::InvalidRef(sha.to_string()));
     }
-    let mut ls = vec!["ls-tree", "-r", "-z", "--name-only", sha, "--"];
+    let mut ls = docs_args(&["ls-tree", "-r", "-z", "--name-only", sha, "--"]);
     let specs: Vec<String> = KINDS
         .iter()
         .chain(&["enums"])
@@ -151,7 +232,8 @@ pub fn read_apis(git: &GitCli, dir: &Path, sha: &str, names: &[String]) -> Resul
         if !seen.insert(path.clone()) {
             continue;
         }
-        let blob = git.run(dir, &["cat-file", "blob", &format!("{sha}:{REFERENCE_ROOT}{path}")])?;
+        let spec = format!("{sha}:{REFERENCE_ROOT}{path}");
+        let blob = git.run(dir, &docs_args(&["cat-file", "blob", &spec]))?;
         let (text, used) = cap_chars(&String::from_utf8_lossy(&blob), MAX_FILE_CHARS.min(budget));
         budget -= used;
         docs.push(ApiDoc { name: name.clone(), path, text });
@@ -262,7 +344,7 @@ mod tests {
         assert_eq!(first.date, git_in(&src, &["log", "-1", "--format=%cI"]));
         assert_eq!(info(&git, &dir).unwrap(), Some(first.clone()));
         assert!(dir.join("shallow").exists(), "clone is not shallow");
-        assert!(!dir.with_extension("git.partial").exists());
+        assert!(!partial_dir(&dir, std::process::id()).exists());
 
         write_files(&src, &[("classes/Humanoid.yaml", "name: Humanoid\n")]);
         let second = update(&git, &dir, &url).unwrap();
@@ -280,7 +362,7 @@ mod tests {
         let missing = file_url(&root.join("no-such-repo"));
         assert!(update(&git, &dir, &missing).is_err());
         assert!(!dir.exists());
-        assert!(!dir.with_extension("git.partial").exists());
+        assert!(!partial_dir(&dir, std::process::id()).exists());
         assert_eq!(info(&git, &dir).unwrap(), None);
     }
 
@@ -293,6 +375,77 @@ mod tests {
         let first = update(&git, &dir, &file_url(&src)).unwrap();
         assert!(update(&git, &dir, &file_url(&root.join("gone"))).is_err());
         assert_eq!(info(&git, &dir).unwrap(), Some(first));
+    }
+
+    #[test]
+    fn a_dir_that_is_not_a_copy_never_reaches_a_parent_repo() {
+        let root = scratch("not-a-copy");
+        // A repo above the data folder, like a dotfiles repo in the home folder.
+        let home = docs_source(&root, &[("classes/Home.yaml", "name: Home
+")]);
+        let home_main = git_in(&home, &["rev-parse", "main"]);
+        let dir = home.join("data").join(DIR_NAME);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("junk"), "x").unwrap();
+        let git = GitCli::new();
+
+        assert_eq!(info(&git, &dir).unwrap(), None);
+        assert!(read_apis(&git, &dir, &home_main, &["Home".into()]).is_err());
+
+        let src = docs_source(&root.join("upstream"), &FIXTURE);
+        let got = update(&git, &dir, &file_url(&src)).unwrap();
+        assert_eq!(got.sha, git_in(&src, &["rev-parse", "HEAD"]));
+        assert!(!dir.join("junk").exists(), "the invalid dir was not replaced");
+        assert_eq!(git_in(&home, &["rev-parse", "main"]), home_main);
+        assert_eq!(info(&git, &dir).unwrap(), Some(got));
+    }
+
+    #[test]
+    fn stale_partials_of_this_naming_only_are_removed() {
+        let root = scratch("partials");
+        let dir = root.join(DIR_NAME);
+        let names = [
+            "roblox-docs.git.partial-1",
+            "roblox-docs.git.partial-2x",
+            "roblox-docs.git.partial-",
+            "roblox-docs.git.partial",
+            "other.git.partial-3",
+            DIR_NAME,
+        ];
+        for n in names {
+            fs::create_dir_all(root.join(n)).unwrap();
+        }
+        assert_eq!(partial_dir(&dir, 1), root.join(names[0]));
+
+        remove_stale_partials(&dir, STALE_PARTIAL_AGE);
+        assert!(names.iter().all(|n| root.join(n).exists()), "a fresh partial was removed");
+
+        remove_stale_partials(&dir, Duration::ZERO);
+        assert!(!root.join(names[0]).exists());
+        assert!(names[1..].iter().all(|n| root.join(n).exists()));
+    }
+
+    #[test]
+    fn rename_retrying_waits_out_a_brief_lock() {
+        let root = scratch("rename");
+        let from = root.join("from");
+        fs::create_dir_all(&from).unwrap();
+        // On Windows an open file inside a folder makes renaming the folder fail.
+        let held = fs::File::create(from.join("pack")).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            drop(held);
+        });
+        rename_retrying(&from, &root.join("to")).unwrap();
+        release.join().unwrap();
+        assert!(root.join("to").join("pack").exists());
+
+        // A target that appeared (another process won) ends the retries at once.
+        fs::create_dir_all(root.join("from2").join("x")).unwrap();
+        fs::create_dir_all(root.join("to").join("y")).unwrap();
+        let start = std::time::Instant::now();
+        assert!(rename_retrying(&root.join("from2"), &root.join("to")).is_err());
+        assert!(start.elapsed() < RENAME_RETRY_DELAY);
     }
 
     #[test]
