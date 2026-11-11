@@ -174,7 +174,7 @@ describe("Roblox parity", () => {
     for (const r of ["never modify", "Repository: acme/widgets", "Repository review rules", "git show aaa111:<path>",
       "Roblox API reference (from github.com/Roblox/creator-docs at d0c5)", "roblox:classes/BasePart.yaml",
       "git grep -n -i -e <api> bbb222 -- docs", "intentional", "failureScenario", "roblox:<kind>/<Name>.yaml", "normal prose",
-      "lines starting [riff index]", "is not shown here; that does not mean Roblox lacks it", "whose entry you were not given"]) {
+      "at least 20 characters", "lines starting [riff index]", "is not shown here; that does not mean Roblox lacks it", "whose entry you were not given"]) {
       expect(p.indexOf(r), r).toBeGreaterThan(-1);
       expect(p.indexOf(r), r).toBeLessThan(s);
     }

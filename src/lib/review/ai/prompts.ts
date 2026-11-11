@@ -1,7 +1,7 @@
 import type { GhRepo, PrDetail, PrSummary, Side } from "../types";
 import { repoName } from "./memory";
 import type { RepoRule } from "./repoRules";
-import { ROBLOX_PREFIX } from "./roblox";
+import { MIN_QUOTE_CHARS, ROBLOX_PREFIX } from "./roblox";
 import type { ApiDoc } from "../../types";
 import type { AiEvidence, Severity } from "./types";
 
@@ -244,7 +244,7 @@ export function robloxPrompt(
     `- Before reporting a difference, search the project's own docs at head for a recorded, intentional divergence (\`git grep -n -i -e <api> ${a.head} -- docs\`, with the API's name). Skip a difference the docs record as intentional.`,
     "- Report problems only on changed lines (path, side and line as in the diff), but read the callers and surrounding code before claiming one.",
     "- Every finding needs a failureScenario: a concrete input or state, what this change does with it and what Roblox does instead. If you cannot write one, do not report it.",
-    "- Every finding needs an evidence item whose path is the reference file's id, `roblox:<kind>/<Name>.yaml`, and whose quote is copied exactly from that file; add evidence from the code as well. Report nothing the reference does not back.",
+    `- Every finding needs an evidence item whose path is the reference file's id, \`roblox:<kind>/<Name>.yaml\`, and whose quote is copied exactly from that file's entries (at least ${MIN_QUOTE_CHARS} characters, not from riff's index or [truncated] lines); add evidence from the code as well. Report nothing the reference does not back.`,
     "- Do not report style, naming or taste comments.",
     "",
     BODY_STYLE,

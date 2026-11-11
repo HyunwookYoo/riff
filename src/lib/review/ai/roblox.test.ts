@@ -4,8 +4,11 @@ import type { AiFinding } from "./types";
 import type { ApiDoc } from "../../types";
 
 const docs: ApiDoc[] = [
-  { name: "BasePart", path: "classes/BasePart.yaml", text: "name: BasePart\ndescription: |\n  A part that\n    can be anchored.\n" },
-  { name: "Enum.Material", path: "enums/Material.yaml", text: "name: Material\nitems: [Plastic]\n" },
+  {
+    name: "BasePart", path: "classes/BasePart.yaml",
+    text: "name: BasePart\ndescription: |\n  A part that\n    can be anchored in place.\n[riff index] events: Touched, TouchEnded\nevents:\n  - name: BasePart.Touched\n    summary: Fires on contact\n[truncated]",
+  },
+  { name: "Enum.Material", path: "enums/Material.yaml", text: "name: Material\nitems:\n  - name: Plastic\n    summary: Shiny plastic\n" },
 ];
 const ev = (path: string, quote: string) => ({ evidence: [{ path, line: null, quote }] });
 
@@ -17,23 +20,35 @@ describe("repoKey", () => {
 
 describe("checkRobloxEvidence", () => {
   it("passes a quote found in the cited file", () => {
-    expect(checkRobloxEvidence(ev("roblox:classes/BasePart.yaml", "can be anchored."), docs)).toBe(true);
+    expect(checkRobloxEvidence(ev("roblox:classes/BasePart.yaml", "can be anchored in place."), docs)).toBe(true);
   });
   it("collapses whitespace on both sides", () => {
     expect(checkRobloxEvidence(ev("roblox:classes/BasePart.yaml", "A part that can   be\nanchored"), docs)).toBe(true);
   });
   it("fails when the quote is in another file than the one cited", () => {
-    expect(checkRobloxEvidence(ev("roblox:enums/Material.yaml", "can be anchored"), docs)).toBe(false);
+    expect(checkRobloxEvidence(ev("roblox:enums/Material.yaml", "can be anchored in place"), docs)).toBe(false);
   });
   it("fails for a file riff did not supply, a missing or empty quote, or no roblox evidence", () => {
-    expect(checkRobloxEvidence(ev("roblox:classes/Humanoid.yaml", "name"), docs)).toBe(false);
-    expect(checkRobloxEvidence(ev("roblox:classes/BasePart.yaml", "cannot be anchored"), docs)).toBe(false);
+    expect(checkRobloxEvidence(ev("roblox:classes/Humanoid.yaml", "name: BasePart description"), docs)).toBe(false);
+    expect(checkRobloxEvidence(ev("roblox:classes/BasePart.yaml", "cannot be anchored in place"), docs)).toBe(false);
     expect(checkRobloxEvidence(ev("roblox:classes/BasePart.yaml", "  \n "), docs)).toBe(false);
-    expect(checkRobloxEvidence(ev("classes/BasePart.yaml", "can be anchored"), docs)).toBe(false);
+    expect(checkRobloxEvidence(ev("classes/BasePart.yaml", "can be anchored in place"), docs)).toBe(false);
     expect(checkRobloxEvidence({ evidence: [] }, docs)).toBe(false);
   });
+  it("needs at least 20 non-space characters", () => {
+    expect(checkRobloxEvidence(ev("roblox:classes/BasePart.yaml", "name: BasePart"), docs)).toBe(false);
+    expect(checkRobloxEvidence(ev("roblox:classes/BasePart.yaml", "A part that can be ancho"), docs)).toBe(false); // 19
+    expect(checkRobloxEvidence(ev("roblox:classes/BasePart.yaml", "A part that can be anchor"), docs)).toBe(true); // 20
+  });
+  it("ignores riff's own index and [truncated] lines", () => {
+    const quote = (q: string) => checkRobloxEvidence(ev("roblox:classes/BasePart.yaml", q), docs);
+    expect(quote("[riff index] events: Touched, TouchEnded")).toBe(false);
+    expect(quote("events: Touched, TouchEnded")).toBe(false);
+    expect(quote("summary: Fires on contact [truncated]")).toBe(false);
+    expect(quote("name: BasePart.Touched summary: Fires on contact")).toBe(true);
+  });
   it("one checked quote is enough", () => {
-    const c = { evidence: [...ev("a.ts", "x").evidence, ...ev("roblox:enums/Material.yaml", "Plastic").evidence] };
+    const c = { evidence: [...ev("a.ts", "x").evidence, ...ev("roblox:enums/Material.yaml", "name: Plastic summary: Shiny").evidence] };
     expect(checkRobloxEvidence(c, docs)).toBe(true);
   });
 });
@@ -63,8 +78,8 @@ describe("downgradeUnchecked", () => {
     evidence: [], status: "confirmed", quote: [], ...o,
   });
   it("makes a confirmed Roblox finding without a checked quote unconfirmed, and leaves the rest", () => {
-    const good = f({ tag: "roblox", ...ev("roblox:enums/Material.yaml", "Plastic") });
-    const bad = f({ tag: "roblox", ...ev("roblox:enums/Material.yaml", "Wood") });
+    const good = f({ tag: "roblox", ...ev("roblox:enums/Material.yaml", "name: Plastic summary: Shiny plastic") });
+    const bad = f({ tag: "roblox", ...ev("roblox:enums/Material.yaml", "name: Wood summary: Rough wood") });
     const plain = f({ ...ev("a.ts", "Wood") });
     expect(downgradeUnchecked([good, bad, plain], docs)).toEqual([good, { ...bad, status: "unconfirmed" }, plain]);
   });

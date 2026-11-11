@@ -13,16 +13,27 @@ export const ROBLOX_PREFIX = "roblox:";
 
 const collapse = (s: string): string => s.replace(/\s+/g, " ").trim();
 
+/** A shorter quote (non-space chars) proves nothing: `type: bool` is in most files. */
+export const MIN_QUOTE_CHARS = 20;
+
+/** riff's own lines in the reference text (see roblox_docs.rs): the cut marker and the member index. */
+const isRiffLine = (l: string): boolean => l === "[truncated]" || l.startsWith("[riff index] ");
+
+/** `text` without riff's own lines: what a quote must come from. */
+const referenceOnly = (text: string): string => text.split("\n").filter((l) => !isRiffLine(l)).join("\n");
+
 /**
- * Whether some `roblox:` evidence of `c` names a file of `docs` and quotes it (whitespace
- * collapsed on both sides). riff gave the AI those files, so a quote not in them is made up.
+ * Whether some `roblox:` evidence of `c` names a file of `docs` and quotes at least
+ * `MIN_QUOTE_CHARS` of its reference text (whitespace collapsed on both sides, riff's index and
+ * `[truncated]` lines left out). riff gave the AI those texts, so a quote not in them is made up.
  */
 export function checkRobloxEvidence(c: { evidence: AiEvidence[] }, docs: ApiDoc[]): boolean {
   return c.evidence.some((e) => {
     if (!e.path.startsWith(ROBLOX_PREFIX)) return false;
     const doc = docs.find((d) => ROBLOX_PREFIX + d.path === e.path);
     const quote = collapse(e.quote);
-    return !!doc && quote !== "" && collapse(doc.text).includes(quote);
+    if (!doc || quote.replace(/ /g, "").length < MIN_QUOTE_CHARS) return false;
+    return collapse(referenceOnly(doc.text)).includes(quote);
   });
 }
 

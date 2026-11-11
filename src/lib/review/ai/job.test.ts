@@ -206,7 +206,7 @@ describe("runJob", () => {
   it("with parity on: find, Roblox pass on the read reference, one verify for all", async () => {
     const find = { chapters: [], findings: [cand({ body: "find one" })], robloxApis: ["BasePart", "Nope"] };
     const rbx = { findings: [
-      cand({ body: "checked", evidence: [...ev, { path: "roblox:classes/BasePart.yaml", line: 2, quote: "BasePart  doc\ntext" }] }),
+      cand({ body: "checked", evidence: [...ev, { path: "roblox:classes/BasePart.yaml", line: 2, quote: "description: BasePart  doc\ntext" }] }),
       cand({ body: "made up", evidence: [...ev, { path: "roblox:classes/BasePart.yaml", line: 2, quote: "not in it" }] }),
       cand({ body: "no scenario", failureScenario: "" }),
     ] };
