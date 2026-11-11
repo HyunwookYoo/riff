@@ -57,6 +57,12 @@ describe("aiStore", () => {
     }
   });
 
+  it("a finding's failure scenario is optional (older records have none)", async () => {
+    const v = { ...result(), findings: [{ ...result().findings[0], failureScenario: "s" }] };
+    m.loadReview.mockResolvedValueOnce(v);
+    expect(await loadAiResult(K)).toEqual(v);
+  });
+
   it("invalid stored result loads as null", async () => {
     const bad: unknown[] = [
       null, "x", { version: 2 },
@@ -65,6 +71,8 @@ describe("aiStore", () => {
       { ...result(), chapters: [{ title: "T" }] },
       { ...result(), findings: [{ ...result().findings[0], side: "UP" }] },
       { ...result(), findings: [{ ...result().findings[0], quote: "x" }] },
+      { ...result(), findings: [{ ...result().findings[0], failureScenario: 1 }] },
+      { ...result(), findings: [{ ...result().findings[0], failureScenario: null }] },
       { ...result(), handled: { f0: "maybe" } },
       { ...result(), model: 1 },
       { ...result(), effort: {} },

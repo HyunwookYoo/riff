@@ -21,7 +21,8 @@ const detail = (head: string, base: string): PrDetail => ({
 });
 
 const ev = [{ path: "a.ts", line: 2, quote: "two" }];
-const cand = (o: object) => ({ path: "a.ts", side: "RIGHT", line: 2, startLine: null, severity: "high", body: "b", evidence: ev, ...o });
+const cand = (o: object) => ({ path: "a.ts", side: "RIGHT", line: 2, startLine: null, severity: "high", body: "b", evidence: ev,
+  failureScenario: "s", ...o });
 
 /** Deps for a repo where node `N<n>` has head `H<n>`, base `B<n>`, merge-base `MB<n>`. */
 function deps(find: unknown, verify: unknown = { verdicts: [] }) {
@@ -104,6 +105,18 @@ describe("runJob", () => {
     expect(runs).toHaveLength(1);
     expect(r.findings).toEqual([]);
     expect(r.chapters).toEqual([{ title: "Other", summary: "", paths: ["a.ts"] }]);
+  });
+
+  it("find gets the diff without asset sections, and the verify pass gets the scenarios", async () => {
+    const { d } = deps({ chapters: [], findings: [cand({ failureScenario: "scenario one" })] });
+    d.prDiffText.mockResolvedValueOnce(
+      "diff --git a/a.ts b/a.ts\n+code\ndiff --git a/Hero.uasset b/Hero.uasset\nBinary files a/Hero.uasset and b/Hero.uasset differ\n");
+    await runJob(d, summary(1), "/repo", () => {});
+    const [find, verify] = d.aiRun.mock.calls.map((c) => c[1]);
+    expect(find).toContain("diff --git a/a.ts b/a.ts\n+code");
+    expect(find).not.toContain("diff --git a/Hero.uasset");
+    expect(find).toContain("1 asset/binary files were left out of the diff:");
+    expect(verify).toContain("scenario one");
   });
 
   it("job uses detail head and base, not the summary's", async () => {

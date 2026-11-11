@@ -2,6 +2,7 @@ import type { FileCompare } from "../gh";
 import type { FileHunks, PrDetail, PrHunks, PrKey, PrSummary, ReviewThread } from "../types";
 import type { aiRun } from "./run";
 import { verdictReactions, type Reaction } from "./memory";
+import { trimDiff } from "./diffTrim";
 import { FIND_SCHEMA, VERIFY_SCHEMA, findPrompt, verifyPrompt } from "./prompts";
 import { fillQuotes, mergeVerdicts, normalizeFind } from "./result";
 import type { AiChoice } from "./modelChoice";
@@ -69,7 +70,7 @@ export async function runJob(
   const fetched = await d.fetchPr(repoPath, pr.remote, pr.number, pr.baseRef, base);
   if (fetched !== head) throw new Error("The PR changed while it was being fetched; analyse again.");
   const { mergeBase, files } = await d.prHunks(repoPath, base, head);
-  const [diff, commits, instructions] = await Promise.all([
+  const [fullDiff, commits, instructions] = await Promise.all([
     d.prDiffText(repoPath, mergeBase, head),
     d.prCommitSubjects(repoPath, mergeBase, head),
     baseInstructions(d, repoPath, mergeBase),
@@ -82,7 +83,8 @@ export async function runJob(
     return run.done;
   };
 
-  const found = await pass("find", findPrompt({ repoPath, pr, detail, commits, mergeBase, head, diff }), FIND_SCHEMA);
+  const { diff, omitted } = trimDiff(fullDiff);
+  const found = await pass("find", findPrompt({ repoPath, pr, detail, commits, mergeBase, head, diff, omitted }), FIND_SCHEMA);
   const { chapters, candidates } = normalizeFind(found, files);
   let findings: AiFinding[] = [];
   if (candidates.length) {

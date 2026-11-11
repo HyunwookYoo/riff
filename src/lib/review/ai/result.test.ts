@@ -9,8 +9,9 @@ const files: FileHunks[] = [
   { path: "c.ts", oldPath: null, hunks: [] },
 ];
 const ev = [{ path: "a.ts", line: 2, quote: "q" }];
-const finding = (o: Partial<{ path: string; evidence: unknown[] }> = {}) => ({
-  path: "a.ts", side: "RIGHT", line: 2, startLine: null, severity: "high", body: "b", evidence: ev, ...o,
+const finding = (o: Partial<{ path: string; evidence: unknown[]; failureScenario: string }> = {}) => ({
+  path: "a.ts", side: "RIGHT", line: 2, startLine: null, severity: "high", body: "b", evidence: ev,
+  failureScenario: "x = null → crash", ...o,
 });
 
 describe("normalizeFind", () => {
@@ -36,6 +37,13 @@ describe("normalizeFind", () => {
   it("drops candidates without evidence", () => {
     const r = normalizeFind({ chapters: [], findings: [finding(), finding({ evidence: [] })] }, files);
     expect(r.candidates).toHaveLength(1);
+  });
+  it("drops candidates with no failure scenario and keeps the scenario on the rest", () => {
+    const r = normalizeFind({ chapters: [], findings: [
+      finding({ failureScenario: "" }), finding({ failureScenario: "  \n" }), finding({ failureScenario: 3 } as never),
+      { ...finding(), failureScenario: undefined }, finding({ failureScenario: " empty list → index -1 read " }),
+    ] }, files);
+    expect(r.candidates.map((c) => c.failureScenario)).toEqual(["empty list → index -1 read"]);
   });
   it("drops candidates whose path and evidence are both outside the PR", () => {
     const outside = [{ path: "q.ts", line: 1, quote: "q" }];

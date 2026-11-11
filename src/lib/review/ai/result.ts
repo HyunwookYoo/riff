@@ -44,13 +44,15 @@ export function normalizeFind(raw: unknown, files: FileHunks[]): { chapters: AiC
     if (!isObj(f) || !isStr(f.path) || !isStr(f.body)) continue;
     if ((f.side !== "LEFT" && f.side !== "RIGHT") || !Number.isInteger(f.line) || (f.line as number) < 1) continue;
     if (f.severity !== "high" && f.severity !== "medium" && f.severity !== "low") continue;
+    const failureScenario = isStr(f.failureScenario) ? f.failureScenario.trim() : "";
+    if (!failureScenario) continue;
     const evidence = evidenceOf(f.evidence);
     if (!evidence.length) continue;
     if (!known.has(f.path) && !evidence.some((e) => known.has(e.path))) continue;
     candidates.push({
       path: f.path, side: f.side as Side, line: f.line as number,
       startLine: Number.isInteger(f.startLine) ? (f.startLine as number) : null,
-      severity: f.severity as Severity, body: f.body, evidence,
+      severity: f.severity as Severity, body: f.body, evidence, failureScenario,
     });
   }
   return { chapters, candidates };

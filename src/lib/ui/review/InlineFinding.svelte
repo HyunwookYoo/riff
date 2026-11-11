@@ -123,6 +123,8 @@
   {:else}
     <pre class="body">{f.body}</pre>
   {/if}
+  <!-- Context for the reviewer only: never part of the draft body. -->
+  {#if f.failureScenario}<p class="scenario">Failure scenario: {f.failureScenario}</p>{/if}
   {#if evidenceOpen}
     <ul class="evidence">
       {#each f.evidence as e, i (i)}
@@ -192,6 +194,13 @@
     white-space: pre-wrap;
     word-break: break-word;
     font-family: inherit;
+  }
+  .scenario {
+    margin: 4px 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.85em;
+    color: var(--muted);
   }
   textarea {
     width: 100%;

@@ -8,6 +8,8 @@ export interface AiFinding {
   severity: Severity; body: string; evidence: AiEvidence[];
   status: "confirmed" | "unconfirmed";
   quote: string[];            // lines startLine..line of `side` at the analysed head/merge-base, filled by riff
+  /** The input or state that goes wrong and how; absent in records from before riff asked for it. */
+  failureScenario?: string;
 }
 export type Verdict = "addressed" | "not_addressed" | "unclear";
 export interface ThreadVerdict { threadId: string; verdict: Verdict; reason: string; evidence: AiEvidence[] }

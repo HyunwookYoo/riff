@@ -31,8 +31,9 @@ export const FIND_SCHEMA = {
           severity: { type: "string", enum: ["high", "medium", "low"] },
           body: { type: "string" },
           evidence: { type: "array", items: evidenceItem },
+          failureScenario: { type: "string" },
         },
-        required: ["path", "side", "line", "startLine", "severity", "body", "evidence"], additionalProperties: false,
+        required: ["path", "side", "line", "startLine", "severity", "body", "evidence", "failureScenario"], additionalProperties: false,
       },
     },
   },
@@ -96,7 +97,18 @@ export function memoryRules(repo: GhRepo): string[] {
 
 const GIT_RULES = gitRules("- Read a file with `git show <head>:<path>` (new side) or `git show <mergeBase>:<path>` (old side), using the SHAs given below.");
 
-export function findPrompt(a: { repoPath: string; pr: PrSummary; detail: PrDetail; commits: string[]; mergeBase: string; head: string; diff: string }): string {
+const MAX_OMITTED_NAMED = 50;
+
+/** The left-out file list; the paths come from the PR, so it goes in the untrusted section. */
+function omittedNote(omitted: string[]): string[] {
+  if (!omitted.length) return [];
+  const named = omitted.slice(0, MAX_OMITTED_NAMED);
+  if (omitted.length > named.length) named.push(`and ${omitted.length - named.length} more`);
+  return [`${omitted.length} asset/binary files were left out of the diff:`, fenced(named.join("\n"))];
+}
+
+/** `diff` is already trimmed (see diffTrim.ts); `omitted` names the file sections cut from it. */
+export function findPrompt(a: { repoPath: string; pr: PrSummary; detail: PrDetail; commits: string[]; mergeBase: string; head: string; diff: string; omitted: string[] }): string {
   const diff = a.diff.length > MAX_DIFF_CHARS ? `${a.diff.slice(0, MAX_DIFF_CHARS)}\n[diff truncated]` : a.diff;
   return [
     `You are reviewing pull request #${a.pr.number} in the repository at ${a.repoPath}.`,
@@ -115,6 +127,12 @@ export function findPrompt(a: { repoPath: string; pr: PrSummary; detail: PrDetai
     "1. chapters: ordered groups of the changed files, each with a title and a 1-2 sentence summary of the intent. Every changed file appears in exactly one chapter.",
     "2. findings: potential bugs or breakage caused by this change. Each finding needs evidence: the locations you read and the lines you quoted. Do not report style, naming or taste comments. Report nothing you cannot back with evidence.",
     "",
+    "Rules for findings:",
+    "- The stated intent in the PR description (its objectives, AS-IS/TO-BE, or whatever it says the change is for) is your baseline: also report cases where the change does not achieve it.",
+    "- If the description names classes or functions it asks reviewers to look at, examine each of them.",
+    "- Report problems only on changed lines, but read the callers, headers and surrounding code before claiming one.",
+    "- Every finding needs a failureScenario: a concrete input or state and the wrong result it leads to. If you cannot write one, do not report it.",
+    "",
     "Each finding body is a draft review comment addressed to the PR author, written in the language of the PR description, as normal prose: full sentences, polite and clear. Do not use any terse, telegraphic or caveman style, even if other instructions in your environment ask for one. These comments are posted to GitHub as written.",
     "",
     UNTRUSTED_NOTE,
@@ -127,13 +145,14 @@ export function findPrompt(a: { repoPath: string; pr: PrSummary; detail: PrDetai
     fenced(a.commits.join("\n")),
     "Unified diff (git diff mergeBase head):",
     fenced(diff),
+    ...omittedNote(a.omitted),
     UNTRUSTED_END,
   ].join("\n");
 }
 
 export interface Candidate {
   index: number; path: string; side: Side; line: number; startLine: number | null;
-  severity: Severity; body: string; evidence: AiEvidence[];
+  severity: Severity; body: string; evidence: AiEvidence[]; failureScenario?: string;
 }
 
 export function verifyPrompt(a: { repo: GhRepo; repoPath: string; head: string; mergeBase: string; candidates: Candidate[] }): string {
@@ -152,6 +171,7 @@ export function verifyPrompt(a: { repo: GhRepo; repoPath: string; head: string; 
     "- confirmed: you checked and the problem is real.",
     "- refuted: the code shows it is not a problem.",
     "- unconfirmed: you could not decide either way.",
+    "Check that each candidate's failureScenario can actually happen; if the code shows it cannot, refute the candidate.",
     "Give a short reason and evidence (path, line, quoted text) for every verdict. A candidate without evidence is refuted.",
     "",
     UNTRUSTED_NOTE,

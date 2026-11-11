@@ -20,7 +20,7 @@ function isFinding(f: unknown): boolean {
     && isInt(f.line) && (f.startLine === null || isInt(f.startLine))
     && (f.severity === "high" || f.severity === "medium" || f.severity === "low")
     && isStr(f.body) && (f.status === "confirmed" || f.status === "unconfirmed") && isStrs(f.quote)
-    && isEvidence(f.evidence);
+    && isEvidence(f.evidence) && (f.failureScenario === undefined || isStr(f.failureScenario));
 }
 
 function isRereview(r: unknown): boolean {
