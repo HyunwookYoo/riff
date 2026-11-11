@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { FIND_SCHEMA, UNTRUSTED_START, findPrompt, verifyPrompt } from "./prompts";
 import { rereviewPrompt } from "./rereview";
+import type { RepoRule } from "./repoRules";
 import type { PrDetail, PrSummary } from "../types";
 
 const pr = { number: 7, title: "Fix the thing", repo: { host: "github.com", owner: "acme", name: "widgets" } } as PrSummary;
 const detail = { body: "Body text here" } as PrDetail;
-const base = { repoPath: "C:/r", pr, detail, commits: ["first commit", "second commit"], mergeBase: "aaa111", head: "bbb222", diff: "diff --git a/x b/x", omitted: [] as string[] };
+const base = { repoPath: "C:/r", pr, detail, commits: ["first commit", "second commit"], mergeBase: "aaa111", head: "bbb222", diff: "diff --git a/x b/x", omitted: [] as string[], rules: [] as RepoRule[] };
 
 describe("findPrompt", () => {
   it("includes shas, diff and the read-only rules", () => {
@@ -49,12 +50,12 @@ describe("findPrompt", () => {
 
 describe("verifyPrompt", () => {
   it("asks to refute and lists candidates", () => {
-    const p = verifyPrompt({ repo: pr.repo, repoPath: "r", head: "bbb222", mergeBase: "aaa111",
+    const p = verifyPrompt({ rules: [], repo: pr.repo, repoPath: "r", head: "bbb222", mergeBase: "aaa111",
       candidates: [{ index: 0, path: "a.ts", side: "RIGHT", line: 3, startLine: null, severity: "low", body: "cand body", evidence: [] }] });
     for (const s of ["refute", "confirmed", "refuted", "unconfirmed", "cand body", "a.ts", "bbb222"]) expect(p).toContain(s);
   });
   it("asks to check each failure scenario can happen, and passes it on", () => {
-    const p = verifyPrompt({ repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m",
+    const p = verifyPrompt({ rules: [], repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m",
       candidates: [{ index: 0, path: "a.ts", side: "RIGHT", line: 3, startLine: null, severity: "low", body: "b", evidence: [],
         failureScenario: "the scenario text" }] });
     expect(p.indexOf("failureScenario can actually happen")).toBeGreaterThan(-1);
@@ -84,7 +85,7 @@ describe("untrusted content framing", () => {
     expect(p.match(/^`{5}$/gm)).toHaveLength(8);
   });
   it("frames verify candidates as untrusted too", () => {
-    const p = verifyPrompt({ repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m",
+    const p = verifyPrompt({ rules: [], repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m",
       candidates: [{ index: 0, path: "a", side: "RIGHT", line: 1, startLine: null, severity: "low", body: "```evil", evidence: [] }] });
     const s = p.indexOf(START);
     expect(s).toBeGreaterThan(p.indexOf("refute"));
@@ -98,7 +99,7 @@ describe("review memory", () => {
   it("prompts name the repo and give the recall-only memory hint before the untrusted section", () => {
     const prompts = [
       findPrompt(base),
-      verifyPrompt({ repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m", candidates: [] }),
+      verifyPrompt({ rules: [], repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m", candidates: [] }),
       rereviewPrompt({ repo: pr.repo, head: "h", oldHead: "o", threads: [], compares: [] }),
     ];
     for (const p of prompts) {
@@ -108,5 +109,32 @@ describe("review memory", () => {
       expect(p).toContain(HINT);
       expect(p.indexOf(HINT)).toBeLessThan(s);
     }
+  });
+});
+
+describe("repo review rules", () => {
+  const rules: RepoRule[] = [
+    { path: ".claude/skills/pr-conventions/SKILL.md", name: "pr-conventions", description: "Use when opening a PR." },
+    { path: ".claude/skills/doc-style/SKILL.md", name: "doc-style", description: "Prose for humans." },
+  ];
+  const HEADING = "Repository review rules";
+  it("both prompts list the skills before the untrusted section, read at the merge-base", () => {
+    const prompts = [
+      findPrompt({ ...base, rules }),
+      verifyPrompt({ rules, repo: pr.repo, repoPath: "r", head: "h", mergeBase: "aaa111", candidates: [] }),
+    ];
+    for (const p of prompts) {
+      const s = p.indexOf(UNTRUSTED_START);
+      expect(p.indexOf(HEADING)).toBeGreaterThan(-1);
+      expect(p.indexOf(HEADING)).toBeLessThan(s);
+      expect(p).toContain("git show aaa111:<path>");
+      expect(p).toContain("hold the change to them");
+      expect(p).toContain("- .claude/skills/pr-conventions/SKILL.md — pr-conventions: Use when opening a PR.");
+      expect(p.indexOf("- .claude/skills/doc-style/SKILL.md — doc-style: Prose for humans.")).toBeLessThan(s);
+    }
+  });
+  it("leaves the section out when the repo has no skills", () => {
+    expect(findPrompt(base)).not.toContain(HEADING);
+    expect(verifyPrompt({ rules: [], repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m", candidates: [] })).not.toContain(HEADING);
   });
 });

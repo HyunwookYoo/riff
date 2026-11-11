@@ -521,6 +521,11 @@ export function readFileAt(path: string, rev: string, filePath: string): Promise
   return invoke("read_file_at", { path, rev, filePath });
 }
 
+/** Every file path under `prefix` in the tree at `rev`; empty when `prefix` is absent there. */
+export function treePaths(path: string, rev: string, prefix: string): Promise<string[]> {
+  return invoke("tree_paths", { path, rev, prefix });
+}
+
 export function blameFile(
   path: string,
   filePath: string,

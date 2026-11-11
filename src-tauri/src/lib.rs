@@ -675,6 +675,16 @@ async fn read_file_at(
 }
 
 #[tauri::command]
+async fn tree_paths(
+    state: tauri::State<'_, GitCli>,
+    path: String,
+    rev: String,
+    prefix: String,
+) -> Result<Vec<String>, GitError> {
+    state.tree_paths(Path::new(&path), &rev, &prefix)
+}
+
+#[tauri::command]
 async fn containment(
     state: tauri::State<'_, GitCli>,
     path: String,
@@ -964,6 +974,7 @@ pub fn run() {
             fetch_commit,
             mark_pr_seen,
             read_file_at,
+            tree_paths,
             containment,
             commit_log_excluding,
             commit_containment_detail,

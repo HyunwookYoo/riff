@@ -140,6 +140,7 @@ function deps(answer: unknown = { verdicts: [] }) {
       if (path === "CLAUDE.md") return `rules at ${rev}`;
       throw new Error("missing");
     }),
+    treePaths: vi.fn(async (): Promise<string[]> => []),
     prFileCompare: vi.fn(async (_p: string, _b: string, _o: string, _n: string, files: string[]) =>
       files.map((path) => ({ path, oldPatch: `old ${path}`, newPatch: `new ${path}` }))),
     fetchCommit: vi.fn(async () => {}),

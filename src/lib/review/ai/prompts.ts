@@ -1,5 +1,6 @@
 import type { GhRepo, PrDetail, PrSummary, Side } from "../types";
 import { repoName } from "./memory";
+import type { RepoRule } from "./repoRules";
 import type { AiEvidence, Severity } from "./types";
 
 export const evidenceItem = {
@@ -97,6 +98,19 @@ export function memoryRules(repo: GhRepo): string[] {
 
 const GIT_RULES = gitRules("- Read a file with `git show <head>:<path>` (new side) or `git show <mergeBase>:<path>` (old side), using the SHAs given below.");
 
+/**
+ * The repo's skills as committed at the merge-base (see repoRules.ts). They come from the base
+ * branch, like CLAUDE.md, so they go outside the untrusted section.
+ */
+function rulesSection(rules: RepoRule[], mergeBase: string): string[] {
+  if (!rules.length) return [];
+  return [
+    `Repository review rules (skills committed on the base branch, at mergeBase): read the ones that apply with \`git show ${mergeBase}:<path>\` and hold the change to them.`,
+    ...rules.map((r) => `- ${r.path} — ${r.name}: ${r.description}`),
+    "",
+  ];
+}
+
 const MAX_OMITTED_NAMED = 50;
 
 /** The left-out file list; the paths come from the PR, so it goes in the untrusted section. */
@@ -108,7 +122,7 @@ function omittedNote(omitted: string[]): string[] {
 }
 
 /** `diff` is already trimmed (see diffTrim.ts); `omitted` names the file sections cut from it. */
-export function findPrompt(a: { repoPath: string; pr: PrSummary; detail: PrDetail; commits: string[]; mergeBase: string; head: string; diff: string; omitted: string[] }): string {
+export function findPrompt(a: { repoPath: string; pr: PrSummary; detail: PrDetail; commits: string[]; mergeBase: string; head: string; diff: string; omitted: string[]; rules: RepoRule[] }): string {
   const diff = a.diff.length > MAX_DIFF_CHARS ? `${a.diff.slice(0, MAX_DIFF_CHARS)}\n[diff truncated]` : a.diff;
   return [
     `You are reviewing pull request #${a.pr.number} in the repository at ${a.repoPath}.`,
@@ -123,6 +137,7 @@ export function findPrompt(a: { repoPath: string; pr: PrSummary; detail: PrDetai
     "",
     ...memoryRules(a.pr.repo),
     "",
+    ...rulesSection(a.rules, a.mergeBase),
     "Produce two things.",
     "1. chapters: ordered groups of the changed files, each with a title and a 1-2 sentence summary of the intent. Every changed file appears in exactly one chapter.",
     "2. findings: potential bugs or breakage caused by this change. Each finding needs evidence: the locations you read and the lines you quoted. Do not report style, naming or taste comments. Report nothing you cannot back with evidence.",
@@ -155,7 +170,7 @@ export interface Candidate {
   severity: Severity; body: string; evidence: AiEvidence[]; failureScenario?: string;
 }
 
-export function verifyPrompt(a: { repo: GhRepo; repoPath: string; head: string; mergeBase: string; candidates: Candidate[] }): string {
+export function verifyPrompt(a: { repo: GhRepo; repoPath: string; head: string; mergeBase: string; candidates: Candidate[]; rules: RepoRule[] }): string {
   return [
     `You are verifying candidate review findings for a pull request in the repository at ${a.repoPath}.`,
     `mergeBase: ${a.mergeBase}`,
@@ -167,6 +182,7 @@ export function verifyPrompt(a: { repo: GhRepo; repoPath: string; head: string; 
     "",
     ...memoryRules(a.repo),
     "",
+    ...rulesSection(a.rules, a.mergeBase),
     "Try to refute each candidate: read the cited code and anything else you need. For each candidate answer with its index and one verdict:",
     "- confirmed: you checked and the problem is real.",
     "- refuted: the code shows it is not a problem.",

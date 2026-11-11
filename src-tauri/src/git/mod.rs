@@ -734,4 +734,7 @@ pub trait GitLayer {
     /// lossy UTF-8, capped like the working-copy read the blame view uses.
     /// Backs "Blame before this", which blames a parent revision.
     fn read_file_at(&self, path: &Path, rev: &str, file_path: &str) -> Result<String, GitError>;
+    /// Every file path under `prefix` (repo-relative, no `..`) in the tree at
+    /// `rev` (`git ls-tree -r --name-only`); empty when `prefix` is absent there.
+    fn tree_paths(&self, path: &Path, rev: &str, prefix: &str) -> Result<Vec<String>, GitError>;
 }

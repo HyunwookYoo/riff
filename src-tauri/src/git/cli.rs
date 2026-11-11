@@ -2533,6 +2533,27 @@ impl GitLayer for GitCli {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    fn tree_paths(&self, path: &Path, rev: &str, prefix: &str) -> Result<Vec<String>, GitError> {
+        let rev = validate_ref(rev)?;
+        validate_path(prefix)?;
+        // Repo-relative only: no absolute or drive path, no `:` pathspec magic, no `..`.
+        if prefix.starts_with(['/', '\\'])
+            || prefix.contains(':')
+            || prefix.split(['/', '\\']).any(|c| c == "..")
+        {
+            return Err(GitError::InvalidRef(format!("invalid path: {prefix}")));
+        }
+        let out = self.run(
+            path,
+            &["ls-tree", "-r", "-z", "--name-only", "--full-tree", rev, "--", prefix],
+        )?;
+        Ok(out
+            .split(|&b| b == 0)
+            .filter(|p| !p.is_empty())
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .collect())
+    }
+
     fn containment(
         &self,
         path: &Path,
@@ -4823,6 +4844,41 @@ new3
         // Malformed arguments never reach git.
         assert!(cli.read_file_at(&repo, "-x", "notes.md").is_err());
         assert!(cli.read_file_at(&repo, "HEAD", "-notes.md").is_err());
+
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn tree_paths_lists_files_under_a_prefix_at_a_revision() {
+        let repo = temp_repo("tree-paths");
+        let cli = GitCli::new();
+        fs::create_dir_all(repo.join(".claude/skills/a")).unwrap();
+        fs::create_dir_all(repo.join(".claude/skillsx")).unwrap();
+        fs::write(repo.join(".claude/skills/a/SKILL.md"), "a\n").unwrap();
+        fs::write(repo.join(".claude/skillsx/other.md"), "x\n").unwrap();
+        commit_file(&repo, ".claude/skills/top.md", "t\n", "add skills");
+        let first = rev_parse(&repo, "HEAD");
+        commit_file(&repo, ".claude/skills/later.md", "l\n", "add later");
+
+        assert_eq!(
+            cli.tree_paths(&repo, &first, ".claude/skills").unwrap(),
+            vec![".claude/skills/a/SKILL.md".to_string(), ".claude/skills/top.md".to_string()]
+        );
+        assert_eq!(cli.tree_paths(&repo, "HEAD", ".claude/skills").unwrap().len(), 3);
+        // A directory missing at that revision is an empty list, not an error.
+        assert!(cli.tree_paths(&repo, "HEAD", "no/such/dir").unwrap().is_empty());
+        assert!(cli.tree_paths(&repo, "HEAD~2", ".claude/skills").unwrap().is_empty());
+        // Malformed arguments never reach git.
+        assert!(cli.tree_paths(&repo, "-x", ".claude/skills").is_err());
+        assert!(cli.tree_paths(&repo, "HEAD", "-x").is_err());
+        assert!(cli.tree_paths(&repo, "HEAD", "").is_err());
+        assert!(cli.tree_paths(&repo, "HEAD", "../up").is_err());
+        assert!(cli.tree_paths(&repo, "HEAD", ".claude/../..").is_err());
+        assert!(cli.tree_paths(&repo, "HEAD", "/abs").is_err());
+        assert!(cli.tree_paths(&repo, "HEAD", "C:/abs").is_err());
+        assert!(cli.tree_paths(&repo, "HEAD", ":(top)x").is_err());
+        // An unknown revision is an error.
+        assert!(cli.tree_paths(&repo, "no-such-rev", ".claude/skills").is_err());
 
         let _ = fs::remove_dir_all(&repo);
     }

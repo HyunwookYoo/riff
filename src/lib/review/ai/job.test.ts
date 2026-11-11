@@ -40,6 +40,7 @@ function deps(find: unknown, verify: unknown = { verdicts: [] }) {
       if (path !== "a.ts") throw new Error("missing");
       return rev.startsWith("MB") ? "old1\nold2\nold3\n" : "one\ntwo\nthree\n";
     }),
+    treePaths: vi.fn(async (_p: string, _rev: string, _prefix: string): Promise<string[]> => []),
     aiRun: vi.fn((_p: string, _prompt: string, schema: object, _a: (t: string) => void, instructions: string | null, choice: AiChoice) => {
       const cancel = vi.fn();
       runs.push({ schema, instructions, choice, cancel });
@@ -144,6 +145,20 @@ describe("runJob", () => {
     const missing = deps(find, { verdicts: [] });
     await runJob(missing.d, summary(1), "/repo", () => {});
     expect(missing.runs.map((x) => x.instructions)).toEqual([null, null]);
+  });
+
+  it("both passes list the repo's skills as of the merge-base", async () => {
+    const find = { chapters: [], findings: [cand({})] };
+    const { d } = deps(find, { verdicts: [] });
+    const read = d.readFileAt.getMockImplementation()!;
+    d.treePaths.mockResolvedValue([".claude/skills/style/SKILL.md"]);
+    d.readFileAt.mockImplementation(async (p, rev, path) =>
+      path.endsWith("SKILL.md") ? `---\nname: style\ndescription: skill at ${rev}\n---\n` : read(p, rev, path));
+    await runJob(d, summary(1), "/repo", () => {});
+    expect(d.treePaths).toHaveBeenCalledTimes(1);
+    expect(d.treePaths).toHaveBeenCalledWith("/repo", "MB1", ".claude/skills");
+    const [findP, verifyP] = d.aiRun.mock.calls.map((c) => c[1]);
+    for (const p of [findP, verifyP]) expect(p).toContain("- .claude/skills/style/SKILL.md — style: skill at MB1");
   });
 
   it("both passes run with the job's model/effort, and the result records them", async () => {

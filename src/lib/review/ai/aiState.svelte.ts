@@ -1,5 +1,5 @@
 import { appState } from "../../store.svelte";
-import { readFileAt } from "../../git";
+import { readFileAt, treePaths } from "../../git";
 import { fetchCommit, fetchPr, prCommitSubjects, prDiffText, prFileCompare, prHunks } from "../gh";
 import { prDetail } from "../github";
 import type { PrKey, PrSummary } from "../types";
@@ -70,7 +70,7 @@ function saveRereview(key: PrKey, rr: RereviewResult): Promise<void> {
 const runner = createRunner({
   ctx: aiState,
   jobDeps: {
-    fetchPr, prDetail, prHunks, prDiffText, prCommitSubjects, readFileAt, prFileCompare, fetchCommit, aiRun,
+    fetchPr, prDetail, prHunks, prDiffText, prCommitSubjects, readFileAt, treePaths, prFileCompare, fetchCommit, aiRun,
     now: Date.now,
   },
   runJob,

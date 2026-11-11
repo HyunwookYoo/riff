@@ -5,6 +5,7 @@ import { verdictReactions, type Reaction } from "./memory";
 import { trimDiff } from "./diffTrim";
 import { FIND_SCHEMA, VERIFY_SCHEMA, findPrompt, verifyPrompt } from "./prompts";
 import { fillQuotes, mergeVerdicts, normalizeFind } from "./result";
+import { repoRules } from "./repoRules";
 import type { AiChoice } from "./modelChoice";
 import { cancel, enqueue, finish, type JobKind, type Queue, type QueueEntry } from "./queue";
 import type { runRereview } from "./rereview";
@@ -17,6 +18,7 @@ export interface JobDeps {
   prDiffText: (path: string, mergeBase: string, head: string) => Promise<string>;
   prCommitSubjects: (path: string, mergeBase: string, head: string) => Promise<string[]>;
   readFileAt: (path: string, rev: string, filePath: string) => Promise<string>;
+  treePaths: (path: string, rev: string, prefix: string) => Promise<string[]>;
   prFileCompare: (path: string, base: string, oldHead: string, newHead: string, files: string[]) => Promise<FileCompare[]>;
   fetchCommit: (path: string, remote: string, sha: string) => Promise<void>;
   aiRun: typeof aiRun;
@@ -70,10 +72,11 @@ export async function runJob(
   const fetched = await d.fetchPr(repoPath, pr.remote, pr.number, pr.baseRef, base);
   if (fetched !== head) throw new Error("The PR changed while it was being fetched; analyse again.");
   const { mergeBase, files } = await d.prHunks(repoPath, base, head);
-  const [fullDiff, commits, instructions] = await Promise.all([
+  const [fullDiff, commits, instructions, rules] = await Promise.all([
     d.prDiffText(repoPath, mergeBase, head),
     d.prCommitSubjects(repoPath, mergeBase, head),
     baseInstructions(d, repoPath, mergeBase),
+    repoRules(d, repoPath, mergeBase),
   ]);
 
   const pass = async (which: "find" | "verify", prompt: string, schema: object): Promise<unknown> => {
@@ -84,13 +87,13 @@ export async function runJob(
   };
 
   const { diff, omitted } = trimDiff(fullDiff);
-  const found = await pass("find", findPrompt({ repoPath, pr, detail, commits, mergeBase, head, diff, omitted }), FIND_SCHEMA);
+  const found = await pass("find", findPrompt({ repoPath, pr, detail, commits, mergeBase, head, diff, omitted, rules }), FIND_SCHEMA);
   const { chapters, candidates } = normalizeFind(found, files);
   let findings: AiFinding[] = [];
   if (candidates.length) {
     const verdicts = await pass(
       "verify",
-      verifyPrompt({ repo: pr.repo, repoPath, head, mergeBase, candidates: candidates.map((c, index) => ({ index, ...c })) }),
+      verifyPrompt({ repo: pr.repo, repoPath, head, mergeBase, rules, candidates: candidates.map((c, index) => ({ index, ...c })) }),
       VERIFY_SCHEMA,
     );
     findings = mergeVerdicts(candidates, verdicts);
