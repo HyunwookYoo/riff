@@ -5,7 +5,8 @@
   import { setHandled } from "$lib/review/ai/aiState.svelte";
   import { findingReaction, recordReaction } from "$lib/review/ai/memory";
   import type { ShownFinding } from "$lib/review/ai/result";
-  import type { PrKey } from "$lib/review/types";
+  import { draftTrace } from "$lib/review/ai/tracePath";
+  import type { PrKey, Side } from "$lib/review/types";
   import { textStash } from "./composerAt";
 
   let {
@@ -21,12 +22,16 @@
     finding: ShownFinding;
     /** In a list (not at its diff line): say where it is. */
     showPath?: boolean;
-    /** Select `path` and reveal `line` (null: just the file). */
-    onevidence: (path: string, line: number | null) => void;
+    /** Select `path` and reveal `line` (null: just the file) on `side` (default RIGHT). */
+    onevidence: (path: string, line: number | null, side?: Side) => void;
   } = $props();
 
   const f = $derived(finding);
   const unconfirmed = $derived(f.status === "unconfirmed");
+  const v = $derived(f.verification);
+  const trace = $derived(v?.trace ?? []);
+  // Appended on Add, never shown in the editor: what the user edits is the comment alone.
+  const appended = $derived(draftTrace(f));
   const editKey = $derived(`ai:${createdAt}:${f.id}`);
   // An open edit survives the widget being redrawn.
   // svelte-ignore state_referenced_locally
@@ -70,7 +75,7 @@
       const origin = unconfirmed ? "ai-unconfirmed" : edited ? "ai-edited" : "ai";
       // Both in this tick: the finding hides with the draft appearing, so it can't be added twice
       // and the mark can't land on a result that arrives while the draft saves.
-      const w = writeRecord(addItem(r, f.target, body, origin));
+      const w = writeRecord(addItem(r, f.target, body + appended, origin));
       const h = handle("added");
       textStash.delete(editKey);
       await w;
@@ -100,7 +105,7 @@
 <div class="finding" class:unconfirmed>
   <div class="head">
     <span class="sev {f.severity}">{f.severity}</span>
-    {#if unconfirmed}<span class="tag">Unconfirmed</span>{/if}
+    {#if unconfirmed}<span class="tag" title={v?.problem}>Unconfirmed</span>{/if}
     {#if f.tag === "roblox"}<span class="tag">Roblox</span>{/if}
     {#if showPath}<span class="loc" title={f.path}>{where(f.path, f.line)}</span>{/if}
     <span class="spacer"></span>
@@ -115,6 +120,7 @@
   </div>
   {#if editing}
     <textarea bind:value={text} rows="4" oninput={(e) => textStash.set(editKey, e.currentTarget.value)}></textarea>
+    {#if appended}<p class="muted">The failure path is added below the comment</p>{/if}
     <div class="actions">
       <button type="button" onclick={stopEdit}>Cancel</button>
       <button type="button" class="primary" onclick={() => void add(text, true)} disabled={blocked || busy || !text.trim()}>
@@ -126,6 +132,26 @@
   {/if}
   <!-- Context for the reviewer only: never part of the draft body. -->
   {#if f.failureScenario}<p class="scenario">Failure scenario: {f.failureScenario}</p>{/if}
+  {#if v?.problem}<p class="muted">Not confirmed: {v.problem}</p>{/if}
+  {#if v?.reason}<p class="muted">{unconfirmed ? "Verifier" : "Verified"}: {v.reason}</p>{/if}
+  {#if trace.length > 0}
+    <details class="trace" open={trace.length <= 3}>
+      <summary>Failure path ({trace.length} step{trace.length === 1 ? "" : "s"})</summary>
+      <ol>
+        {#each trace as s, i (i)}
+          <li>
+            {#if inPr(s.path)}
+              <button type="button" class="link" onclick={() => onevidence(s.path, s.line, s.side)}>{where(s.path, s.line)}</button>
+            {:else}
+              <span class="loc">{where(s.path, s.line)}</span>
+            {/if}
+            — {s.note}
+            <pre class="quote">{s.quote}</pre>
+          </li>
+        {/each}
+      </ol>
+    </details>
+  {/if}
   {#if evidenceOpen}
     <ul class="evidence">
       {#each f.evidence as e, i (i)}
@@ -196,7 +222,8 @@
     word-break: break-word;
     font-family: inherit;
   }
-  .scenario {
+  .scenario,
+  .muted {
     margin: 4px 0 0;
     white-space: pre-wrap;
     word-break: break-word;
@@ -226,10 +253,19 @@
     background: var(--accent);
     color: white;
   }
-  .evidence {
+  .evidence,
+  .trace ol {
     margin: 4px 0 0;
     padding-left: 16px;
     font-size: 0.85em;
+  }
+  .trace {
+    margin-top: 4px;
+  }
+  .trace summary {
+    cursor: pointer;
+    font-size: 0.85em;
+    color: var(--muted);
   }
   .link {
     padding: 0;

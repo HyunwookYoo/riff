@@ -1,12 +1,13 @@
 <script lang="ts">
   import { reviewState, isInlineThread, sortedPaths } from "$lib/review/reviewState.svelte";
   import type { ShownFinding } from "$lib/review/ai/result";
-  import type { AiChapter } from "$lib/review/ai/types";
-  import type { PrKey } from "$lib/review/types";
+  import type { AiChapter, RefutedFinding } from "$lib/review/ai/types";
+  import type { PrKey, Side } from "$lib/review/types";
   import InlineThread from "./InlineThread.svelte";
   import InlineFinding from "./InlineFinding.svelte";
   import ChapterList from "./ChapterList.svelte";
   import UnconfirmedList from "./UnconfirmedList.svelte";
+  import RefutedList from "./RefutedList.svelte";
   import { fileLabel } from "./pathLabel";
   import { fileFindingBadges, findingIndex, type FindingRow } from "$lib/review/ai/findingIndex";
 
@@ -17,8 +18,8 @@
     onfinding,
   }: {
     /** The open PR's AI result, as shown; null without one. */
-    ai: { prKey: PrKey; createdAt: string; chapters: AiChapter[]; inline: ShownFinding[]; offDiff: ShownFinding[]; unconfirmed: ShownFinding[] } | null;
-    onevidence: (path: string, line: number | null) => void;
+    ai: { prKey: PrKey; createdAt: string; chapters: AiChapter[]; inline: ShownFinding[]; offDiff: ShownFinding[]; unconfirmed: ShownFinding[]; refuted: RefutedFinding[] } | null;
+    onevidence: (path: string, line: number | null, side?: Side) => void;
     /** A file row was clicked (the main area switches to the files tab). */
     onpickfile?: () => void;
     /** An entry in the AI findings list was clicked: open its file at its line. */
@@ -108,6 +109,7 @@
       {/if}
       <ChapterList chapters={ai.chapters} {findingCounts} {row} />
       <UnconfirmedList prKey={ai.prKey} createdAt={ai.createdAt} findings={ai.unconfirmed} {onevidence} />
+      <RefutedList refuted={ai.refuted} {onevidence} />
       {#if ai.offDiff.length > 0}
         <details class="outdated">
           <summary>Not on a diff line ({ai.offDiff.length})</summary>

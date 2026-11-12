@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ShownFinding } from "$lib/review/ai/result";
-  import type { PrKey } from "$lib/review/types";
+  import type { PrKey, Side } from "$lib/review/types";
   import InlineFinding from "./InlineFinding.svelte";
 
   let {
@@ -12,7 +12,7 @@
     prKey: PrKey;
     createdAt: string;
     findings: ShownFinding[];
-    onevidence: (path: string, line: number | null) => void;
+    onevidence: (path: string, line: number | null, side?: Side) => void;
   } = $props();
 </script>
 

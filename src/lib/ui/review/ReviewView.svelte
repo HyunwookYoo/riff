@@ -117,6 +117,7 @@
     const texts = staleTexts && staleTexts.sig === staleFor ? staleTexts.texts : undefined;
     return {
       prKey: r.key, createdAt: r.createdAt, ranWith: choiceLabel(r), chapters: chaptersFor(r, reviewState.files),
+      refuted: r.refuted ?? [],
       ...findingsToShow(r, head, reviewState.files, texts),
     };
   });
@@ -380,13 +381,13 @@
     reveal = { path: r.path, side: r.side, line: r.line };
   }
 
-  // An AI finding's evidence: select its file (in the PR) and reveal the line.
-  function showEvidence(path: string, line: number | null) {
+  // An AI finding's evidence or failure-path step: select its file (in the PR) and reveal the line.
+  function showEvidence(path: string, line: number | null, side: Side = "RIGHT") {
     if (!fileHunks(path)) return;
     newSinceOpen = false;
     tab = "files";
     reviewState.selectedPath = path;
-    reveal = line !== null ? { path, side: "RIGHT", line } : null;
+    reveal = line !== null ? { path, side, line } : null;
   }
 
   onMount(() => {
