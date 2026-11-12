@@ -325,6 +325,33 @@ behaviour still matches Roblox's.
   AI findings list and the Unconfirmed area.
 - **Cost:** one extra AI run per review of a parity repo (verify is shared).
 
+### Verified failure paths
+
+*(User decisions, 2026-11-12.)* A confirmed finding must show **how** the
+problem actually happens, and riff checks the AI didn't make the code up.
+
+- **Failure path:** for every `confirmed` verdict the verify pass gives a
+  trace: 2-8 ordered steps from the trigger (an entry point, caller, input or
+  state) through the calls and branches to the faulty line and the wrong
+  result. Each step has path, side, line, the quoted code and a one-line note
+  in the language of the PR description. Steps may be in files the PR does
+  not change (callers, headers).
+- **riff checks the trace:** each step's quote (whitespace-collapsed) must be
+  in its file at that side's revision within a few lines of the given line.
+  A confirmed finding with no trace, or with any step that fails, is shown
+  as unconfirmed with the reason ("step 2 not found in Foo.cpp:120").
+- **riff checks repo evidence:** every evidence quote from the find and
+  verify passes (except `roblox:` ones, checked separately) must be in its
+  file at head or at the merge-base. Failing items are dropped; a finding
+  left with none is unconfirmed.
+- **Verification shown:** the finding card shows the verifier's reason and
+  the numbered failure path (step locations in PR files are clickable).
+  Refuted findings are kept in the result (location, severity, first line,
+  reason) and listed, collapsed, as "Refuted by verification (N)".
+- **Draft comments:** Add appends the failure path to the draft body as a
+  collapsed `<details>` block whose summary is the failure scenario; the
+  user can edit or delete it in the drafts window before submitting.
+
 ### Mapping findings to GitHub comments
 
 GitHub only accepts inline review comments on lines that appear in the PR's
