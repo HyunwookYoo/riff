@@ -53,8 +53,12 @@ export function citedDocs(cands: { evidence: AiEvidence[] }[], docs: ApiDoc[]): 
 
 /** After verify: a Roblox finding with no checked quote from `docs` is shown only as unconfirmed. */
 export function downgradeUnchecked(findings: AiFinding[], docs: ApiDoc[]): AiFinding[] {
-  return findings.map((f) =>
-    f.tag === "roblox" && f.status === "confirmed" && !checkRobloxEvidence(f, docs) ? { ...f, status: "unconfirmed" as const } : f);
+  return findings.map((f) => f.tag === "roblox" && f.status === "confirmed" && !checkRobloxEvidence(f, docs)
+    ? {
+      ...f, status: "unconfirmed" as const,
+      verification: { ...(f.verification ?? { reason: "", trace: [] }), problem: "no checked Roblox reference quote" },
+    }
+    : f);
 }
 
 /** The parity list after `setRobloxParity(key, on)` succeeded; mirrors the store (drop, then append when on). */

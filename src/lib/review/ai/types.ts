@@ -12,7 +12,18 @@ export interface AiFinding {
   failureScenario?: string;
   /** "roblox": from the Roblox parity pass. */
   tag?: "roblox";
+  /** The verify pass's answer; absent in records from before riff kept it. */
+  verification?: Verification;
 }
+/** One step of a failure path, quoted from `path` at `side`'s revision. */
+export interface TraceStep { path: string; side: Side; line: number; quote: string; note: string }
+/**
+ * `trace`: the failure path of a confirmed verdict ([] otherwise). `problem`: what riff's own
+ * check of the quotes found wrong; the finding is then unconfirmed, whatever the verdict.
+ */
+export interface Verification { reason: string; trace: TraceStep[]; problem?: string }
+/** A candidate the verify pass refuted. `summary`: the first non-empty line of its body. */
+export interface RefutedFinding { path: string; line: number; severity: Severity; summary: string; reason: string }
 export type Verdict = "addressed" | "not_addressed" | "unclear";
 export interface ThreadVerdict { threadId: string; verdict: Verdict; reason: string; evidence: AiEvidence[] }
 /** The `reason` of a verdict riff filled in because the AI gave none for the thread. */
@@ -29,6 +40,8 @@ export interface AiResult {
   model?: string | null; effort?: string | null;
   /** Roblox parity on: the reference commit the Roblox pass read, or why it didn't run. */
   roblox?: RobloxParity;
+  /** Absent in records from before riff kept them. */
+  refuted?: RefutedFinding[];
 }
 /** `docsDate`: the reference commit's ISO 8601 date. */
 export type RobloxParity = { docsSha: string; docsDate: string } | { skipped: string };

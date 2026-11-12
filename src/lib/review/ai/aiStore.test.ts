@@ -75,7 +75,41 @@ describe("aiStore", () => {
     }
   });
 
+  it("a finding's verification and the refuted list are optional (older records have neither)", async () => {
+    const step = { path: "b.ts", side: "LEFT", line: 3, quote: "q", note: "n" };
+    for (const v of [
+      { ...result(), findings: [{ ...result().findings[0], verification: { reason: "r", trace: [step] } }] },
+      { ...result(), findings: [{ ...result().findings[0], verification: { reason: "r", trace: [], problem: "no failure path" } }] },
+      { ...result(), refuted: [] },
+      { ...result(), refuted: [{ path: "a.ts", line: 4, severity: "low", summary: "s", reason: "r" }] },
+    ]) {
+      m.loadReview.mockResolvedValueOnce(v);
+      expect(await loadAiResult(K)).toEqual(v);
+    }
+  });
+
   it("invalid stored result loads as null", async () => {
+    const step = { path: "b.ts", side: "LEFT", line: 3, quote: "q", note: "n" };
+    const withVerification = (verification: unknown) => ({ ...result(), findings: [{ ...result().findings[0], verification }] });
+    const refuted = { path: "a.ts", line: 4, severity: "low", summary: "s", reason: "r" };
+    const badNew: unknown[] = [
+      withVerification(null), withVerification({ trace: [] }), withVerification({ reason: "r" }),
+      withVerification({ reason: "r", trace: [], problem: null }),
+      withVerification({ reason: "r", trace: [{ ...step, side: "UP" }] }),
+      withVerification({ reason: "r", trace: [{ ...step, line: "3" }] }),
+      withVerification({ reason: "r", trace: [{ ...step, note: undefined }] }),
+      { ...result(), refuted: null }, { ...result(), refuted: {} },
+      { ...result(), refuted: [{ ...refuted, severity: "huge" }] },
+      { ...result(), refuted: [{ ...refuted, line: null }] },
+      { ...result(), refuted: [{ ...refuted, reason: undefined }] },
+    ];
+    for (const v of badNew) {
+      m.loadReview.mockResolvedValueOnce(v);
+      expect(await loadAiResult(K), JSON.stringify(v)).toBeNull();
+    }
+  });
+
+  it("invalid stored result loads as null (older fields)", async () => {
     const bad: unknown[] = [
       null, "x", { version: 2 },
       { ...result(), key: "github.com/o/r#2" },

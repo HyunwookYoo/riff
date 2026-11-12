@@ -1,7 +1,7 @@
 import type { DraftTarget, FileHunks, Side } from "../types";
 import { reanchor } from "../anchor";
 import { placeTarget } from "../commentable";
-import type { AiChapter, AiEvidence, AiFinding, AiResult, Severity } from "./types";
+import type { AiChapter, AiEvidence, AiFinding, AiResult, RefutedFinding, Severity, TraceStep } from "./types";
 
 type Candidate = Omit<AiFinding, "id" | "status" | "quote">;
 
@@ -69,20 +69,44 @@ function candidatesOf(findings: unknown[], files: FileHunks[]): Candidate[] {
   return candidates;
 }
 
-export function mergeVerdicts(candidates: Candidate[], raw: unknown): AiFinding[] {
+const isStep = (s: unknown): s is TraceStep => isObj(s) && isStr(s.path) && (s.side === "LEFT" || s.side === "RIGHT")
+  && Number.isInteger(s.line) && (s.line as number) >= 1 && isStr(s.quote) && isStr(s.note);
+
+/** A trace with a malformed step is no trace: riff couldn't check the step left out. */
+function traceOf(v: unknown): TraceStep[] {
+  if (!Array.isArray(v) || !v.every(isStep)) return [];
+  return v.map(({ path, side, line, quote, note }) => ({ path, side, line, quote, note }));
+}
+
+/**
+ * Verify's verdicts applied: confirmed and unconfirmed candidates become findings carrying the
+ * verifier's reason (and, when confirmed, its failure path, checked later by codeCheck.ts);
+ * refuted ones are listed apart. A candidate with no verdict is dropped.
+ */
+export function mergeVerdicts(candidates: Candidate[], raw: unknown): { findings: AiFinding[]; refuted: RefutedFinding[] } {
   if (!isObj(raw) || !Array.isArray(raw.verdicts)) throw bad("verdicts missing");
-  const byIndex = new Map<number, { verdict: string; evidence: AiEvidence[] }>();
+  const byIndex = new Map<number, { verdict: string; reason: string; evidence: AiEvidence[]; trace: TraceStep[] }>();
   for (const v of raw.verdicts) {
     if (!isObj(v) || !Number.isInteger(v.index) || !isStr(v.verdict)) continue;
-    byIndex.set(v.index as number, { verdict: v.verdict, evidence: evidenceOf(v.evidence) });
+    byIndex.set(v.index as number, {
+      verdict: v.verdict, reason: isStr(v.reason) ? v.reason : "", evidence: evidenceOf(v.evidence), trace: traceOf(v.trace),
+    });
   }
-  const out: AiFinding[] = [];
+  const findings: AiFinding[] = [];
+  const refuted: RefutedFinding[] = [];
   candidates.forEach((c, i) => {
     const v = byIndex.get(i);
+    if (v?.verdict === "refuted") {
+      const summary = c.body.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "";
+      refuted.push({ path: c.path, line: c.line, severity: c.severity, summary, reason: v.reason });
+    }
     if (!v || (v.verdict !== "confirmed" && v.verdict !== "unconfirmed")) return;
-    out.push({ ...c, id: `f${out.length}`, status: v.verdict, evidence: [...c.evidence, ...v.evidence], quote: [] });
+    findings.push({
+      ...c, id: `f${findings.length}`, status: v.verdict, evidence: [...c.evidence, ...v.evidence], quote: [],
+      verification: { reason: v.reason, trace: v.verdict === "confirmed" ? v.trace : [] },
+    });
   });
-  return out;
+  return { findings, refuted };
 }
 
 export function fillQuotes(findings: AiFinding[], texts: Map<string, string>): AiFinding[] {

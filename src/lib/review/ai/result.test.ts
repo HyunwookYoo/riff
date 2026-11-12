@@ -58,15 +58,47 @@ describe("normalizeFind", () => {
 
 describe("mergeVerdicts", () => {
   const cands = [0, 1, 2, 3].map((i) => ({ ...finding(), evidence: ev, side: "RIGHT" as const, severity: "high" as const, line: i + 1 }));
+  const step = { path: "a.ts", side: "RIGHT", line: 2, quote: "const x = y;", note: "n" };
   it("keeps confirmed and unconfirmed, drops refuted and missing", () => {
-    const out = mergeVerdicts(cands, { verdicts: [
-      { index: 0, verdict: "confirmed", reason: "", evidence: [{ path: "b.ts", line: 1, quote: "z" }] },
-      { index: 1, verdict: "refuted", reason: "", evidence: [] },
-      { index: 2, verdict: "unconfirmed", reason: "", evidence: [] },
+    const { findings: out } = mergeVerdicts(cands, { verdicts: [
+      { index: 0, verdict: "confirmed", reason: "", evidence: [{ path: "b.ts", line: 1, quote: "z" }], trace: [] },
+      { index: 1, verdict: "refuted", reason: "", evidence: [], trace: [] },
+      { index: 2, verdict: "unconfirmed", reason: "", evidence: [], trace: [] },
     ] });
     expect(out.map((f) => [f.id, f.status])).toEqual([["f0", "confirmed"], ["f1", "unconfirmed"]]);
     expect(out[0].evidence).toHaveLength(2);
     expect(out[0].quote).toEqual([]);
+  });
+  it("keeps the verifier's reason, and the trace of a confirmed verdict", () => {
+    const { findings: out } = mergeVerdicts(cands, { verdicts: [
+      { index: 0, verdict: "confirmed", reason: "real", evidence: [], trace: [step, { ...step, side: "LEFT", line: 9 }] },
+      { index: 1, verdict: "unconfirmed", reason: "unsure", evidence: [], trace: [step] },
+      { index: 2, verdict: "confirmed", evidence: [] },
+    ] });
+    expect(out.map((f) => f.verification)).toEqual([
+      { reason: "real", trace: [step, { ...step, side: "LEFT", line: 9 }] },
+      { reason: "unsure", trace: [] },
+      { reason: "", trace: [] },
+    ]);
+  });
+  it("a trace with a malformed step counts as none", () => {
+    for (const bad of [{ ...step, side: "UP" }, { ...step, line: 0 }, { ...step, line: 1.5 }, { ...step, quote: 1 }, { ...step, note: null }, "x"]) {
+      const { findings: [f] } = mergeVerdicts(cands, { verdicts: [{ index: 0, verdict: "confirmed", reason: "r", evidence: [], trace: [step, bad] }] });
+      expect(f.verification?.trace, JSON.stringify(bad)).toEqual([]);
+    }
+  });
+  it("returns the refuted candidates with the first body line and the reason", () => {
+    const { refuted } = mergeVerdicts(
+      [{ ...cands[0], body: "\n  \r\n  First line  \nsecond" },{ ...cands[1], severity: "low" as const, body: "" }, cands[2]],
+      { verdicts: [
+        { index: 0, verdict: "refuted", reason: "guarded above", evidence: [], trace: [] },
+        { index: 1, verdict: "refuted", evidence: [], trace: [] },
+        { index: 2, verdict: "confirmed", reason: "r", evidence: [], trace: [] },
+      ] });
+    expect(refuted).toEqual([
+      { path: "a.ts", line: 1, severity: "high", summary: "First line", reason: "guarded above" },
+      { path: "a.ts", line: 2, severity: "low", summary: "", reason: "" },
+    ]);
   });
 });
 
@@ -132,7 +164,7 @@ describe("normalizeRoblox", () => {
   });
   it("the tag goes through verify", () => {
     const [c] = normalizeRoblox({ findings: [finding()] }, files);
-    const out = mergeVerdicts([c], { verdicts: [{ index: 0, verdict: "confirmed", reason: "", evidence: [] }] });
+    const { findings: out } = mergeVerdicts([c], { verdicts: [{ index: 0, verdict: "confirmed", reason: "", evidence: [], trace: [] }] });
     expect(out[0].tag).toBe("roblox");
   });
 });

@@ -7,11 +7,12 @@ import { trimDiff } from "./diffTrim";
 import { ROBLOX_SCHEMA, VERIFY_SCHEMA, findPrompt, findSchema, robloxPrompt, verifyPrompt, type RobloxReference } from "./prompts";
 import { fillQuotes, mergeVerdicts, normalizeFind, normalizeRoblox } from "./result";
 import { citedDocs, downgradeUnchecked, robloxApisOf } from "./roblox";
+import { checkFindings } from "./codeCheck";
 import { repoRules } from "./repoRules";
 import type { AiChoice } from "./modelChoice";
 import { cancel, enqueue, finish, type JobKind, type Queue, type QueueEntry } from "./queue";
 import type { runRereview } from "./rereview";
-import type { AiFinding, AiJobState, AiResult, RereviewResult, RobloxParity } from "./types";
+import type { AiFinding, AiJobState, AiResult, RefutedFinding, RereviewResult, RobloxParity } from "./types";
 
 export interface JobDeps {
   fetchPr: (path: string, remote: string, number: number, baseRef: string, baseSha: string) => Promise<string>;
@@ -85,8 +86,8 @@ export const CLI_DEFAULT: AiChoice = { model: null, effort: null };
  * Find → verify for one PR, at the PR's current head (from a fresh detail, not `pr`). With
  * `roblox` (parity on for the repo), a Roblox pass runs between them when find names Roblox
  * APIs; verify then checks its candidates too. A failed Roblox pass (not a cancel) is recorded
- * as skipped and verify goes on with the find candidates. Every pass runs with `choice`, which
- * the result records.
+ * as skipped and verify goes on with the find candidates. riff then checks the findings'
+ * quotes against the code (codeCheck.ts). Every pass runs with `choice`, which the result records.
  */
 export async function runJob(
   d: JobDeps, pr: PrSummary, repoPath: string, onState: (s: AiJobState) => void, choice: AiChoice = CLI_DEFAULT,
@@ -142,6 +143,7 @@ export async function runJob(
     }
   }
   let findings: AiFinding[] = [];
+  let refuted: RefutedFinding[] = [];
   if (candidates.length) {
     const cited = reference && { ...reference, docs: citedDocs(candidates.filter((c) => c.tag === "roblox"), reference.docs) };
     const verdicts = await pass(
@@ -149,12 +151,15 @@ export async function runJob(
       verifyPrompt({ repo: pr.repo, repoPath, head, mergeBase, rules, reference: cited, candidates: candidates.map((c, index) => ({ index, ...c })) }),
       VERIFY_SCHEMA,
     );
-    findings = downgradeUnchecked(mergeVerdicts(candidates, verdicts), reference?.docs ?? []);
+    const merged = mergeVerdicts(candidates, verdicts);
+    refuted = merged.refuted;
+    findings = await checkFindings(downgradeUnchecked(merged.findings, reference?.docs ?? []), files,
+      (rev, path) => d.readFileAt(repoPath, rev === "head" ? head : mergeBase, path));
   }
   findings = fillQuotes(findings, await findingTexts(d, repoPath, findings, files, mergeBase, head));
   return {
     version: 1, key: pr.key, headSha: head, baseSha: base, mergeBase,
-    createdAt: new Date(d.now()).toISOString(), chapters, findings, handled: {},
+    createdAt: new Date(d.now()).toISOString(), chapters, findings, refuted, handled: {},
     model: choice.model, effort: choice.effort,
     ...(parity ? { roblox: parity } : {}),
   };

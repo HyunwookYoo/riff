@@ -15,13 +15,25 @@ const isOptStr = (v: unknown): boolean => v === undefined || v === null || isStr
 const isEvidence = (v: unknown): boolean => Array.isArray(v) && v.every((e) =>
   isObj(e) && isStr(e.path) && (e.line === null || isInt(e.line)) && isStr(e.quote));
 
+const isSeverity = (v: unknown): boolean => v === "high" || v === "medium" || v === "low";
+
+const isStep = (s: unknown): boolean => isObj(s) && isStr(s.path) && (s.side === "LEFT" || s.side === "RIGHT")
+  && isInt(s.line) && isStr(s.quote) && isStr(s.note);
+
+const isVerification = (v: unknown): boolean => isObj(v) && isStr(v.reason)
+  && Array.isArray(v.trace) && v.trace.every(isStep) && (v.problem === undefined || isStr(v.problem));
+
+const isRefuted = (r: unknown): boolean => isObj(r) && isStr(r.path) && isInt(r.line) && isSeverity(r.severity)
+  && isStr(r.summary) && isStr(r.reason);
+
 function isFinding(f: unknown): boolean {
   return isObj(f) && isStr(f.id) && isStr(f.path) && (f.side === "LEFT" || f.side === "RIGHT")
     && isInt(f.line) && (f.startLine === null || isInt(f.startLine))
-    && (f.severity === "high" || f.severity === "medium" || f.severity === "low")
+    && isSeverity(f.severity)
     && isStr(f.body) && (f.status === "confirmed" || f.status === "unconfirmed") && isStrs(f.quote)
     && isEvidence(f.evidence) && (f.failureScenario === undefined || isStr(f.failureScenario))
-    && (f.tag === undefined || f.tag === "roblox");
+    && (f.tag === undefined || f.tag === "roblox")
+    && (f.verification === undefined || isVerification(f.verification));
 }
 
 const isRobloxParity = (v: unknown): boolean =>
@@ -42,6 +54,7 @@ function isAiResult(v: unknown, key: PrKey): v is AiResult {
     && isObj(v.handled) && Object.values(v.handled).every((h) => h === "added" || h === "discarded")
     && (v.rereview === undefined || isRereview(v.rereview))
     && (v.roblox === undefined || isRobloxParity(v.roblox))
+    && (v.refuted === undefined || (Array.isArray(v.refuted) && v.refuted.every(isRefuted)))
     && isOptStr(v.model) && isOptStr(v.effort);
 }
 

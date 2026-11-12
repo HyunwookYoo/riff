@@ -81,7 +81,14 @@ describe("downgradeUnchecked", () => {
     const good = f({ tag: "roblox", ...ev("roblox:enums/Material.yaml", "name: Plastic summary: Shiny plastic") });
     const bad = f({ tag: "roblox", ...ev("roblox:enums/Material.yaml", "name: Wood summary: Rough wood") });
     const plain = f({ ...ev("a.ts", "Wood") });
-    expect(downgradeUnchecked([good, bad, plain], docs)).toEqual([good, { ...bad, status: "unconfirmed" }, plain]);
+    expect(downgradeUnchecked([good, bad, plain], docs)).toEqual([
+      good, { ...bad, status: "unconfirmed", verification: { reason: "", trace: [], problem: "no checked Roblox reference quote" } }, plain,
+    ]);
+  });
+  it("keeps the verifier's reason and trace on a downgraded finding", () => {
+    const verification = { reason: "r", trace: [{ path: "a.ts", side: "RIGHT" as const, line: 1, quote: "q", note: "n" }] };
+    const [out] = downgradeUnchecked([f({ tag: "roblox", verification })], docs);
+    expect(out.verification).toEqual({ ...verification, problem: "no checked Roblox reference quote" });
   });
 });
 

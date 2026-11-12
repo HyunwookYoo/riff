@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FIND_SCHEMA, ROBLOX_SCHEMA, UNTRUSTED_END, UNTRUSTED_START, fenced, findPrompt, findSchema, robloxPrompt, verifyPrompt } from "./prompts";
+import { FIND_SCHEMA, ROBLOX_SCHEMA, UNTRUSTED_END, UNTRUSTED_START, VERIFY_SCHEMA, fenced, findPrompt, findSchema, robloxPrompt, verifyPrompt } from "./prompts";
 import { rereviewPrompt } from "./rereview";
 import type { RepoRule } from "./repoRules";
 import type { PrDetail, PrSummary } from "../types";
@@ -43,6 +43,14 @@ describe("findPrompt", () => {
     expect(item.properties.failureScenario).toEqual({ type: "string" });
     expect(item.required).toContain("failureScenario");
   });
+  it("asks for the failure scenario in the PR description's language and for exact quotes, before the PR content", () => {
+    for (const p of [findPrompt(base), robloxPrompt({ ...base, reference: { sha: "d0c5", docs: [] } })]) {
+      for (const r of ["failureScenario, written in the language of the PR description", "riff checks every quote from the repository"]) {
+        expect(p.indexOf(r), r).toBeGreaterThan(-1);
+        expect(p.indexOf(r), r).toBeLessThan(p.indexOf(UNTRUSTED_START));
+      }
+    }
+  });
   it("truncates a huge diff with a marker", () => {
     const p = findPrompt({ ...base, diff: "x".repeat(250_000) });
     expect(p).toContain("[diff truncated]");
@@ -63,6 +71,32 @@ describe("verifyPrompt", () => {
     expect(p.indexOf("failureScenario can actually happen")).toBeGreaterThan(-1);
     expect(p.indexOf("failureScenario can actually happen")).toBeLessThan(p.indexOf(UNTRUSTED_START));
     expect(p.indexOf("the scenario text")).toBeGreaterThan(p.indexOf(UNTRUSTED_START));
+  });
+});
+
+describe("verify failure path", () => {
+  const args = { rules: [], repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m",
+    candidates: [{ index: 0, path: "a.ts", side: "RIGHT" as const, line: 3, startLine: null, severity: "low" as const, body: "b", evidence: [] }] };
+  it("the schema requires a trace of checked steps per verdict", () => {
+    const item = VERIFY_SCHEMA.properties.verdicts.items;
+    expect(item.required).toContain("trace");
+    expect(item.properties.trace.items).toEqual({
+      type: "object",
+      properties: {
+        path: { type: "string" }, side: { type: "string", enum: ["LEFT", "RIGHT"] }, line: { type: "integer", minimum: 1 },
+        quote: { type: "string" }, note: { type: "string" },
+      },
+      required: ["path", "side", "line", "quote", "note"], additionalProperties: false,
+    });
+  });
+  it("asks for the failure path of a confirmed verdict, before the candidates", () => {
+    const p = verifyPrompt(args);
+    for (const r of ["trace", "2 to 8 ordered steps", "from the trigger", "to the faulty line and the wrong result",
+      "copied exactly as it is at that revision", "in the language of the candidate's body", "never roblox: reference files",
+      "For a refuted or unconfirmed verdict, trace is [].", "riff checks every quote from the repository"]) {
+      expect(p.indexOf(r), r).toBeGreaterThan(-1);
+      expect(p.indexOf(r), r).toBeLessThan(p.indexOf(UNTRUSTED_START));
+    }
   });
 });
 

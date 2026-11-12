@@ -22,6 +22,8 @@ const detail = (head: string, base: string): PrDetail => ({
 });
 
 const ev = [{ path: "a.ts", line: 2, quote: "two" }];
+/** A failure path that checks out against `deps`' a.ts at head. */
+const trace = [{ path: "a.ts", side: "RIGHT", line: 2, quote: "one\ntwo\nthree", note: "n" }];
 const cand = (o: object) => ({ path: "a.ts", side: "RIGHT", line: 2, startLine: null, severity: "high", body: "b", evidence: ev,
   failureScenario: "s", ...o });
 
@@ -89,7 +91,7 @@ describe("runJob", () => {
       findings: [cand({}), cand({ side: "LEFT", line: 3, startLine: 2 }), cand({ line: 1 })],
     };
     const verify = { verdicts: [
-      { index: 0, verdict: "confirmed", reason: "r", evidence: [] },
+      { index: 0, verdict: "confirmed", reason: "r", evidence: [], trace },
       { index: 1, verdict: "unconfirmed", reason: "r", evidence: [] },
       { index: 2, verdict: "refuted", reason: "r", evidence: [] },
     ] };
@@ -115,7 +117,39 @@ describe("runJob", () => {
     const r = await runJob(d, summary(1), "/repo", () => {});
     expect(runs).toHaveLength(1);
     expect(r.findings).toEqual([]);
+    expect(r.refuted).toEqual([]);
     expect(r.chapters).toEqual([{ title: "Other", summary: "", paths: ["a.ts"] }]);
+  });
+
+  it("keeps refuted candidates with their reasons and checks evidence and failure paths against the code", async () => {
+    const find = { chapters: [], findings: [
+      cand({ body: "real" }),
+      cand({ body: "no path" }),
+      cand({ body: "bad step" }),
+      cand({ body: "made-up evidence", evidence: [{ path: "a.ts", line: 2, quote: "two and a half" }] }),
+      cand({ body: "old side", evidence: [...ev, { path: "a.ts", line: 2, quote: "old2" }, { path: "a.ts", line: 9, quote: "nine" }] }),
+      cand({ body: "\nwrong\nmore" }),
+    ] };
+    const verify = { verdicts: [
+      { index: 0, verdict: "confirmed", reason: "seen", evidence: [], trace },
+      { index: 1, verdict: "confirmed", reason: "r", evidence: [], trace: [] },
+      { index: 2, verdict: "confirmed", reason: "r", evidence: [], trace: [{ ...trace[0], side: "LEFT", line: 2 }] },
+      { index: 3, verdict: "confirmed", reason: "r", evidence: [], trace },
+      { index: 4, verdict: "confirmed", reason: "r", evidence: [], trace },
+      { index: 5, verdict: "refuted", reason: "guarded", evidence: [], trace: [] },
+    ] };
+    const { d } = deps(find, verify);
+    const r = await runJob(d, summary(1), "/repo", () => {});
+    expect(r.findings.map((f) => [f.body, f.status, f.verification?.problem])).toEqual([
+      ["real", "confirmed", undefined],
+      ["no path", "unconfirmed", "no failure path"],
+      ["bad step", "unconfirmed", "step 1 not found in a.ts:2"],
+      ["made-up evidence", "unconfirmed", "evidence not found in the code"],
+      ["old side", "confirmed", undefined],
+    ]);
+    expect(r.findings[0].verification).toEqual({ reason: "seen", trace });
+    expect(r.findings[4].evidence.map((e) => e.quote)).toEqual(["two", "old2"]);
+    expect(r.refuted).toEqual([{ path: "a.ts", line: 2, severity: "high", summary: "wrong", reason: "guarded" }]);
   });
 
   it("find gets the diff without asset sections, and the verify pass gets the scenarios", async () => {
@@ -210,7 +244,7 @@ describe("runJob", () => {
       cand({ body: "made up", evidence: [...ev, { path: "roblox:classes/BasePart.yaml", line: 2, quote: "not in it" }] }),
       cand({ body: "no scenario", failureScenario: "" }),
     ] };
-    const verify = { verdicts: [0, 1, 2].map((index) => ({ index, verdict: "confirmed", reason: "r", evidence: [] })) };
+    const verify = { verdicts: [0, 1, 2].map((index) => ({ index, verdict: "confirmed", reason: "r", evidence: [], trace })) };
     const { d, runs } = deps(find, verify, rbx);
     const states: string[] = [];
     const choice = { model: "opus", effort: "high" };
@@ -278,7 +312,7 @@ describe("runJob", () => {
     ];
     for (const [why, failure] of cases) {
       const find = { chapters: [], findings: [cand({ body: "find one" })], robloxApis: ["BasePart"] };
-      const verify = { verdicts: [{ index: 0, verdict: "confirmed", reason: "r", evidence: [] }] };
+      const verify = { verdicts: [{ index: 0, verdict: "confirmed", reason: "r", evidence: [], trace }] };
       const { d, runs } = deps(find, verify, failure === null ? { nope: 1 } : {});
       if (failure !== null) {
         const answer = d.aiRun.getMockImplementation()!;
@@ -317,7 +351,7 @@ describe("runJob", () => {
 describe("runner", () => {
   it("job result is stored under its own key and head", async () => {
     const find = { chapters: [], findings: [cand({})] };
-    const verify = { verdicts: [{ index: 0, verdict: "confirmed", reason: "r", evidence: [] }] };
+    const verify = { verdicts: [{ index: 0, verdict: "confirmed", reason: "r", evidence: [], trace }] };
     const { d } = deps(find, verify);
     const save = vi.fn(async (x: AiResult) => x);
     const notify = vi.fn(async () => {});

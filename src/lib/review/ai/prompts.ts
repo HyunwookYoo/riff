@@ -66,6 +66,16 @@ export const ROBLOX_SCHEMA = {
   required: ["findings"], additionalProperties: false,
 };
 
+/** One step of a confirmed verdict's failure path (see codeCheck.ts). */
+const traceStep = {
+  type: "object",
+  properties: {
+    path: { type: "string" }, side: { type: "string", enum: ["LEFT", "RIGHT"] }, line: { type: "integer", minimum: 1 },
+    quote: { type: "string" }, note: { type: "string" },
+  },
+  required: ["path", "side", "line", "quote", "note"], additionalProperties: false,
+};
+
 export const VERIFY_SCHEMA = {
   type: "object",
   properties: {
@@ -78,8 +88,9 @@ export const VERIFY_SCHEMA = {
           verdict: { type: "string", enum: ["confirmed", "refuted", "unconfirmed"] },
           reason: { type: "string" },
           evidence: { type: "array", items: evidenceItem },
+          trace: { type: "array", items: traceStep },
         },
-        required: ["index", "verdict", "reason", "evidence"], additionalProperties: false,
+        required: ["index", "verdict", "reason", "evidence", "trace"], additionalProperties: false,
       },
     },
   },
@@ -170,6 +181,9 @@ function untrustedPr(a: PrContent): string[] {
   ];
 }
 
+/** codeCheck.ts looks every repo quote up (whitespace collapsed); a prefix or "..." fails it. */
+const QUOTE_RULE = "riff checks every quote from the repository against the code at head or mergeBase: copy it exactly from the file, without line numbers, `git grep` prefixes or ellipses.";
+
 const BODY_STYLE = "Each finding body is a draft review comment addressed to the PR author, written in the language of the PR description, as normal prose: full sentences, polite and clear. Do not use any terse, telegraphic or caveman style, even if other instructions in your environment ask for one. These comments are posted to GitHub as written.";
 
 /** `omitted` names the file sections cut from `diff`; `roblox` also asks for the Roblox APIs touched. */
@@ -200,7 +214,8 @@ export function findPrompt(a: PrContent & { repoPath: string; mergeBase: string;
     "- If the description names classes or functions it asks reviewers to look at, examine each of them.",
     "- Report problems only on changed lines, but read the callers, headers and surrounding code before claiming one.",
     BINARY_NOTE,
-    "- Every finding needs a failureScenario: a concrete input or state and the wrong result it leads to. If you cannot write one, do not report it.",
+    "- Every finding needs a failureScenario, written in the language of the PR description: a concrete input or state and the wrong result it leads to. If you cannot write one, do not report it.",
+    `- ${QUOTE_RULE}`,
     "",
     BODY_STYLE,
     "",
@@ -248,7 +263,8 @@ export function robloxPrompt(
     `- Before reporting a difference, search the project's own docs at head for a recorded, intentional divergence (\`git grep -n -i -e <api> ${a.head} -- docs\`, with the API's name). Skip a difference the docs record as intentional.`,
     "- Report problems only on changed lines (path, side and line as in the diff), but read the callers and surrounding code before claiming one.",
     BINARY_NOTE,
-    "- Every finding needs a failureScenario: a concrete input or state, what this change does with it and what Roblox does instead. If you cannot write one, do not report it.",
+    "- Every finding needs a failureScenario, written in the language of the PR description: a concrete input or state, what this change does with it and what Roblox does instead. If you cannot write one, do not report it.",
+    `- ${QUOTE_RULE}`,
     `- Every finding needs an evidence item whose path is the reference file's id, \`roblox:<kind>/<Name>.yaml\`, and whose quote is copied exactly from that file's entries (at least ${MIN_QUOTE_CHARS} characters, not from riff's index or [truncated] lines); add evidence from the code as well. Report nothing the reference does not back.`,
     "- Do not report style, naming or taste comments.",
     "",
@@ -287,6 +303,10 @@ export function verifyPrompt(a: {
     "- unconfirmed: you could not decide either way.",
     "Check that each candidate's failureScenario can actually happen; if the code shows it cannot, refute the candidate.",
     "Give a short reason and evidence (path, line, quoted text) for every verdict. A candidate without evidence is refuted.",
+    "For a confirmed verdict also give trace, the failure path: 2 to 8 ordered steps from the trigger (an entry point, caller, input or state) through the calls and branches to the faulty line and the wrong result. Steps may be in files the PR does not change (callers, headers), but must be code in the repository, never roblox: reference files.",
+    "Each step: path; side (RIGHT = at head, LEFT = at mergeBase); line at that side's revision (the first line if the quote spans several); quote, that code copied exactly as it is at that revision; note, one line on what happens there, in the language of the candidate's body.",
+    "For a refuted or unconfirmed verdict, trace is [].",
+    QUOTE_RULE,
     ...(roblox
       ? ["Candidates tagged roblox claim the change differs from Roblox's behaviour: check the claim against the code and against the Roblox API reference below. Evidence paths starting with roblox: name those reference files, not files in the repository."]
       : []),
