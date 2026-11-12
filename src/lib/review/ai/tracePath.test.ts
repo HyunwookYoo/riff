@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codeSpan, draftTrace, inert, traceMarkdown } from "./tracePath";
+import { codeSpan, draftTrace, inert, inertProse, traceMarkdown } from "./tracePath";
 import type { AiFinding, TraceStep } from "./types";
 
 const step = (over: Partial<TraceStep> = {}): TraceStep => ({
@@ -20,6 +20,19 @@ describe("inert", () => {
   });
   it("leaves a lone @ or # and other text alone", () => {
     expect(inert("a @ b, #define x, C# code, AGH-x")).toBe("a @ b, #define x, C# code, AGH-x");
+  });
+});
+
+describe("inertProse", () => {
+  it("is inert outside code spans and leaves them as written", () => {
+    expect(inertProse("`p->x < y && z` and @Override `@Override`")).toBe(`\`p->x < y && z\` and @${WJ}Override \`@Override\``);
+  });
+  it("closes a span only with a run of the same length", () => {
+    expect(inertProse("``a ` <b>`` <i>")).toBe("``a ` <b>`` &lt;i&gt;");
+    expect(inertProse("`<a>`` <b>")).toBe("`&lt;a&gt;`` &lt;b&gt;");
+  });
+  it("leaves an unpaired run as prose", () => {
+    expect(inertProse("a `b <c> #1")).toBe(`a \`b &lt;c&gt; #${WJ}1`);
   });
 });
 
@@ -80,6 +93,11 @@ describe("traceMarkdown", () => {
 
   it("puts a step's note on one line", () => {
     expect(traceMarkdown("s", [step({ note: "first\nsecond" })])).toContain("— first second\n");
+  });
+
+  it("leaves code spans in a note as written, neutralising only the prose around them", () => {
+    const md = traceMarkdown("s", [step({ note: "`p->x < y && z` with @Override in ``@Override a`b`` but @dev <b> `unpaired" })]);
+    expect(md).toContain(`— \`p->x < y && z\` with @${WJ}Override in \`\`@Override a\`b\`\` but @${WJ}dev &lt;b&gt; \`unpaired\n`);
   });
 
   it("neutralises HTML, mentions and references in the summary and the notes", () => {

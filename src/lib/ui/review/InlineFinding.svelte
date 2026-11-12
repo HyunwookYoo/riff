@@ -147,6 +147,7 @@
               <span class="loc">{where(s.path, s.line)}</span>
             {/if}
             — {s.note}
+            {#if s.movedFrom !== undefined}<span class="moved">(line corrected from {s.movedFrom})</span>{/if}
             <pre class="quote">{s.quote}</pre>
           </li>
         {/each}
@@ -266,6 +267,9 @@
   .trace summary {
     cursor: pointer;
     font-size: 0.85em;
+    color: var(--muted);
+  }
+  .moved {
     color: var(--muted);
   }
   .link {

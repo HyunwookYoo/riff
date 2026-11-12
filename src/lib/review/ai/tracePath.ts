@@ -22,6 +22,28 @@ export function inert(s: string): string {
   return escapeHtml(s).replace(/@(?=\w)/g, `@${WJ}`).replace(/#(?=\d)/g, `#${WJ}`).replace(/\b(GH-)(?=\d)/gi, `$1${WJ}`);
 }
 
+/**
+ * `inert` on the prose of markdown `s`, its code spans (a backtick run up to the next run of the
+ * same length) left as written: GitHub shows them literally, entities and mentions included. An
+ * unpaired run is prose.
+ */
+export function inertProse(s: string): string {
+  let out = "";
+  let prose = 0;
+  for (let i = 0; i < s.length;) {
+    const run = /^`+/.exec(s.slice(i));
+    if (!run) { i++; continue; }
+    const n = run[0].length;
+    const close = new RegExp(`(?<!\`)\`{${n}}(?!\`)`, "g");
+    close.lastIndex = i + n;
+    const end = close.exec(s);
+    if (!end) { i += n; continue; }
+    out += inert(s.slice(prose, i)) + s.slice(i, end.index + n);
+    i = prose = end.index + n;
+  }
+  return out + inert(s.slice(prose));
+}
+
 /** An inline code span of `s`: a backtick run longer than any in it, padded when it starts or ends with one. */
 export function codeSpan(s: string): string {
   const longest = Math.max(0, ...(s.match(/`+/g) ?? []).map((r) => r.length));
@@ -43,13 +65,13 @@ function stepItem(s: TraceStep, i: number): string {
   const lines = fenced(s.quote.replace(/\n+$/, "")).split("\n");
   lines[0] += lang(s.path);
   const block = lines.map((l) => (l === "" ? l : pad + l)).join("\n");
-  return `${marker}${codeSpan(`${s.path}:${s.line}`)} — ${inert(oneLine(s.note))}\n${block}`;
+  return `${marker}${codeSpan(`${s.path}:${s.line}`)} — ${inertProse(oneLine(s.note))}\n${block}`;
 }
 
 /**
  * The failure path as GitHub markdown, appended to a draft comment: a collapsed `<details>` whose
  * summary is the scenario (one line), the steps numbered with their quotes fenced; the scenario
- * and notes are made `inert`.
+ * is made `inert` (it is in HTML, where markdown isn't), the notes `inertProse`.
  * Empty for an empty trace.
  */
 export function traceMarkdown(scenario: string, trace: TraceStep[]): string {
