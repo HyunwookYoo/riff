@@ -1,13 +1,14 @@
 <script lang="ts">
   import { reviewState } from "$lib/review/reviewState.svelte";
   import type { RefutedFinding } from "$lib/review/ai/types";
+  import type { Side } from "$lib/review/types";
 
   let {
     refuted,
     onevidence,
   }: {
     refuted: RefutedFinding[];
-    onevidence: (path: string, line: number | null) => void;
+    onevidence: (path: string, line: number | null, side?: Side) => void;
   } = $props();
 
   const inPr = (path: string) => reviewState.files.some((x) => x.path === path);
@@ -19,7 +20,7 @@
     {#each refuted as r, i (i)}
       <div class="entry">
         {#if inPr(r.path)}
-          <button type="button" class="link" title={r.path} onclick={() => onevidence(r.path, r.line)}>{r.path}:{r.line}</button>
+          <button type="button" class="link" title={r.path} onclick={() => onevidence(r.path, r.line, r.side)}>{r.path}:{r.line}</button>
         {:else}
           <span class="loc" title={r.path}>{r.path}:{r.line}</span>
         {/if}

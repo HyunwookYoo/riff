@@ -336,21 +336,26 @@ problem actually happens, and riff checks the AI didn't make the code up.
   result. Each step has path, side, line, the quoted code and a one-line note
   in the language of the PR description. Steps may be in files the PR does
   not change (callers, headers).
-- **riff checks the trace:** each step's quote (whitespace-collapsed) must be
-  in its file at that side's revision within a few lines of the given line.
-  A confirmed finding with no trace, or with any step that fails, is shown
-  as unconfirmed with the reason ("step 2 not found in Foo.cpp:120").
+- **riff checks the trace:** each step's quote (whitespace-collapsed, at
+  least 8 non-space characters, diff `+`/`-` markers forgiven) must be in its
+  file at that side's revision within a few lines of the given line, or
+  exactly once anywhere in the file (the step then moves to that line).
+  A confirmed finding with fewer than 2 or more than 8 steps, or with any
+  step that fails, is shown as unconfirmed with the reason ("step 2 not
+  found in Foo.cpp:120"). A step riff could not read (read cap, file too
+  large) leaves the finding confirmed but marked "failure path not checked".
 - **riff checks repo evidence:** every evidence quote from the find and
-  verify passes (except `roblox:` ones, checked separately) must be in its
-  file at head or at the merge-base. Failing items are dropped; a finding
-  left with none is unconfirmed.
+  verify passes (except `roblox:` ones, checked separately; at least 8
+  non-space characters) must be in its file at head or at the merge-base.
+  Failing items are dropped; a finding left with none is unconfirmed.
 - **Verification shown:** the finding card shows the verifier's reason and
   the numbered failure path (step locations in PR files are clickable).
   Refuted findings are kept in the result (location, severity, first line,
   reason) and listed, collapsed, as "Refuted by verification (N)".
-- **Draft comments:** Add appends the failure path to the draft body as a
-  collapsed `<details>` block whose summary is the failure scenario; the
-  user can edit or delete it in the drafts window before submitting.
+- **Draft comments:** Add appends a checked failure path to the draft body
+  as a collapsed `<details>` block whose summary is the failure scenario
+  (scenario and notes HTML-escaped, @mentions and #refs broken); the user can
+  edit or delete it in the drafts window before submitting.
 
 ### Mapping findings to GitHub comments
 

@@ -134,6 +134,7 @@
   {#if f.failureScenario}<p class="scenario">Failure scenario: {f.failureScenario}</p>{/if}
   {#if v?.problem}<p class="muted">Not confirmed: {v.problem}</p>{/if}
   {#if v?.reason}<p class="muted">{unconfirmed ? "Verifier" : "Verified"}: {v.reason}</p>{/if}
+  {#if !unconfirmed && v?.unchecked}<p class="muted">Failure path not checked against the code</p>{/if}
   {#if trace.length > 0}
     <details class="trace" open={trace.length <= 3}>
       <summary>Failure path ({trace.length} step{trace.length === 1 ? "" : "s"})</summary>
