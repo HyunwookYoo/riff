@@ -20,10 +20,14 @@ export interface TraceStep { path: string; side: Side; line: number; quote: stri
 /**
  * `trace`: the failure path of a confirmed verdict ([] otherwise). `problem`: what riff's own
  * check of the quotes found wrong; the finding is then unconfirmed, whatever the verdict.
+ * `unchecked`: a confirmed finding with a step riff couldn't read (too many files, or too large).
  */
-export interface Verification { reason: string; trace: TraceStep[]; problem?: string }
-/** A candidate the verify pass refuted. `summary`: the first non-empty line of its body. */
-export interface RefutedFinding { path: string; line: number; severity: Severity; summary: string; reason: string }
+export interface Verification { reason: string; trace: TraceStep[]; problem?: string; unchecked?: boolean }
+/**
+ * A candidate the verify pass refuted. `summary`: the first non-empty line of its body. `side`:
+ * absent in records from before riff kept it (RIGHT).
+ */
+export interface RefutedFinding { path: string; side?: Side; line: number; severity: Severity; summary: string; reason: string }
 export type Verdict = "addressed" | "not_addressed" | "unclear";
 export interface ThreadVerdict { threadId: string; verdict: Verdict; reason: string; evidence: AiEvidence[] }
 /** The `reason` of a verdict riff filled in because the AI gave none for the thread. */

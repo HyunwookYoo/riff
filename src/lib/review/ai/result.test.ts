@@ -87,17 +87,17 @@ describe("mergeVerdicts", () => {
       expect(f.verification?.trace, JSON.stringify(bad)).toEqual([]);
     }
   });
-  it("returns the refuted candidates with the first body line and the reason", () => {
+  it("returns the refuted candidates with their side, the first body line and the reason", () => {
     const { refuted } = mergeVerdicts(
-      [{ ...cands[0], body: "\n  \r\n  First line  \nsecond" },{ ...cands[1], severity: "low" as const, body: "" }, cands[2]],
+      [{ ...cands[0], side: "LEFT" as const, body: "\n  \r\n  First line  \nsecond" },{ ...cands[1], severity: "low" as const, body: "" }, cands[2]],
       { verdicts: [
         { index: 0, verdict: "refuted", reason: "guarded above", evidence: [], trace: [] },
         { index: 1, verdict: "refuted", evidence: [], trace: [] },
         { index: 2, verdict: "confirmed", reason: "r", evidence: [], trace: [] },
       ] });
     expect(refuted).toEqual([
-      { path: "a.ts", line: 1, severity: "high", summary: "First line", reason: "guarded above" },
-      { path: "a.ts", line: 2, severity: "low", summary: "", reason: "" },
+      { path: "a.ts", side: "LEFT", line: 1, severity: "high", summary: "First line", reason: "guarded above" },
+      { path: "a.ts", side: "RIGHT", line: 2, severity: "low", summary: "", reason: "" },
     ]);
   });
 });

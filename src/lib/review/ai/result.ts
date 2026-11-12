@@ -98,7 +98,7 @@ export function mergeVerdicts(candidates: Candidate[], raw: unknown): { findings
     const v = byIndex.get(i);
     if (v?.verdict === "refuted") {
       const summary = c.body.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "";
-      refuted.push({ path: c.path, line: c.line, severity: c.severity, summary, reason: v.reason });
+      refuted.push({ path: c.path, side: c.side, line: c.line, severity: c.severity, summary, reason: v.reason });
     }
     if (!v || (v.verdict !== "confirmed" && v.verdict !== "unconfirmed")) return;
     findings.push({

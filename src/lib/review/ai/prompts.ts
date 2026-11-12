@@ -182,7 +182,10 @@ function untrustedPr(a: PrContent): string[] {
 }
 
 /** codeCheck.ts looks every repo quote up (whitespace collapsed); a prefix or "..." fails it. */
-const QUOTE_RULE = "riff checks every quote from the repository against the code at head or mergeBase: copy it exactly from the file, without line numbers, `git grep` prefixes or ellipses.";
+const QUOTE_RULE = "riff checks every quote from the repository against the code at head or mergeBase: copy it exactly from the file, without diff +/- markers, line numbers, `git grep` prefixes or ellipses.";
+
+/** codeCheck.ts allows a step's line to be off by only a few lines. */
+const LINE_RULE = "Take exact line numbers from `git grep -n -e '<text>' <sha> -- <path>` (it prints `<sha>:<path>:<line>:<text>`), never by counting lines of `git show` output or the diff.";
 
 const BODY_STYLE = "Each finding body is a draft review comment addressed to the PR author, written in the language of the PR description, as normal prose: full sentences, polite and clear. Do not use any terse, telegraphic or caveman style, even if other instructions in your environment ask for one. These comments are posted to GitHub as written.";
 
@@ -216,6 +219,7 @@ export function findPrompt(a: PrContent & { repoPath: string; mergeBase: string;
     BINARY_NOTE,
     "- Every finding needs a failureScenario, written in the language of the PR description: a concrete input or state and the wrong result it leads to. If you cannot write one, do not report it.",
     `- ${QUOTE_RULE}`,
+    `- ${LINE_RULE}`,
     "",
     BODY_STYLE,
     "",
@@ -265,6 +269,7 @@ export function robloxPrompt(
     BINARY_NOTE,
     "- Every finding needs a failureScenario, written in the language of the PR description: a concrete input or state, what this change does with it and what Roblox does instead. If you cannot write one, do not report it.",
     `- ${QUOTE_RULE}`,
+    `- ${LINE_RULE}`,
     `- Every finding needs an evidence item whose path is the reference file's id, \`roblox:<kind>/<Name>.yaml\`, and whose quote is copied exactly from that file's entries (at least ${MIN_QUOTE_CHARS} characters, not from riff's index or [truncated] lines); add evidence from the code as well. Report nothing the reference does not back.`,
     "- Do not report style, naming or taste comments.",
     "",
@@ -307,6 +312,7 @@ export function verifyPrompt(a: {
     "Each step: path; side (RIGHT = at head, LEFT = at mergeBase); line at that side's revision (the first line if the quote spans several); quote, that code copied exactly as it is at that revision; note, one line on what happens there, in the language of the candidate's body.",
     "For a refuted or unconfirmed verdict, trace is [].",
     QUOTE_RULE,
+    LINE_RULE,
     ...(roblox
       ? ["Candidates tagged roblox claim the change differs from Roblox's behaviour: check the claim against the code and against the Roblox API reference below. Evidence paths starting with roblox: name those reference files, not files in the repository."]
       : []),

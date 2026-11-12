@@ -21,10 +21,11 @@ const isStep = (s: unknown): boolean => isObj(s) && isStr(s.path) && (s.side ===
   && isInt(s.line) && isStr(s.quote) && isStr(s.note);
 
 const isVerification = (v: unknown): boolean => isObj(v) && isStr(v.reason)
-  && Array.isArray(v.trace) && v.trace.every(isStep) && (v.problem === undefined || isStr(v.problem));
+  && Array.isArray(v.trace) && v.trace.every(isStep) && (v.problem === undefined || isStr(v.problem))
+  && (v.unchecked === undefined || typeof v.unchecked === "boolean");
 
 const isRefuted = (r: unknown): boolean => isObj(r) && isStr(r.path) && isInt(r.line) && isSeverity(r.severity)
-  && isStr(r.summary) && isStr(r.reason);
+  && isStr(r.summary) && isStr(r.reason) && (r.side === undefined || r.side === "LEFT" || r.side === "RIGHT");
 
 function isFinding(f: unknown): boolean {
   return isObj(f) && isStr(f.id) && isStr(f.path) && (f.side === "LEFT" || f.side === "RIGHT")

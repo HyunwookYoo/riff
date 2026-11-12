@@ -21,9 +21,12 @@ const detail = (head: string, base: string): PrDetail => ({
   pendingReviewId: null, pendingReviewCommit: null,
 });
 
-const ev = [{ path: "a.ts", line: 2, quote: "two" }];
+const ev = [{ path: "a.ts", line: 2, quote: "const two = 2;" }];
 /** A failure path that checks out against `deps`' a.ts at head. */
-const trace = [{ path: "a.ts", side: "RIGHT", line: 2, quote: "one\ntwo\nthree", note: "n" }];
+const trace = [
+  { path: "a.ts", side: "RIGHT", line: 1, quote: "const one = 1;", note: "n" },
+  { path: "a.ts", side: "RIGHT", line: 2, quote: "const two = 2;\nconst three = 3;", note: "n" },
+];
 const cand = (o: object) => ({ path: "a.ts", side: "RIGHT", line: 2, startLine: null, severity: "high", body: "b", evidence: ev,
   failureScenario: "s", ...o });
 
@@ -41,7 +44,7 @@ function deps(find: unknown, verify: unknown = { verdicts: [] }, roblox: unknown
     prCommitSubjects: vi.fn(async () => ["subject"]),
     readFileAt: vi.fn(async (_p: string, rev: string, path: string): Promise<string> => {
       if (path !== "a.ts") throw new Error("missing");
-      return rev.startsWith("MB") ? "old1\nold2\nold3\n" : "one\ntwo\nthree\n";
+      return rev.startsWith("MB") ? "const old1 = 1;\nconst old2 = 2;\nconst old3 = 3;\n" : "const one = 1;\nconst two = 2;\nconst three = 3;\n";
     }),
     treePaths: vi.fn(async (_p: string, _rev: string, _prefix: string): Promise<string[]> => []),
     aiRun: vi.fn((_p: string, _prompt: string, schema: object, _a: (t: string) => void, instructions: string | null, choice: AiChoice) => {
@@ -102,8 +105,8 @@ describe("runJob", () => {
     expect(states[0]).toBe("find");
     expect(states).toContain("verify");
     expect(r.findings.map((f) => [f.status, f.quote])).toEqual([
-      ["confirmed", ["two"]],
-      ["unconfirmed", ["old2", "old3"]],
+      ["confirmed", ["const two = 2;"]],
+      ["unconfirmed", ["const old2 = 2;", "const old3 = 3;"]],
     ]);
     expect(r.chapters).toEqual(find.chapters);
     expect(r.handled).toEqual({});
@@ -127,13 +130,13 @@ describe("runJob", () => {
       cand({ body: "no path" }),
       cand({ body: "bad step" }),
       cand({ body: "made-up evidence", evidence: [{ path: "a.ts", line: 2, quote: "two and a half" }] }),
-      cand({ body: "old side", evidence: [...ev, { path: "a.ts", line: 2, quote: "old2" }, { path: "a.ts", line: 9, quote: "nine" }] }),
+      cand({ body: "old side", evidence: [...ev, { path: "a.ts", line: 2, quote: "const old2 = 2;" }, { path: "a.ts", line: 9, quote: "const nine = 9;" }] }),
       cand({ body: "\nwrong\nmore" }),
     ] };
     const verify = { verdicts: [
       { index: 0, verdict: "confirmed", reason: "seen", evidence: [], trace },
       { index: 1, verdict: "confirmed", reason: "r", evidence: [], trace: [] },
-      { index: 2, verdict: "confirmed", reason: "r", evidence: [], trace: [{ ...trace[0], side: "LEFT", line: 2 }] },
+      { index: 2, verdict: "confirmed", reason: "r", evidence: [], trace: [trace[0], { ...trace[1], side: "LEFT" }] },
       { index: 3, verdict: "confirmed", reason: "r", evidence: [], trace },
       { index: 4, verdict: "confirmed", reason: "r", evidence: [], trace },
       { index: 5, verdict: "refuted", reason: "guarded", evidence: [], trace: [] },
@@ -143,13 +146,13 @@ describe("runJob", () => {
     expect(r.findings.map((f) => [f.body, f.status, f.verification?.problem])).toEqual([
       ["real", "confirmed", undefined],
       ["no path", "unconfirmed", "no failure path"],
-      ["bad step", "unconfirmed", "step 1 not found in a.ts:2"],
+      ["bad step", "unconfirmed", "step 2 not found in a.ts:2"],
       ["made-up evidence", "unconfirmed", "evidence not found in the code"],
       ["old side", "confirmed", undefined],
     ]);
     expect(r.findings[0].verification).toEqual({ reason: "seen", trace });
-    expect(r.findings[4].evidence.map((e) => e.quote)).toEqual(["two", "old2"]);
-    expect(r.refuted).toEqual([{ path: "a.ts", line: 2, severity: "high", summary: "wrong", reason: "guarded" }]);
+    expect(r.findings[4].evidence.map((e) => e.quote)).toEqual(["const two = 2;", "const old2 = 2;"]);
+    expect(r.refuted).toEqual([{ path: "a.ts", side: "RIGHT", line: 2, severity: "high", summary: "wrong", reason: "guarded" }]);
   });
 
   it("find gets the diff without asset sections, and the verify pass gets the scenarios", async () => {
