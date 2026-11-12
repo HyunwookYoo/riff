@@ -339,7 +339,8 @@ problem actually happens, and riff checks the AI didn't make the code up.
 - **riff checks the trace:** each step's quote (whitespace-collapsed, at
   least 8 non-space characters, diff `+`/`-` markers forgiven) must be in its
   file at that side's revision within a few lines of the given line, or
-  exactly once anywhere in the file (the step then moves to that line).
+  exactly once anywhere in the file for a quote of 20+ non-space characters
+  (the step then moves to that line, and the card says from which).
   A confirmed finding with fewer than 2 or more than 8 steps, or with any
   step that fails, is shown as unconfirmed with the reason ("step 2 not
   found in Foo.cpp:120"). A step riff could not read (read cap, file too

@@ -15,8 +15,11 @@ export interface AiFinding {
   /** The verify pass's answer; absent in records from before riff kept it. */
   verification?: Verification;
 }
-/** One step of a failure path, quoted from `path` at `side`'s revision. */
-export interface TraceStep { path: string; side: Side; line: number; quote: string; note: string }
+/**
+ * One step of a failure path, quoted from `path` at `side`'s revision. `movedFrom`: the line the
+ * verifier gave, when riff found the quote elsewhere and moved the step to `line`.
+ */
+export interface TraceStep { path: string; side: Side; line: number; quote: string; note: string; movedFrom?: number }
 /**
  * `trace`: the failure path of a confirmed verdict ([] otherwise). `problem`: what riff's own
  * check of the quotes found wrong; the finding is then unconfirmed, whatever the verdict.

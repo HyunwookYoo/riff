@@ -11,6 +11,9 @@ export const MAX_FILES = 80;
 /** A shorter quote (non-space chars) proves nothing: `}` or `return;` is everywhere. */
 export const MIN_STEP_CHARS = 8;
 
+/** A step quote found away from its line moves there only if this long: `Health);` is not a place. */
+const MIN_MOVE_CHARS = 20;
+
 /** How many steps a confirmed finding's failure path has (the verify prompt asks for 2 to 8). */
 const MIN_STEPS = 2;
 const MAX_STEPS = 8;
@@ -21,7 +24,8 @@ const SLACK = 3;
 /** Whitespace collapsed; U+FFFD dropped, as non-UTF-8 text (e.g. CP949) is decoded lossily. */
 export const collapse = (s: string): string => s.replace(/�/g, "").replace(/\s+/g, " ").trim();
 
-const longEnough = (q: string): boolean => q.replace(/ /g, "").length >= MIN_STEP_CHARS;
+const nonSpace = (q: string): number => q.replace(/ /g, "").length;
+const longEnough = (q: string): boolean => nonSpace(q) >= MIN_STEP_CHARS;
 
 /**
  * `quote`, then (when every non-empty line starts with `+`, `-` or a space, as in a diff) the
@@ -52,7 +56,8 @@ function onlyLine(lines: string[], q: string): number | null {
 /**
  * Where step `quote` (whitespace collapsed, at least `MIN_STEP_CHARS`) is in `text`: `line` when
  * it is within `SLACK` lines of it (a quote over several lines may run past the window by its own
- * extra lines), else the line it starts on when it is in the file exactly once; null otherwise.
+ * extra lines), else, for a quote of at least `MIN_MOVE_CHARS`, the line it starts on when it is
+ * in the file exactly once; null otherwise.
  */
 export function stepLine(text: string, line: number, quote: string): number | null {
   const lines = text.split(/\r?\n/);
@@ -62,11 +67,14 @@ export function stepLine(text: string, line: number, quote: string): number | nu
     const extra = a.trim().split("\n").length - 1;
     const from = Math.max(0, line - 1 - SLACK);
     if (collapse(lines.slice(from, line + SLACK + extra).join("\n")).includes(q)) return line;
-    const only = onlyLine(lines, q);
+    const only = nonSpace(q) >= MIN_MOVE_CHARS ? onlyLine(lines, q) : null;
     if (only !== null) return only;
   }
   return null;
 }
+
+/** Too short to check, even without diff markers. */
+const tooShort = (quote: string): boolean => !attempts(quote).some((a) => longEnough(collapse(a)));
 
 /** Whether `quote` (whitespace collapsed, at least `MIN_STEP_CHARS`) is anywhere in `text`. */
 export function quoteInFile(text: string, quote: string): boolean {
@@ -122,9 +130,10 @@ function check(f: AiFinding, files: FileHunks[], texts: Texts): AiFinding {
   const at = old.map((s) => stepAt(s, files, texts));
   const failed = at.indexOf(null);
   // A step found away from its line points at where the quote is.
-  const trace = old.map((s, i) => (typeof at[i] === "number" && at[i] !== s.line ? { ...s, line: at[i] } : s));
+  const trace = old.map((s, i) => (typeof at[i] === "number" && at[i] !== s.line ? { ...s, line: at[i], movedFrom: s.line } : s));
   const moved = trace.some((s, i) => s !== old[i]);
-  const problem = !evidence.length ? "evidence not found in the code"
+  const problem = !evidence.length
+    ? f.evidence.every((e) => tooShort(e.quote)) ? "evidence quotes too short" : "evidence not found in the code"
     : confirmed && old.length < MIN_STEPS ? "no failure path"
       : confirmed && old.length > MAX_STEPS ? `failure path longer than ${MAX_STEPS} steps`
         : failed >= 0 ? `step ${failed + 1} not found in ${old[failed].path}:${old[failed].line}`
@@ -145,7 +154,7 @@ const unreadable = (e: unknown): boolean => String(e).includes("file too large")
  * `findings` with their repo evidence and failure paths checked against the code: evidence not
  * found is dropped; a finding left with none, a confirmed one without a 2 to 8 step trace, or one
  * with a step not found becomes unconfirmed with the first `problem`. A step found away from its
- * line gets the line it is on. A confirmed finding with a step riff couldn't read (cap, file too
+ * line gets the line it is on (`movedFrom`: the line given). A confirmed finding with a step riff couldn't read (cap, file too
  * large) stays confirmed, marked `unchecked`. `read` rejects for a file absent at `rev`, which
  * counts as not found. Roblox evidence is checked in roblox.ts.
  */

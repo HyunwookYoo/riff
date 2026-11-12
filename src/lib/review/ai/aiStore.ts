@@ -18,7 +18,7 @@ const isEvidence = (v: unknown): boolean => Array.isArray(v) && v.every((e) =>
 const isSeverity = (v: unknown): boolean => v === "high" || v === "medium" || v === "low";
 
 const isStep = (s: unknown): boolean => isObj(s) && isStr(s.path) && (s.side === "LEFT" || s.side === "RIGHT")
-  && isInt(s.line) && isStr(s.quote) && isStr(s.note);
+  && isInt(s.line) && isStr(s.quote) && isStr(s.note) && (s.movedFrom === undefined || isInt(s.movedFrom));
 
 const isVerification = (v: unknown): boolean => isObj(v) && isStr(v.reason)
   && Array.isArray(v.trace) && v.trace.every(isStep) && (v.problem === undefined || isStr(v.problem))

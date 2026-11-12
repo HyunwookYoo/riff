@@ -185,7 +185,7 @@ function untrustedPr(a: PrContent): string[] {
 const QUOTE_RULE = "riff checks every quote from the repository against the code at head or mergeBase: copy it exactly from the file, without diff +/- markers, line numbers, `git grep` prefixes or ellipses.";
 
 /** codeCheck.ts allows a step's line to be off by only a few lines. */
-const LINE_RULE = "Take exact line numbers from `git grep -n -e '<text>' <sha> -- <path>` (it prints `<sha>:<path>:<line>:<text>`), never by counting lines of `git show` output or the diff.";
+const LINE_RULE = "Take exact line numbers from `git grep -n -F -e '<text>' <sha> -- <path>` (it prints `<sha>:<path>:<line>:<text>`), never by counting lines of `git show` output or the diff. Pick a fragment of the line without ; | & > < $ or ` (the command is refused otherwise).";
 
 const BODY_STYLE = "Each finding body is a draft review comment addressed to the PR author, written in the language of the PR description, as normal prose: full sentences, polite and clear. Do not use any terse, telegraphic or caveman style, even if other instructions in your environment ask for one. These comments are posted to GitHub as written.";
 

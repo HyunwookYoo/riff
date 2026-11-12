@@ -46,7 +46,7 @@ describe("findPrompt", () => {
   it("asks for the failure scenario in the PR description's language and for exact quotes, before the PR content", () => {
     for (const p of [findPrompt(base), robloxPrompt({ ...base, reference: { sha: "d0c5", docs: [] } })]) {
       for (const r of ["failureScenario, written in the language of the PR description", "riff checks every quote from the repository",
-        "without diff +/- markers", "git grep -n -e '<text>' <sha> -- <path>"]) {
+        "without diff +/- markers", "git grep -n -F -e '<text>' <sha> -- <path>", "without ; | & > < $ or `"]) {
         expect(p.indexOf(r), r).toBeGreaterThan(-1);
         expect(p.indexOf(r), r).toBeLessThan(p.indexOf(UNTRUSTED_START));
       }
@@ -95,7 +95,7 @@ describe("verify failure path", () => {
     for (const r of ["trace", "2 to 8 ordered steps", "from the trigger", "to the faulty line and the wrong result",
       "copied exactly as it is at that revision", "in the language of the candidate's body", "never roblox: reference files",
       "For a refuted or unconfirmed verdict, trace is [].", "riff checks every quote from the repository",
-      "without diff +/- markers", "git grep -n -e '<text>' <sha> -- <path>"]) {
+      "without diff +/- markers", "git grep -n -F -e '<text>' <sha> -- <path>", "without ; | & > < $ or `"]) {
       expect(p.indexOf(r), r).toBeGreaterThan(-1);
       expect(p.indexOf(r), r).toBeLessThan(p.indexOf(UNTRUSTED_START));
     }

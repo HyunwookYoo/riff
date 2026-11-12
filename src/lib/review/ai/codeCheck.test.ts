@@ -33,7 +33,12 @@ describe("stepLine", () => {
     expect(stepLine(text, 1, L(5))).toBe(5);
     expect(stepLine(text, 40, L(12))).toBe(12);
     expect(stepLine(text, 1, `${L(10)}\n${L(11)}`)).toBe(10);
-    expect(stepLine(text, 1, "value10 = compute")).toBe(10);
+    expect(stepLine(text, 1, "const value10 = compute")).toBe(10);
+  });
+  it("outside the window, needs at least 20 non-space characters to move", () => {
+    expect(stepLine(text, 1, "value10 = compute(10);")).toBe(10);
+    expect(stepLine(text, 1, "alue10 = compute(10);")).toBeNull();
+    expect(stepLine(text, 10, "alue10 = compute(10);")).toBe(10);
   });
   it("outside the window, fails when the quote is in the file more than once", () => {
     expect(stepLine(twice, 9, L(2))).toBeNull();
@@ -148,6 +153,15 @@ describe("checkFindings", () => {
     expect(rbx.status).toBe("confirmed");
   });
 
+  it("says so when every evidence quote was too short to check", async () => {
+    const [short, mixed] = await checkFindings([
+      f({ evidence: [e("a.ts", "value3"), e("a.ts", "+ x;")] }),
+      f({ evidence: [e("a.ts", "value3"), e("a.ts", "compute(99)")] }),
+    ], files, reader());
+    expect(short.verification?.problem).toBe("evidence quotes too short");
+    expect(mixed.verification?.problem).toBe("evidence not found in the code");
+  });
+
   it("a confirmed finding needs a failure path of 2 to 8 steps; an unconfirmed one needs none", async () => {
     const nine = Array.from({ length: 9 }, () => step());
     const out = await checkFindings([
@@ -197,7 +211,10 @@ describe("checkFindings", () => {
     const trace = [step({ line: 11 }), step({ line: 1, quote: `+ ${L(9)}` })];
     const [out] = await checkFindings([f({ verification: { reason: "r", trace } })], files, reader());
     expect(out.status).toBe("confirmed");
-    expect(out.verification?.trace.map((s) => [s.line, s.quote])).toEqual([[5, L(5)], [9, `+ ${L(9)}`]]);
+    expect(out.verification?.trace).toEqual([
+      { ...trace[0], line: 5, movedFrom: 11 },
+      { ...trace[1], line: 9, movedFrom: 1 },
+    ]);
   });
 
   it("reads each file once and at most `maxFiles` files, trace steps first", async () => {
