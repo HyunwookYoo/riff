@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./gh", () => ({ ghGraphql: vi.fn() }));
 
 import { ghGraphql } from "./gh";
-import { addThread, prDetail, searchPrs } from "./github";
+import { addThread, openPrs, prDetail, searchPrs } from "./github";
 
 const gql = vi.mocked(ghGraphql);
 
@@ -16,7 +16,40 @@ function node(id: string, number: number, repo = "Octo/Repo", reviewSha: string 
   };
 }
 
-beforeEach(() => gql.mockReset());
+// A block body: a returned mock would run as a cleanup hook, with no arguments.
+beforeEach(() => {
+  gql.mockReset();
+});
+
+type Node = ReturnType<typeof node>;
+type Page = { nodes: Node[]; more?: boolean };
+
+/**
+ * Fakes GitHub: the two `@me` searches return `requested` / `reviewed`; the open-PR
+ * query pages through `open["owner/name"]` (cursor `c<next page>`). `more` claims a
+ * next page that the fake doesn't have.
+ */
+function serve(o: { requested?: Node[]; reviewed?: Node[]; open?: Record<string, Page[]>; archived?: string[] }) {
+  gql.mockImplementation(async (_host, query, vars) => {
+    if (query.includes("search(")) {
+      return { search: { nodes: String(vars.q).includes("review-requested") ? o.requested ?? [] : o.reviewed ?? [] } } as never;
+    }
+    const name = `${vars.owner}/${vars.name}`;
+    const pages = o.open?.[name] ?? [{ nodes: [] }];
+    const i = vars.after == null ? 0 : Number(String(vars.after).slice(1));
+    return {
+      repository: {
+        isArchived: o.archived?.includes(name) ?? false,
+        pullRequests: {
+          pageInfo: { hasNextPage: i + 1 < pages.length || !!pages[i].more, endCursor: `c${i + 1}` },
+          nodes: pages[i].nodes,
+        },
+      },
+    } as never;
+  });
+}
+
+const openCalls = () => gql.mock.calls.filter((c) => !String(c[1]).includes("search("));
 
 describe("searchPrs", () => {
   const repos = [
@@ -24,34 +57,110 @@ describe("searchPrs", () => {
     { repo: { host: "h", owner: "octo", name: "sub" }, repoIdx: 5, remote: "up" },
   ];
 
-  it("maps fields and dedupes reviewed against requested", async () => {
-    gql
-      .mockResolvedValueOnce({ search: { nodes: [node("N1", 1)] } } as never)
-      .mockResolvedValueOnce({ search: { nodes: [node("N1", 1), node("N2", 2, "octo/SUB", "old")] } } as never);
-    const r = await searchPrs("h", repos, "me");
-    expect(r).toHaveLength(2);
-    expect(r[0]).toMatchObject({
-      key: "h/octo/repo#1", repoIdx: 2, remote: "origin", nodeId: "N1", number: 1, title: "t1",
-      author: "alice", additions: 3, deletions: 1, headSha: "h1", baseSha: "b1", baseRef: "main",
-      section: "requested", myLastReviewSha: null,
+  it("lists every open PR, marks the viewer's (requested wins) and sets viewer", async () => {
+    serve({
+      requested: [node("N1", 1)],
+      reviewed: [node("N1", 1), node("N2", 2, "octo/SUB", "old")],
+      open: {
+        "octo/repo": [{ nodes: [node("N1", 1), node("N3", 3)] }],
+        "octo/sub": [{ nodes: [node("N2", 2, "octo/SUB", "old")] }],
+      },
     });
-    expect(r[1]).toMatchObject({ nodeId: "N2", repoIdx: 5, remote: "up", section: "reviewed", myLastReviewSha: "old" });
+    const r = await searchPrs("h", repos, "me");
+    expect(r.map((p) => p.nodeId)).toEqual(["N1", "N3", "N2"]);
+    expect(r[0]).toEqual({
+      key: "h/octo/repo#1", repo: repos[0].repo, repoIdx: 2, remote: "origin", nodeId: "N1", number: 1,
+      title: "t1", author: "alice", url: "https://h/Octo/Repo/pull/1", additions: 3, deletions: 1,
+      headSha: "h1", baseSha: "b1", baseRef: "main", updatedAt: "2026-01-01T00:00:00Z",
+      mine: "requested", myLastReviewSha: null, viewer: "me",
+    });
+    expect(r[1]).toMatchObject({ nodeId: "N3", mine: null, viewer: "me" });
+    expect(r[2]).toMatchObject({ key: "h/octo/sub#2", repoIdx: 5, remote: "up", mine: "reviewed", myLastReviewSha: "old" });
   });
 
-  it("builds one repo: qualifier per open repo", async () => {
-    gql.mockResolvedValue({ search: { nodes: [] } } as never);
-    await searchPrs("h", repos, "me");
-    const qs = gql.mock.calls.map((c) => String(c[2].q));
-    expect(qs).toHaveLength(2);
-    expect(qs[0]).toBe("is:pr is:open review-requested:@me archived:false repo:octo/repo repo:octo/sub");
-    expect(qs[1]).toBe("is:pr is:open reviewed-by:@me archived:false repo:octo/repo repo:octo/sub");
-    expect(gql.mock.calls[0][2].login).toBe("me");
+  it("keeps a viewer's PR missing from the open list (beyond the cap), once", async () => {
+    serve({
+      requested: [node("N9", 9), node("N9", 9)],
+      reviewed: [node("N8", 8, "octo/sub")],
+      open: { "octo/repo": [{ nodes: [node("N1", 1)] }] },
+    });
+    const r = await searchPrs("h", repos, "me");
+    expect(r.map((p) => [p.nodeId, p.mine])).toEqual([["N1", null], ["N9", "requested"], ["N8", "reviewed"]]);
+    expect(r[2]).toMatchObject({ key: "h/octo/sub#8", repoIdx: 5, viewer: "me" });
   });
 
-  it("last submitted review ignores pending", async () => {
-    gql.mockResolvedValue({ search: { nodes: [] } } as never);
+  it("drops search hits of repos that aren't open", async () => {
+    serve({ requested: [node("N1", 1, "other/x")] });
+    expect(await searchPrs("h", repos, "me")).toEqual([]);
+  });
+
+  it("builds one repo: qualifier per open repo and one open-PR query per repo", async () => {
+    serve({});
     await searchPrs("h", repos, "me");
-    expect(String(gql.mock.calls[0][1])).toContain("states:[APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]");
+    const qs = gql.mock.calls.filter((c) => String(c[1]).includes("search(")).map((c) => String(c[2].q));
+    expect(qs).toEqual([
+      "is:pr is:open review-requested:@me archived:false repo:octo/repo repo:octo/sub",
+      "is:pr is:open reviewed-by:@me archived:false repo:octo/repo repo:octo/sub",
+    ]);
+    expect(openCalls().map((c) => c[2])).toEqual([
+      { owner: "octo", name: "repo", login: "me", after: null },
+      { owner: "octo", name: "sub", login: "me", after: null },
+    ]);
+    const q = String(openCalls()[0][1]);
+    expect(q).toContain("pullRequests(states: OPEN, first: 100, after: $after, orderBy: {field: UPDATED_AT, direction: DESC})");
+    expect(q).toContain("pageInfo { hasNextPage endCursor }");
+    expect(gql.mock.calls.every((c) => c[0] === "h" && c[2].login === "me")).toBe(true);
+  });
+
+  it("queries a GitHub repo open twice once, under its first entry", async () => {
+    const twice = [repos[0], { ...repos[0], repo: { host: "h", owner: "Octo", name: "Repo" }, repoIdx: 7 }];
+    serve({ open: { "octo/repo": [{ nodes: [node("N1", 1)] }] } });
+    const r = await searchPrs("h", twice, "me");
+    expect(openCalls()).toHaveLength(1);
+    expect(r.map((p) => [p.key, p.repoIdx])).toEqual([["h/octo/repo#1", 2]]);
+  });
+
+  it("skips archived repos' open PRs, as the searches do", async () => {
+    serve({ open: { "octo/repo": [{ nodes: [node("N1", 1)] }] }, archived: ["octo/repo"] });
+    expect(await searchPrs("h", repos, "me")).toEqual([]);
+  });
+
+  it("last submitted review ignores pending, in both queries", async () => {
+    serve({});
+    await searchPrs("h", repos, "me");
+    for (const c of gql.mock.calls) {
+      expect(String(c[1])).toContain("states:[APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]");
+    }
+  });
+
+  it("no repos: no queries", async () => {
+    expect(await searchPrs("h", [], "me")).toEqual([]);
+    expect(gql).not.toHaveBeenCalled();
+  });
+});
+
+describe("openPrs", () => {
+  const entry = { repo: { host: "h", owner: "octo", name: "repo" }, repoIdx: 0, remote: "origin" };
+
+  it("follows the cursor and stops after two pages (200 PRs)", async () => {
+    serve({ open: { "octo/repo": [{ nodes: [node("A", 1)] }, { nodes: [node("B", 2)], more: true }, { nodes: [node("C", 3)] }] } });
+    const r = await openPrs("h", entry, "me");
+    expect(r.map((p) => p.nodeId)).toEqual(["A", "B"]);
+    expect(gql.mock.calls.map((c) => c[2].after)).toEqual([null, "c1"]);
+  });
+
+  it("stops at the last page", async () => {
+    serve({ open: { "octo/repo": [{ nodes: [node("A", 1)] }] } });
+    const r = await openPrs("h", entry, "me");
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ mine: null, viewer: "me", key: "h/octo/repo#1" });
+    expect(gql).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a missing author to ghost and skips null nodes", async () => {
+    serve({ open: { "octo/repo": [{ nodes: [{ ...node("A", 1), author: null as never }, null as never] }] } });
+    const r = await openPrs("h", entry, "me");
+    expect(r.map((p) => p.author)).toEqual(["ghost"]);
   });
 });
 

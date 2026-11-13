@@ -16,8 +16,8 @@
     ontoggle?: () => void;
   } = $props();
 
-  const requested = $derived(reviewState.prs.filter((p) => p.section === "requested"));
-  const reviewed = $derived(reviewState.prs.filter((p) => p.section === "reviewed"));
+  const requested = $derived(reviewState.prs.filter((p) => p.mine === "requested"));
+  const reviewed = $derived(reviewState.prs.filter((p) => p.mine === "reviewed"));
   const problemHosts = $derived(reviewState.hosts.filter((h) => h.status !== "ready"));
   const emptyState = $derived(
     reviewState.githubRepos === null
@@ -97,7 +97,7 @@
   });
 
   const newCommits = (p: PrSummary) =>
-    p.section === "reviewed" && p.myLastReviewSha !== p.headSha;
+    p.mine === "reviewed" && p.myLastReviewSha !== p.headSha;
   const copy = (text: string) => void navigator.clipboard.writeText(text);
 </script>
 

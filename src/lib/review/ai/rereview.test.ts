@@ -18,7 +18,7 @@ const summary = (o: Partial<PrSummary> = {}): PrSummary => ({
   key: "github.com/o/r#1", repo: { host: "github.com", owner: "o", name: "r" }, repoIdx: 0,
   remote: "origin", nodeId: "N1", number: 1, title: "PR 1", author: "dev", url: "u",
   additions: 1, deletions: 1, headSha: "H1", baseSha: "B0", baseRef: "main", updatedAt: "",
-  section: "reviewed", myLastReviewSha: "R1", ...o,
+  mine: "reviewed", myLastReviewSha: "R1", viewer: "me", ...o,
 });
 
 describe("myOpenThreads", () => {

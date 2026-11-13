@@ -14,7 +14,7 @@ const summary = (n: number, o: Partial<PrSummary> = {}): PrSummary => ({
   key: `github.com/o/r#${n}`, repo: { host: "github.com", owner: "o", name: "r" }, repoIdx: 0,
   remote: "origin", nodeId: `N${n}`, number: n, title: `PR ${n}`, author: "me", url: "u",
   additions: 1, deletions: 1, headSha: "oldH", baseSha: "oldB", baseRef: "main", updatedAt: "",
-  section: "requested", myLastReviewSha: null, ...o,
+  mine: "requested", myLastReviewSha: null, viewer: "me", ...o,
 });
 const detail = (head: string, base: string): PrDetail => ({
   body: "desc", headSha: head, baseSha: base, conversation: [], threads: [],

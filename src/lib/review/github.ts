@@ -15,20 +15,38 @@ export function viewerLogin(host: string): Promise<string> {
   return p;
 }
 
+/** A PullRequest's list fields; needs `$login` (the viewer, for the last submitted review). */
+const PR_FIELDS = `id number title url additions deletions headRefOid baseRefOid baseRefName updatedAt
+        author { login }
+        repository { nameWithOwner }
+        reviews(last:1, author:$login, states:[APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) { nodes { commit { oid } } }`;
+
 const SEARCH_QUERY = `query($q: String!, $login: String!) {
   search(query: $q, type: ISSUE, first: 50) {
     nodes {
       ... on PullRequest {
-        id number title url additions deletions headRefOid baseRefOid baseRefName updatedAt
-        author { login }
-        repository { nameWithOwner }
-        reviews(last:1, author:$login, states:[APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]) { nodes { commit { oid } } }
+        ${PR_FIELDS}
       }
     }
   }
 }`;
 
-interface SearchNode {
+const OPEN_QUERY = `query($owner: String!, $name: String!, $login: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    isArchived
+    pullRequests(states: OPEN, first: 100, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        ${PR_FIELDS}
+      }
+    }
+  }
+}`;
+
+/** Per repo, the most recently updated open PRs listed: 2 pages of 100. */
+const OPEN_PAGES = 2;
+
+interface PrNode {
   id: string; number: number; title: string; url: string; additions: number; deletions: number;
   headRefOid: string; baseRefOid: string; baseRefName: string; updatedAt: string;
   author: { login: string } | null;
@@ -38,35 +56,77 @@ interface SearchNode {
 
 export interface SearchRepo { repo: GhRepo; repoIdx: number; remote: string }
 
+const nameOf = (r: SearchRepo): string => `${r.repo.owner}/${r.repo.name}`.toLowerCase();
+
+function toSummary(n: PrNode, entry: SearchRepo, viewer: string): PrSummary {
+  return {
+    key: `${entry.repo.host}/${entry.repo.owner}/${entry.repo.name}#${n.number}`,
+    repo: entry.repo, repoIdx: entry.repoIdx, remote: entry.remote,
+    nodeId: n.id, number: n.number, title: n.title, author: n.author?.login ?? "ghost",
+    url: n.url, additions: n.additions, deletions: n.deletions,
+    headSha: n.headRefOid, baseSha: n.baseRefOid, baseRef: n.baseRefName, updatedAt: n.updatedAt,
+    mine: null, myLastReviewSha: n.reviews.nodes[0]?.commit?.oid ?? null, viewer,
+  };
+}
+
+/** `entry`'s open PRs, most recently updated first, at most `OPEN_PAGES` pages; none when archived. */
+export async function openPrs(host: string, entry: SearchRepo, login: string): Promise<PrSummary[]> {
+  const out: PrSummary[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < OPEN_PAGES; page++) {
+    const d: {
+      repository: {
+        isArchived: boolean;
+        pullRequests: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: (PrNode | null)[] };
+      };
+    } = await ghGraphql(host, OPEN_QUERY, { owner: entry.repo.owner, name: entry.repo.name, login, after });
+    if (d.repository.isArchived) return [];
+    const { pageInfo, nodes } = d.repository.pullRequests;
+    for (const n of nodes) if (n) out.push(toSummary(n, entry, login));
+    if (!pageInfo.hasNextPage) break;
+    after = pageInfo.endCursor;
+  }
+  return out;
+}
+
+/**
+ * Every open PR of `repos` (see `openPrs`), each marked `mine` by the two `@me`
+ * searches, which also cover team review requests. A PR of the viewer's beyond the
+ * open-PR cap still comes from its search. A GitHub repo open twice is listed once,
+ * under its first entry.
+ */
 export async function searchPrs(host: string, repos: SearchRepo[], login: string): Promise<PrSummary[]> {
   if (repos.length === 0) return [];
-  const quals = repos.map((r) => `repo:${r.repo.owner}/${r.repo.name}`).join(" ");
-  const run = async (kind: string, section: PrSummary["section"]) => {
+  const unique = repos.filter((r, i) => repos.findIndex((x) => nameOf(x) === nameOf(r)) === i);
+  const quals = unique.map((r) => `repo:${r.repo.owner}/${r.repo.name}`).join(" ");
+  const search = async (kind: string): Promise<PrSummary[]> => {
     const q = `is:pr is:open ${kind}:@me archived:false ${quals}`;
-    const d = await ghGraphql<{ search: { nodes: (SearchNode | null)[] } }>(host, SEARCH_QUERY, { q, login });
+    const d = await ghGraphql<{ search: { nodes: (PrNode | null)[] } }>(host, SEARCH_QUERY, { q, login });
     const out: PrSummary[] = [];
     for (const n of d.search.nodes) {
       if (!n || n.id == null) continue;
       const name = n.repository.nameWithOwner.toLowerCase();
-      const entry = repos.find((r) => `${r.repo.owner}/${r.repo.name}`.toLowerCase() === name);
-      if (!entry) continue;
-      out.push({
-        key: `${entry.repo.host}/${entry.repo.owner}/${entry.repo.name}#${n.number}`,
-        repo: entry.repo, repoIdx: entry.repoIdx, remote: entry.remote,
-        nodeId: n.id, number: n.number, title: n.title, author: n.author?.login ?? "ghost",
-        url: n.url, additions: n.additions, deletions: n.deletions,
-        headSha: n.headRefOid, baseSha: n.baseRefOid, baseRef: n.baseRefName, updatedAt: n.updatedAt,
-        section, myLastReviewSha: n.reviews.nodes[0]?.commit?.oid ?? null,
-      });
+      const entry = unique.find((r) => nameOf(r) === name);
+      if (entry) out.push(toSummary(n, entry, login));
     }
     return out;
   };
-  const [requested, reviewed] = await Promise.all([
-    run("review-requested", "requested"),
-    run("reviewed-by", "reviewed"),
+  const [requested, reviewed, ...open] = await Promise.all([
+    search("review-requested"),
+    search("reviewed-by"),
+    ...unique.map((r) => openPrs(host, r, login)),
   ]);
-  const seen = new Set(requested.map((p) => p.key));
-  return [...requested, ...reviewed.filter((p) => !seen.has(p.key))];
+  const mine = new Map<string, PrSummary["mine"]>();
+  for (const p of reviewed) mine.set(p.key, "reviewed");
+  for (const p of requested) mine.set(p.key, "requested");
+  const out = open.flat();
+  const listed = new Set(out.map((p) => p.key));
+  for (const p of [...requested, ...reviewed]) {
+    if (listed.has(p.key)) continue;
+    listed.add(p.key);
+    out.push(p);
+  }
+  return out.map((p) => ({ ...p, mine: mine.get(p.key) ?? null }));
 }
 
 const DETAIL_QUERY = `query($id: ID!) {

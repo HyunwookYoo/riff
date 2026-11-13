@@ -5,11 +5,15 @@ export interface Hunk { oldStart: number; oldLines: number; newStart: number; ne
 export interface FileHunks { path: string; oldPath: string | null; hunks: Hunk[] }
 /** `mergeBase`: merge-base(base, head), where the LEFT side and GitHub's LEFT lines are read. */
 export interface PrHunks { mergeBase: string; files: FileHunks[] }
+/**
+ * `mine`: the viewer is a requested reviewer (directly or via a team; wins) or has
+ * reviewed, else null. `viewer`: the host's login, for the Author "Me" filter.
+ */
 export interface PrSummary {
   key: PrKey; repo: GhRepo; repoIdx: number; remote: string; nodeId: string; number: number;
   title: string; author: string; url: string; additions: number; deletions: number;
   headSha: string; baseSha: string; baseRef: string; updatedAt: string;
-  section: "requested" | "reviewed"; myLastReviewSha: string | null;
+  mine: "requested" | "reviewed" | null; myLastReviewSha: string | null; viewer: string;
 }
 export interface ThreadComment { id: string; author: string; body: string; createdAt: string }
 export interface ReviewThread {
