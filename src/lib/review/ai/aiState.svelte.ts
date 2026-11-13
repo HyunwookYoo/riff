@@ -149,5 +149,6 @@ async function load(key: PrKey): Promise<void> {
     return; // store unreadable right now: leave it unloaded so a later open retries
   }
   // A job may have finished while loading; its result is newer.
-  if (!(key in aiState.results)) aiState.results = { ...aiState.results, [key]: r };
+  // Set in place: copying the map per loaded PR is quadratic over a long list.
+  if (!(key in aiState.results)) aiState.results[key] = r;
 }
