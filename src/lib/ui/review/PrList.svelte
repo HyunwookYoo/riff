@@ -5,7 +5,7 @@
   import { listReviews } from "$lib/review/gh";
   import { loadRecord } from "$lib/review/draftStore";
   import type { PrKey, PrSummary } from "$lib/review/types";
-  import { aiState, loadResultFor } from "$lib/review/ai/aiState.svelte";
+  import { aiState, loadResultsFor } from "$lib/review/ai/aiState.svelte";
   import { aiBadge, aiBadgeTitle } from "$lib/review/ai/badge";
   import { applyFilter, DEFAULT_FILTER, emptyMessage, filterActive, highlight, isNumberQuery, ME, type PrFilter } from "$lib/review/prFilter";
   import { appState } from "$lib/store.svelte";
@@ -99,12 +99,13 @@
     return m === 0 ? "updated just now" : `updated ${m} min ago`;
   });
 
-  // Results load lazily for the PRs shown (the list can be hundreds long).
+  // Results load lazily for the PRs shown (the list can be hundreds long) and the
+  // open PR, which the filter may hide.
   $effect(() => {
     const keys = shown.list.map((p) => p.key);
-    untrack(() => {
-      for (const k of keys) void loadResultFor(k);
-    });
+    const selected = reviewState.selectedKey;
+    if (selected !== null && !keys.includes(selected)) keys.push(selected);
+    untrack(() => void loadResultsFor(keys));
   });
   // Tick each second only while a job (review or re-review) runs, so "analysing m:ss" advances.
   let aiNow = $state(Date.now());

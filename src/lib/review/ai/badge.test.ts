@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiBadge, aiBadgeTitle, aiErrorText, rereviewButtonState, shouldLoad } from "./badge";
+import { aiBadge, aiBadgeTitle, aiErrorText, planLoads, rereviewButtonState, shouldLoad } from "./badge";
 import type { AiFinding, AiResult } from "./types";
 
 const finding = (id: string, status: AiFinding["status"]): AiFinding => ({
@@ -100,6 +100,14 @@ describe("shouldLoad", () => {
     expect(shouldLoad("a", {}, new Set())).toBe(true);
     expect(shouldLoad("a", { a: null }, new Set())).toBe(false);
     expect(shouldLoad("a", {}, new Set(["a"]))).toBe(false);
+  });
+});
+
+describe("planLoads", () => {
+  it("loads only unknown keys with a stored AI result; the rest are known to have none", () => {
+    const stored = new Set(["h/o/a#1@ai", "h/o/a#2", "h/o/a#3@ai", "h/o/a#4@ai"]);
+    expect(planLoads(["h/o/a#1", "h/o/a#2", "h/o/a#3", "h/o/a#4", "h/o/a#5"], { "h/o/a#3": null }, new Set(["h/o/a#4"]), stored))
+      .toEqual({ load: ["h/o/a#1"], none: ["h/o/a#2", "h/o/a#5"] });
   });
 });
 

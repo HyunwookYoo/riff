@@ -1,6 +1,6 @@
 import { appState } from "../../store.svelte";
 import { readFileAt, robloxDocsInfo, robloxDocsRead, robloxDocsUpdate, treePaths } from "../../git";
-import { fetchCommit, fetchPr, prCommitSubjects, prDiffText, prFileCompare, prHunks } from "../gh";
+import { fetchCommit, fetchPr, listReviews, prCommitSubjects, prDiffText, prFileCompare, prHunks } from "../gh";
 import { prDetail } from "../github";
 import type { PrKey, PrSummary } from "../types";
 import { loadAiResult, saveAiResult } from "./aiStore";
@@ -17,7 +17,7 @@ import type { AiJobState, AiResult, RereviewResult } from "./types";
 
 export { isStale } from "./aiStore";
 export { aiBadge, aiBadgeTitle, aiErrorText, rereviewButtonState, shouldLoad } from "./badge";
-import { shouldLoad } from "./badge";
+import { planLoads, shouldLoad } from "./badge";
 
 class AiState {
   queue = $state<Queue>(emptyQueue());
@@ -139,6 +139,24 @@ export async function loadResultFor(key: PrKey): Promise<void> {
   } finally {
     inFlight.delete(key);
   }
+}
+
+/**
+ * `loadResultFor` each of `keys` that has a stored result; the rest are set to null
+ * at once. One store listing instead of a `load_review` call per PR.
+ */
+export async function loadResultsFor(keys: PrKey[]): Promise<void> {
+  if (!keys.some((k) => shouldLoad(k, aiState.results, inFlight))) return;
+  let stored: Set<string>;
+  try {
+    stored = new Set(await listReviews());
+  } catch {
+    return; // store unreadable right now: leave them unloaded so a later render retries
+  }
+  const { load, none } = planLoads(keys, aiState.results, inFlight, stored);
+  // In place, as in `load`; a job finishing later replaces the null.
+  for (const k of none) aiState.results[k] = null;
+  for (const k of load) void loadResultFor(k);
 }
 
 async function load(key: PrKey): Promise<void> {

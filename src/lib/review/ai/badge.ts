@@ -1,3 +1,4 @@
+import { aiKey } from "./aiStore";
 import { choiceLabel } from "./modelChoice";
 import { hasReview } from "./rereview";
 import type { AiJobState, AiResult, RobloxParity } from "./types";
@@ -60,4 +61,21 @@ export function aiErrorText(message: string): string {
 /** A result is loaded at most once concurrently, and never when already known. */
 export function shouldLoad(key: string, results: Record<string, unknown>, inFlight: Set<string>): boolean {
   return !(key in results) && !inFlight.has(key);
+}
+
+/**
+ * Of `keys` to load (see `shouldLoad`): those with an AI result in the review store
+ * (`stored`: its keys) to load, and those known to have none.
+ */
+export function planLoads(
+  keys: string[],
+  results: Record<string, unknown>,
+  inFlight: Set<string>,
+  stored: Set<string>,
+): { load: string[]; none: string[] } {
+  const out: { load: string[]; none: string[] } = { load: [], none: [] };
+  for (const k of keys) {
+    if (shouldLoad(k, results, inFlight)) (stored.has(aiKey(k)) ? out.load : out.none).push(k);
+  }
+  return out;
 }
