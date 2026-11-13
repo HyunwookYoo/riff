@@ -17,6 +17,8 @@ class ReviewState {
   githubRepos = $state<number | null>(null);
   loadingList = $state(false);
   selectedKey = $state<PrKey | null>(null);
+  /** The PR list's search text: kept for the session (not persisted, unlike the filter). */
+  listQuery = $state("");
   /** The head sha actually displayed; the only sha viewedHead/seen may be set to. */
   headSha = $state<string | null>(null);
   /** The base sha `files` (hunks) were computed against. */

@@ -3,12 +3,14 @@ import {
   applyFilter,
   authorOptions,
   DEFAULT_FILTER,
+  emptyMessage,
   filterActive,
   highlight,
   isNumberQuery,
   matchQuery,
   normalizeFilter,
   repoOptions,
+  summaryText,
   type PrFilter,
 } from "./prFilter";
 import type { PrSummary } from "./types";
@@ -210,5 +212,49 @@ describe("normalizeFilter", () => {
   });
   it("returns a fresh object", () => {
     expect(normalizeFilter(null)).not.toBe(DEFAULT_FILTER);
+  });
+});
+
+describe("summaryText", () => {
+  it("unfiltered: the open PR count", () => {
+    expect(summaryText(5, 5, false)).toBe("5 open PRs");
+    expect(summaryText(1, 1, false)).toBe("1 open PR");
+  });
+  it("filtered: shown of total", () => {
+    expect(summaryText(2, 5, true)).toBe("2 of 5 PRs");
+    expect(summaryText(0, 1, true)).toBe("0 of 1 PR");
+  });
+});
+
+describe("emptyMessage", () => {
+  const prs = [pr(1, { mine: "requested" }), pr(2)];
+  const at = (fl: PrFilter, q = "", list = prs) => emptyMessage(null, fl, q, applyFilter(list, fl, q));
+  it("keeps the no-GitHub-repos text", () => {
+    expect(emptyMessage("no-github-repos", f(), "", applyFilter([], f(), ""))).toEqual({
+      text: "None of the open repositories has a GitHub remote.",
+      clear: false,
+    });
+  });
+  it("no PRs at all: All says none open, For me says nothing for you", () => {
+    expect(emptyMessage("no-prs", f(), "", applyFilter([], f(), ""))).toEqual({
+      text: "No open pull requests.",
+      clear: false,
+    });
+    expect(emptyMessage("no-prs", f({ show: "mine" }), "", applyFilter([], f({ show: "mine" }), ""))).toEqual({
+      text: "No review requests for you right now.",
+      clear: false,
+    });
+  });
+  it("null while rows show, or when nothing is listed for another reason (host errors)", () => {
+    expect(at(f())).toBeNull();
+    expect(emptyMessage(null, f({ author: "bob" }), "", applyFilter([], f({ author: "bob" }), ""))).toBeNull();
+  });
+  it("filters hiding every PR: no match, with Clear filters", () => {
+    expect(at(f({ author: "bob" }))).toEqual({ text: "No pull requests match.", clear: true });
+    expect(at(f(), "zzz")).toEqual({ text: "No pull requests match.", clear: true });
+    expect(at(f({ show: "mine", repo: "x/y/z" }))).toEqual({ text: "No pull requests match.", clear: true });
+  });
+  it("For me alone hiding every PR: nothing for you, with Clear filters", () => {
+    expect(at(f({ show: "mine" }), "", [pr(2)])).toEqual({ text: "No review requests for you right now.", clear: true });
   });
 });

@@ -1,4 +1,5 @@
 import { repoKey } from "./ai/roblox";
+import type { ListEmptyState } from "./prList";
 import type { PrSummary } from "./types";
 
 /**
@@ -58,6 +59,31 @@ export function applyFilter(prs: PrSummary[], f: PrFilter, q: string): FilterRes
 /** Whether anything hides PRs: drives "N of M" and Clear filters. */
 export const filterActive = (f: PrFilter, q: string): boolean =>
   f.show !== "all" || f.author !== null || f.repo !== null || q.trim() !== "";
+
+const prWord = (n: number): string => (n === 1 ? "PR" : "PRs");
+
+/** The filter bar's summary line: "N of M PRs" while filtered, else "M open PRs". */
+export const summaryText = (shown: number, total: number, active: boolean): string =>
+  active ? `${shown} of ${total} ${prWord(total)}` : `${total} open ${prWord(total)}`;
+
+const NOTHING_FOR_ME = "No review requests for you right now.";
+
+/**
+ * The list's empty message, or null when rows show or nothing is listed for another reason
+ * (host errors). `clear`: offer Clear filters.
+ */
+export function emptyMessage(
+  state: ListEmptyState | null,
+  f: PrFilter,
+  q: string,
+  r: FilterResult,
+): { text: string; clear: boolean } | null {
+  if (state === "no-github-repos") return { text: "None of the open repositories has a GitHub remote.", clear: false };
+  if (state === "no-prs") return { text: f.show === "mine" ? NOTHING_FOR_ME : "No open pull requests.", clear: false };
+  if (r.total === 0 || r.list.length > 0) return null;
+  const onlyShow = f.author === null && f.repo === null && q.trim() === "";
+  return { text: f.show === "mine" && onlyShow ? NOTHING_FOR_ME : "No pull requests match.", clear: true };
+}
 
 /** Authors other than the viewer, by count desc then name; `selected` kept at 0 when unlisted. */
 export function authorOptions(

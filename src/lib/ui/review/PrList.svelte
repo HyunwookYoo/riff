@@ -7,7 +7,11 @@
   import type { PrKey, PrSummary } from "$lib/review/types";
   import { aiState, loadResultFor } from "$lib/review/ai/aiState.svelte";
   import { aiBadge, aiBadgeTitle } from "$lib/review/ai/badge";
+  import { applyFilter, DEFAULT_FILTER, emptyMessage, filterActive, highlight, isNumberQuery, ME, type PrFilter } from "$lib/review/prFilter";
+  import { appState } from "$lib/store.svelte";
+  import { setPrListFilter } from "$lib/git";
   import AiButton from "./AiButton.svelte";
+  import PrFilterBar from "./PrFilterBar.svelte";
   import SignInDialog from "./SignInDialog.svelte";
 
   let { collapsed = false, ontoggle }: {
@@ -16,15 +20,30 @@
     ontoggle?: () => void;
   } = $props();
 
-  const requested = $derived(reviewState.prs.filter((p) => p.mine === "requested"));
-  const reviewed = $derived(reviewState.prs.filter((p) => p.mine === "reviewed"));
+  const shown = $derived(applyFilter(reviewState.prs, appState.prListFilter, reviewState.listQuery));
+  const active = $derived(filterActive(appState.prListFilter, reviewState.listQuery));
   const problemHosts = $derived(reviewState.hosts.filter((h) => h.status !== "ready"));
   const emptyState = $derived(
     reviewState.githubRepos === null
       ? null
       : listEmptyState(reviewState.githubRepos, reviewState.hosts, reviewState.prs.length),
   );
+  const empty = $derived(emptyMessage(emptyState, appState.prListFilter, reviewState.listQuery, shown));
+  // The bar shows once PRs are listed, or none are open (so a remembered For me stays visible).
+  const showBar = $derived(reviewState.prs.length > 0 || emptyState === "no-prs");
+  const numberQuery = $derived(isNumberQuery(reviewState.listQuery));
   let signInHost = $state<string | null>(null);
+
+  /** Show / author / repo apply at once and are saved; a failed save only loses them on restart. */
+  function setFilter(patch: Partial<PrFilter>) {
+    const next = { ...appState.prListFilter, ...patch };
+    appState.prListFilter = next;
+    setPrListFilter(next).catch((e) => console.warn("PR list filter not saved:", e));
+  }
+  function clearFilters() {
+    reviewState.listQuery = "";
+    if (filterActive(appState.prListFilter, "")) setFilter({ ...DEFAULT_FILTER });
+  }
 
   // Draft counts per listed key; absent = no stored record or unreadable (unknown).
   let draftCounts = $state<Record<PrKey, number>>({});
@@ -77,9 +96,9 @@
     return m === 0 ? "updated just now" : `updated ${m} min ago`;
   });
 
-  // Results load lazily for every listed PR.
+  // Results load lazily for the PRs shown (the list can be hundreds long).
   $effect(() => {
-    const keys = reviewState.prs.map((p) => p.key);
+    const keys = shown.list.map((p) => p.key);
     untrack(() => {
       for (const k of keys) void loadResultFor(k);
     });
@@ -101,23 +120,39 @@
   const copy = (text: string) => void navigator.clipboard.writeText(text);
 </script>
 
-{#snippet section(title: string, prs: PrSummary[])}
-  <div class="section-head">{title} <span class="count">{prs.length}</span></div>
+{#snippet rows(prs: PrSummary[], pills: boolean)}
   {#each prs as p (p.key)}
     {@const badge = aiBadge(aiState.jobs[p.key], aiState.results[p.key], p.headSha, aiNow)}
+    {@const pill = pills && p.mine !== null}
     <div class="row" class:selected={reviewState.selectedKey === p.key}>
-      <button type="button" class="row-main" onclick={() => void openPr(p.key)}>
-        <div class="title">
-          <span class="num">#{p.number}</span>
-          {p.title}
-        </div>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="row-main" onclick={() => void openPr(p.key)} role="presentation">
+        <!-- No handler of its own: its click (mouse, Enter or Space) bubbles to the row. -->
+        <button type="button" class="title">
+          {#if numberQuery}<mark class="num">#{p.number}</mark>{:else}<span class="num">#{p.number}</span>{/if}
+          {#each highlight(p.title, reviewState.listQuery) as seg}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}
+        </button>
         <div class="meta">
-          {p.author} · {p.repo.owner}/{p.repo.name} ·
+          <button
+            type="button"
+            class="who"
+            title="Show {p.author}'s PRs"
+            onclick={(e) => {
+              e.stopPropagation();
+              setFilter({ author: p.author === p.viewer ? ME : p.author });
+            }}>{p.author}</button
+          >
+          · {p.repo.owner}/{p.repo.name} ·
           <span class="add">+{p.additions}</span>
           <span class="del">−{p.deletions}</span>
         </div>
-        {#if draftCounts[p.key] || newCommits(p)}
+        {#if pill || draftCounts[p.key] || newCommits(p)}
           <div class="badges">
+            {#if pill}
+              <span class="badge pill" class:done={p.mine === "reviewed"}
+                >{p.mine === "requested" ? "review requested" : "reviewed"}</span
+              >
+            {/if}
             {#if draftCounts[p.key]}
               <span class="badge">draft {draftCounts[p.key]}</span>
             {/if}
@@ -126,7 +161,7 @@
             {/if}
           </div>
         {/if}
-      </button>
+      </div>
       <div class="ai-row">
         <AiButton pr={p} />
         {#if badge.kind !== "none"}
@@ -141,6 +176,13 @@
   {/each}
 {/snippet}
 
+{#snippet section(title: string, prs: PrSummary[])}
+  {#if prs.length}
+    <div class="section-head">{title} <span class="count">{prs.length}</span></div>
+    {@render rows(prs, false)}
+  {/if}
+{/snippet}
+
 <aside class="pr-list">
   <div class="toolbar">
     <button type="button" class="fold" onclick={() => ontoggle?.()} aria-expanded={!collapsed} title={collapsed ? "Show pull requests" : "Hide pull requests"}>
@@ -152,6 +194,17 @@
     </button>
     <span class="updated">{updatedText}</span>
   </div>
+  {#if !collapsed && showBar}
+    <PrFilterBar
+      prs={reviewState.prs}
+      filter={appState.prListFilter}
+      result={shown}
+      {active}
+      bind:query={reviewState.listQuery}
+      onfilter={setFilter}
+      onclear={clearFilters}
+    />
+  {/if}
   <div class="scroll" hidden={collapsed}>
     {#each problemHosts as h (h.host)}
       {@const t = hostProblemText(h)}
@@ -172,13 +225,20 @@
     {#if reviewState.error}
       <div class="host-error">{reviewState.error}</div>
     {/if}
-    {#if emptyState === "no-github-repos"}
-      <div class="empty">None of the open repositories has a GitHub remote.</div>
-    {:else if emptyState === "no-prs"}
-      <div class="empty">No review requests right now.</div>
+    {#if empty}
+      <div class="empty">
+        {empty.text}
+        {#if empty.clear}
+          <div><button type="button" class="clear-filters" onclick={clearFilters}>Clear filters</button></div>
+        {/if}
+      </div>
     {/if}
-    {@render section("Review requested", requested)}
-    {@render section("Reviewed", reviewed)}
+    {#if shown.sections}
+      {@render section("Review requested", shown.sections.requested)}
+      {@render section("Reviewed by me", shown.sections.reviewed)}
+    {:else}
+      {@render rows(shown.list, true)}
+    {/if}
   </div>
 </aside>
 {#if signInHost}
@@ -236,13 +296,7 @@
     border-bottom: 1px solid var(--border);
   }
   .row-main {
-    display: block;
-    width: 100%;
-    text-align: left;
     padding: 6px 8px 2px;
-    border: none;
-    border-radius: 0;
-    background: transparent;
     cursor: pointer;
   }
   .ai-row {
@@ -258,9 +312,24 @@
     background: var(--accent-soft);
   }
   .title {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  mark {
+    background: var(--info-bg);
+    color: inherit;
+    border-radius: 2px;
   }
   .num {
     color: var(--muted);
@@ -272,6 +341,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .who {
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
   }
   .add {
     color: var(--ok-fg, #2da44e);
@@ -290,6 +369,14 @@
     border-radius: 8px;
     background: var(--accent-soft);
     color: var(--accent);
+  }
+  .badge.pill {
+    background: transparent;
+    border: 1px solid var(--accent);
+  }
+  .badge.pill.done {
+    border-color: var(--diff-add-border);
+    color: var(--diff-add-border);
   }
   .badge.warn {
     background: transparent;
@@ -324,6 +411,9 @@
     padding: 12px 8px;
     color: var(--muted);
     font-size: 0.85em;
+  }
+  .clear-filters {
+    margin-top: 8px;
   }
   .hint code {
     font-family: var(--mono);
