@@ -27,14 +27,27 @@ type Page = { nodes: Node[]; more?: boolean };
 /**
  * Fakes GitHub: the two `@me` searches return `requested` / `reviewed`; the open-PR
  * query pages through `open["owner/name"]` (cursor `c<next page>`). `more` claims a
- * next page that the fake doesn't have.
+ * next page that the fake doesn't have. `fail` repos' open-PR query throws. The
+ * by-number query answers from `byNumber["owner/name#N"]` (an Error is thrown).
  */
-function serve(o: { requested?: Node[]; reviewed?: Node[]; open?: Record<string, Page[]>; archived?: string[] }) {
+function serve(o: {
+  requested?: Node[]; reviewed?: Node[]; open?: Record<string, Page[]>; archived?: string[]; fail?: string[];
+  byNumber?: Record<string, { state: string; node: Node } | Error>;
+}) {
   gql.mockImplementation(async (_host, query, vars) => {
     if (query.includes("search(")) {
       return { search: { nodes: String(vars.q).includes("review-requested") ? o.requested ?? [] : o.reviewed ?? [] } } as never;
     }
     const name = `${vars.owner}/${vars.name}`;
+    if (query.includes("pullRequest(number")) {
+      const hit = o.byNumber?.[`${name}#${vars.number}`];
+      if (hit instanceof Error) throw hit;
+      if (!hit) throw new Error(`no PR ${name}#${vars.number}`);
+      return {
+        repository: { isArchived: o.archived?.includes(name) ?? false, pullRequest: { state: hit.state, ...hit.node } },
+      } as never;
+    }
+    if (o.fail?.includes(name)) throw new Error(`boom ${name}`);
     const pages = o.open?.[name] ?? [{ nodes: [] }];
     const i = vars.after == null ? 0 : Number(String(vars.after).slice(1));
     return {
@@ -49,7 +62,10 @@ function serve(o: { requested?: Node[]; reviewed?: Node[]; open?: Record<string,
   });
 }
 
-const openCalls = () => gql.mock.calls.filter((c) => !String(c[1]).includes("search("));
+const openCalls = () => gql.mock.calls.filter((c) => String(c[1]).includes("pullRequests("));
+const numberCalls = () => gql.mock.calls.filter((c) => String(c[1]).includes("pullRequest(number"));
+const listed = async (repos: Parameters<typeof searchPrs>[1], wanted: string[] = []) =>
+  (await searchPrs("h", repos, "me", wanted)).prs;
 
 describe("searchPrs", () => {
   const repos = [
@@ -66,7 +82,7 @@ describe("searchPrs", () => {
         "octo/sub": [{ nodes: [node("N2", 2, "octo/SUB", "old")] }],
       },
     });
-    const r = await searchPrs("h", repos, "me");
+    const r = await listed(repos);
     expect(r.map((p) => p.nodeId)).toEqual(["N1", "N3", "N2"]);
     expect(r[0]).toEqual({
       key: "h/octo/repo#1", repo: repos[0].repo, repoIdx: 2, remote: "origin", nodeId: "N1", number: 1,
@@ -84,14 +100,14 @@ describe("searchPrs", () => {
       reviewed: [node("N8", 8, "octo/sub")],
       open: { "octo/repo": [{ nodes: [node("N1", 1)] }] },
     });
-    const r = await searchPrs("h", repos, "me");
+    const r = await listed(repos);
     expect(r.map((p) => [p.nodeId, p.mine])).toEqual([["N1", null], ["N9", "requested"], ["N8", "reviewed"]]);
     expect(r[2]).toMatchObject({ key: "h/octo/sub#8", repoIdx: 5, viewer: "me" });
   });
 
   it("drops search hits of repos that aren't open", async () => {
     serve({ requested: [node("N1", 1, "other/x")] });
-    expect(await searchPrs("h", repos, "me")).toEqual([]);
+    expect(await listed(repos)).toEqual([]);
   });
 
   it("builds one repo: qualifier per open repo and one open-PR query per repo", async () => {
@@ -115,14 +131,14 @@ describe("searchPrs", () => {
   it("queries a GitHub repo open twice once, under its first entry", async () => {
     const twice = [repos[0], { ...repos[0], repo: { host: "h", owner: "Octo", name: "Repo" }, repoIdx: 7 }];
     serve({ open: { "octo/repo": [{ nodes: [node("N1", 1)] }] } });
-    const r = await searchPrs("h", twice, "me");
+    const r = await listed(twice);
     expect(openCalls()).toHaveLength(1);
     expect(r.map((p) => [p.key, p.repoIdx])).toEqual([["h/octo/repo#1", 2]]);
   });
 
   it("skips archived repos' open PRs, as the searches do", async () => {
     serve({ open: { "octo/repo": [{ nodes: [node("N1", 1)] }] }, archived: ["octo/repo"] });
-    expect(await searchPrs("h", repos, "me")).toEqual([]);
+    expect(await listed(repos)).toEqual([]);
   });
 
   it("last submitted review ignores pending, in both queries", async () => {
@@ -133,8 +149,87 @@ describe("searchPrs", () => {
     }
   });
 
+  it("a repo whose open-PR query fails is reported; the rest and the search hits stay", async () => {
+    serve({
+      requested: [node("N8", 8, "octo/sub")],
+      open: { "octo/repo": [{ nodes: [node("N1", 1)] }] },
+      fail: ["octo/sub"],
+    });
+    const r = await searchPrs("h", repos, "me");
+    expect(r.prs.map((p) => [p.key, p.mine])).toEqual([["h/octo/repo#1", null], ["h/octo/sub#8", "requested"]]);
+    expect(r.failedRepos).toEqual([{ repo: "octo/sub", message: "Error: boom octo/sub" }]);
+  });
+
+  it("a failing search still fails the host", async () => {
+    gql.mockRejectedValue(new Error("search down"));
+    await expect(searchPrs("h", repos, "me")).rejects.toThrow("search down");
+  });
+
+  it("lists a PR once when it shows on two open pages", async () => {
+    serve({ open: { "octo/repo": [{ nodes: [node("N2", 2), node("N1", 1)] }, { nodes: [node("N1", 1), node("N3", 3)] }] } });
+    expect((await listed(repos)).map((p) => p.nodeId)).toEqual(["N2", "N1", "N3"]);
+  });
+
+  it("marks reviewed a PR the viewer reviewed that the capped search missed", async () => {
+    serve({ open: { "octo/repo": [{ nodes: [node("N1", 1, "octo/repo", "old"), node("N2", 2)] }] } });
+    expect((await listed(repos)).map((p) => p.mine)).toEqual(["reviewed", null]);
+  });
+
+  describe("wanted keys beyond the cap", () => {
+    it("fetches unlisted open ones by number; leaves out closed, listed and other repos' or hosts' keys", async () => {
+      serve({
+        open: { "octo/repo": [{ nodes: [node("N1", 1)] }] },
+        byNumber: {
+          "octo/repo#7": { state: "OPEN", node: node("N7", 7, "octo/repo", "s7") },
+          "octo/sub#4": { state: "MERGED", node: node("N4", 4, "octo/sub") },
+          "octo/sub#5": { state: "CLOSED", node: node("N5", 5, "octo/sub") },
+        },
+      });
+      const r = await searchPrs("h", repos, "me", [
+        "h/octo/repo#1", "h/octo/repo#7", "h/Octo/Sub#4", "h/octo/sub#5", "h/other/x#1", "g/octo/repo#2",
+      ]);
+      expect(r.prs.map((p) => [p.key, p.repoIdx, p.mine])).toEqual([
+        ["h/octo/repo#1", 2, null],
+        ["h/octo/repo#7", 2, "reviewed"],
+      ]);
+      expect(r.failedRepos).toEqual([]);
+      expect(numberCalls().map((c) => c[2])).toEqual([
+        { owner: "octo", name: "repo", number: 7, login: "me" },
+        { owner: "octo", name: "sub", number: 4, login: "me" },
+        { owner: "octo", name: "sub", number: 5, login: "me" },
+      ]);
+      expect(String(numberCalls()[0][1])).toContain("pullRequest(number: $number) { state");
+      expect(String(numberCalls()[0][1])).toContain("states:[APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED]");
+    });
+
+    it("skips archived repos and repos whose open-PR query failed", async () => {
+      serve({
+        archived: ["octo/repo"],
+        fail: ["octo/sub"],
+        byNumber: { "octo/repo#7": { state: "OPEN", node: node("N7", 7) } },
+      });
+      const r = await searchPrs("h", repos, "me", ["h/octo/repo#7", "h/octo/sub#3"]);
+      expect(r.prs).toEqual([]);
+      expect(r.failedRepos.map((f) => f.repo)).toEqual(["octo/sub"]);
+      expect(numberCalls().map((c) => c[2].number)).toEqual([7]);
+    });
+
+    it("a failing fetch reports its repo once and keeps the rest", async () => {
+      serve({
+        byNumber: {
+          "octo/repo#7": new Error("nope"),
+          "octo/repo#8": new Error("nope again"),
+          "octo/sub#4": { state: "OPEN", node: node("N4", 4, "octo/sub") },
+        },
+      });
+      const r = await searchPrs("h", repos, "me", ["h/octo/repo#7", "h/octo/repo#8", "h/octo/sub#4"]);
+      expect(r.prs.map((p) => p.key)).toEqual(["h/octo/sub#4"]);
+      expect(r.failedRepos).toEqual([{ repo: "octo/repo", message: "Error: nope" }]);
+    });
+  });
+
   it("no repos: no queries", async () => {
-    expect(await searchPrs("h", [], "me")).toEqual([]);
+    expect(await searchPrs("h", [], "me", ["h/octo/repo#1"])).toEqual({ prs: [], failedRepos: [] });
     expect(gql).not.toHaveBeenCalled();
   });
 });

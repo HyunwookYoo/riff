@@ -15,6 +15,7 @@ import {
   loadPrList,
   loginHint,
   REFRESH_MS,
+  wantedKeys,
   type HostState,
 } from "./prList";
 import { emptyRecord } from "./draft";
@@ -55,9 +56,13 @@ describe("loadPrList", () => {
   it("keeps other hosts when one host is logged out", async () => {
     vi.mocked(ghStatus).mockImplementation(async (h) => (h === "ghe.corp" ? "notloggedin" : "ready"));
     vi.mocked(viewerLogin).mockResolvedValue("me");
-    vi.mocked(searchPrs).mockResolvedValue([{ key: "github.com/o/a#1" } as never]);
+    vi.mocked(searchPrs).mockResolvedValue({
+      prs: [{ key: "github.com/o/a#1" } as never],
+      failedRepos: [{ repo: "o/a", message: "x" }],
+    });
     const r = await loadPrList(
       [{ path: "a" }, { path: "b" }],
+      ["github.com/o/a#9"],
       remotes({
         a: [{ name: "origin", url: "https://github.com/o/a.git" }],
         b: [{ name: "origin", url: "git@ghe.corp:o/b.git" }],
@@ -67,14 +72,18 @@ describe("loadPrList", () => {
     const bad = r.hosts.find((h) => h.host === "ghe.corp")!;
     expect(bad.status).toBe("notloggedin");
     expect(bad.message).toBeNull();
-    expect(r.hosts.find((h) => h.host === "github.com")!.status).toBe("ready");
+    expect(r.hosts.find((h) => h.host === "github.com")).toEqual({
+      host: "github.com", status: "ready", message: null, failedRepos: [{ repo: "o/a", message: "x" }],
+    });
     expect(r.githubRepos).toBe(2);
+    expect(vi.mocked(searchPrs).mock.calls.map((c) => [c[0], c[3]])).toEqual([["github.com", ["github.com/o/a#9"]]]);
   });
 
   it("carries only the raw error for status error and counts GitHub repos", async () => {
     vi.mocked(ghStatus).mockRejectedValue("boom");
     const r = await loadPrList(
       [{ path: "a" }, { path: "b" }],
+      [],
       remotes({ a: [{ name: "origin", url: "https://github.com/o/a.git" }], b: [] }),
     );
     expect(r.hosts).toEqual([{ host: "github.com", status: "error", message: "boom" }]);
@@ -154,6 +163,24 @@ describe("listedHeadMove", () => {
   });
 });
 
+describe("wantedKeys", () => {
+  const rec = (key: string, body = "", items = 0) =>
+    ({ ...emptyRecord(key), body, items: Array(items).fill({}) }) as never;
+  it("wants the selected PR and records with items, body text or unreadable; never AI keys", () => {
+    const m = new Map([
+      ["h/o/a#1", rec("h/o/a#1")],
+      ["h/o/a#2", rec("h/o/a#2", "", 1)],
+      ["h/o/a#3", rec("h/o/a#3", " hi ")],
+      ["h/o/a#4", rec("h/o/a#4", "  ")],
+      ["h/o/a#5", null],
+      ["h/o/a#6@ai", null],
+    ]);
+    expect(wantedKeys(m, "h/o/a#9")).toEqual(["h/o/a#9", "h/o/a#2", "h/o/a#3", "h/o/a#5"]);
+    expect(wantedKeys(m, "h/o/a#2")).toEqual(["h/o/a#2", "h/o/a#3", "h/o/a#5"]);
+    expect(wantedKeys(new Map(), null)).toEqual([]);
+  });
+});
+
 describe("keysToDelete", () => {
   const ready: HostState[] = [{ host: "github.com", status: "ready", message: null }];
   const rec = (key: string, body = "", items = 0) =>
@@ -170,6 +197,11 @@ describe("keysToDelete", () => {
   it("never deletes AI result keys", () => {
     const k = "github.com/o/a#1@ai";
     expect(keysToDelete([k], new Map([[k, rec(k)]]), new Set(), ready)).toEqual([]);
+  });
+  it("keeps records of a repo whose PRs failed to load on a ready host", () => {
+    const a = "github.com/O/A#1", b = "github.com/o/b#2";
+    const hosts: HostState[] = [{ ...ready[0], failedRepos: [{ repo: "o/a", message: "x" }] }];
+    expect(keysToDelete([a, b], new Map([[a, rec(a)], [b, rec(b)]]), new Set(), hosts)).toEqual([b]);
   });
   it("keeps records of a host that is not ready", () => {
     const k = "ghe.corp/o/a#1";

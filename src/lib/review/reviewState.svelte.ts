@@ -5,7 +5,7 @@ import { reanchorAll } from "./draft";
 import { loadRecord, saveRecord } from "./draftStore";
 import { deleteReview, fetchPr, listReviews, markPrSeen, prChangedFiles, prHunks } from "./gh";
 import { prDetail } from "./github";
-import { headMoveFor, keysToDelete, listedHeadMove, loadPrList, REFRESH_MS, type HostState } from "./prList";
+import { headMoveFor, keysToDelete, listedHeadMove, loadPrList, REFRESH_MS, wantedKeys, type HostState } from "./prList";
 import type { FileHunks, PrDetail, PrKey, PrRecord, PrSummary, ReviewThread } from "./types";
 
 export const UNREADABLE = "This PR's saved draft can't be read; riff won't overwrite it.";
@@ -47,7 +47,9 @@ export async function refreshList(): Promise<void> {
   const shown = shownSeq;
   reviewState.loadingList = true;
   try {
-    const r = await loadPrList(appState.repos);
+    // Read once: keeps drafts and the selected PR listed beyond the cap, then cleans up.
+    const stored = await storedRecords().catch(() => null);
+    const r = await loadPrList(appState.repos, wantedKeys(stored ?? new Map(), reviewState.selectedKey));
     if (seq !== listSeq) return;
     const s = reviewState;
     s.prs = r.prs;
@@ -57,7 +59,7 @@ export async function refreshList(): Promise<void> {
     // head was set may predate it, so it can't tell.
     const moved = shown === shownSeq ? listedHeadMove(r.prs, s.selectedKey, s.headSha, s.headMoved) : null;
     if (moved) s.headMoved = moved;
-    void cleanupRecords().catch(() => {});
+    if (stored) void cleanupRecords(stored).catch(() => {});
   } catch (e) {
     if (seq === listSeq) reviewState.error = String(e);
   } finally {
@@ -261,19 +263,32 @@ export function startAutoRefresh(): () => void {
   return () => clearInterval(id);
 }
 
-/** Deletes stored records for unlisted PRs that hold no draft, on ready hosts only. */
-export async function cleanupRecords(): Promise<void> {
-  const keys = (await listReviews()).filter((k) => !isAiKey(k));
+/** Every stored PR record (no AI results); null when unreadable. */
+async function storedRecords(): Promise<Map<string, PrRecord | null>> {
   const records = new Map<string, PrRecord | null>();
-  for (const key of keys) {
+  for (const key of (await listReviews()).filter((k) => !isAiKey(k))) {
     try {
       records.set(key, await loadRecord(key));
     } catch {
       records.set(key, null); // unreadable: keep
     }
   }
+  return records;
+}
+
+/**
+ * Deletes stored records for unlisted PRs that hold no draft, on ready hosts only.
+ * `records` may predate the list load, so each is re-read before it is deleted.
+ */
+export async function cleanupRecords(records: Map<string, PrRecord | null>): Promise<void> {
   const listed = new Set(reviewState.prs.map((p) => p.key));
-  for (const key of keysToDelete(keys, records, listed, reviewState.hosts)) {
-    await deleteReview(key);
+  for (const key of keysToDelete([...records.keys()], records, listed, reviewState.hosts)) {
+    let now: PrRecord;
+    try {
+      now = await loadRecord(key);
+    } catch {
+      continue;
+    }
+    if (keysToDelete([key], new Map([[key, now]]), listed, reviewState.hosts).length) await deleteReview(key);
   }
 }

@@ -23,6 +23,9 @@
   const shown = $derived(applyFilter(reviewState.prs, appState.prListFilter, reviewState.listQuery));
   const active = $derived(filterActive(appState.prListFilter, reviewState.listQuery));
   const problemHosts = $derived(reviewState.hosts.filter((h) => h.status !== "ready"));
+  const failedRepos = $derived(
+    reviewState.hosts.flatMap((h) => (h.failedRepos ?? []).map((f) => ({ ...f, id: `${h.host}/${f.repo}` }))),
+  );
   const emptyState = $derived(
     reviewState.githubRepos === null
       ? null
@@ -222,6 +225,9 @@
         {/if}
       </div>
     {/each}
+    {#each failedRepos as f (f.id)}
+      <div class="host-error repo-warn" title={f.message}>Couldn't load open PRs of {f.repo}</div>
+    {/each}
     {#if reviewState.error}
       <div class="host-error">{reviewState.error}</div>
     {/if}
@@ -387,6 +393,9 @@
     padding: 6px 8px;
     border-bottom: 1px solid var(--border);
     font-size: 0.85em;
+  }
+  .repo-warn {
+    color: var(--muted);
   }
   .problem-title {
     font-weight: 600;

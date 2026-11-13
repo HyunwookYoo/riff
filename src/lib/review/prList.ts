@@ -1,15 +1,17 @@
 import { isAiKey } from "./ai/aiStore";
 import { ghStatus, gitRemotes } from "./gh";
-import { searchPrs, viewerLogin, type SearchRepo } from "./github";
+import { searchPrs, viewerLogin, type FailedRepo, type SearchRepo } from "./github";
 import { parseRemote } from "./remote";
 import type { PrKey, PrRecord, PrSummary } from "./types";
 
 export const REFRESH_MS = 300_000;
 
+/** `failedRepos`: on a ready host, repos whose PRs couldn't all be loaded. */
 export type HostState = {
   host: string;
   status: "ready" | "notinstalled" | "notloggedin" | "error";
   message: string | null;
+  failedRepos?: FailedRepo[];
 };
 
 type RemotesOf = (path: string) => Promise<{ name: string; url: string }[]>;
@@ -50,9 +52,13 @@ export async function collectRepos(
   return out;
 }
 
-/** `githubRepos`: open repos with a GitHub-like remote. */
+/**
+ * `wanted`: keys to keep listed while still open, even beyond the open-PR cap.
+ * `githubRepos`: open repos with a GitHub-like remote.
+ */
 export async function loadPrList(
   repos: { path: string }[],
+  wanted: PrKey[] = [],
   remotesOf: RemotesOf = gitRemotes,
 ): Promise<{ prs: PrSummary[]; hosts: HostState[]; githubRepos: number }> {
   const byHost = await collectRepos(repos, remotesOf);
@@ -62,8 +68,8 @@ export async function loadPrList(
         const status = await ghStatus(host);
         if (status !== "ready") return { state: { host, status, message: null }, prs: [] };
         const login = await viewerLogin(host);
-        const prs = await searchPrs(host, entries, login);
-        return { state: { host, status: "ready", message: null }, prs };
+        const { prs, failedRepos } = await searchPrs(host, entries, login, wanted);
+        return { state: { host, status: "ready", message: null, failedRepos }, prs };
       } catch (e) {
         return { state: { host, status: "error", message: String(e) }, prs: [] };
       }
@@ -128,9 +134,18 @@ export function listedHeadMove(
   return { from: headSha, to: listed };
 }
 
+const hasDraft = (r: PrRecord): boolean => r.items.length > 0 || r.body.trim() !== "";
+
+/** Keys to keep listed: the selected PR and stored records holding a draft (or unreadable). */
+export function wantedKeys(records: Map<string, PrRecord | null>, selected: PrKey | null): PrKey[] {
+  const out = [...records].filter(([k, r]) => !isAiKey(k) && (!r || hasDraft(r))).map(([k]) => k);
+  return selected !== null && !out.includes(selected) ? [selected, ...out] : out;
+}
+
 /**
  * Stored records safe to delete: unlisted, no items, no body text, host ready
- * in this refresh. `records` maps key to the record, or null when unreadable.
+ * in this refresh and the PR's repo loaded. `records` maps key to the record,
+ * or null when unreadable.
  */
 export function keysToDelete(
   keys: string[],
@@ -139,10 +154,14 @@ export function keysToDelete(
   hosts: HostState[],
 ): string[] {
   const ready = new Set(hosts.filter((h) => h.status === "ready").map((h) => h.host));
+  const failed = new Set(
+    hosts.flatMap((h) => (h.failedRepos ?? []).map((f) => `${h.host}/${f.repo}`.toLowerCase())),
+  );
   return keys.filter((k) => {
     if (isAiKey(k) || listed.has(k)) return false;
     if (!ready.has(k.slice(0, k.indexOf("/")))) return false;
+    if (failed.has(k.slice(0, k.lastIndexOf("#")).toLowerCase())) return false;
     const r = records.get(k);
-    return !!r && r.items.length === 0 && r.body.trim() === "";
+    return !!r && !hasDraft(r);
   });
 }

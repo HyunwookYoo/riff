@@ -1,5 +1,5 @@
 import { ghGraphql } from "./gh";
-import type { GhRepo, PrDetail, PrSummary, ReviewEvent, ReviewThread, Side, ThreadComment } from "./types";
+import type { GhRepo, PrDetail, PrKey, PrSummary, ReviewEvent, ReviewThread, Side, ThreadComment } from "./types";
 
 const viewerCache = new Map<string, Promise<string>>();
 
@@ -58,9 +58,12 @@ export interface SearchRepo { repo: GhRepo; repoIdx: number; remote: string }
 
 const nameOf = (r: SearchRepo): string => `${r.repo.owner}/${r.repo.name}`.toLowerCase();
 
+const toKey = (entry: SearchRepo, number: number): PrKey =>
+  `${entry.repo.host}/${entry.repo.owner}/${entry.repo.name}#${number}`;
+
 function toSummary(n: PrNode, entry: SearchRepo, viewer: string): PrSummary {
   return {
-    key: `${entry.repo.host}/${entry.repo.owner}/${entry.repo.name}#${n.number}`,
+    key: toKey(entry, n.number),
     repo: entry.repo, repoIdx: entry.repoIdx, remote: entry.remote,
     nodeId: n.id, number: n.number, title: n.title, author: n.author?.login ?? "ghost",
     url: n.url, additions: n.additions, deletions: n.deletions,
@@ -89,14 +92,40 @@ export async function openPrs(host: string, entry: SearchRepo, login: string): P
   return out;
 }
 
+const NUMBER_QUERY = `query($owner: String!, $name: String!, $number: Int!, $login: String!) {
+  repository(owner: $owner, name: $name) {
+    isArchived
+    pullRequest(number: $number) { state ${PR_FIELDS} }
+  }
+}`;
+
+/** `owner/name` of a repo whose PRs couldn't all be loaded, and why. */
+export interface FailedRepo { repo: string; message: string }
+
+/** `entry`'s PR `number` if it is open (and the repo not archived), else null. */
+async function prByNumber(host: string, entry: SearchRepo, number: number, login: string): Promise<PrSummary | null> {
+  const d = await ghGraphql<{ repository: { isArchived: boolean; pullRequest: (PrNode & { state: string }) | null } }>(
+    host, NUMBER_QUERY, { owner: entry.repo.owner, name: entry.repo.name, number, login },
+  );
+  const n = d.repository.pullRequest;
+  return !d.repository.isArchived && n?.state === "OPEN" ? toSummary(n, entry, login) : null;
+}
+
 /**
  * Every open PR of `repos` (see `openPrs`), each marked `mine` by the two `@me`
- * searches, which also cover team review requests. A PR of the viewer's beyond the
- * open-PR cap still comes from its search. A GitHub repo open twice is listed once,
- * under its first entry.
+ * searches, which also cover team review requests, or by the viewer's last review.
+ * A PR of the viewer's beyond the open-PR cap still comes from its search; a
+ * `wanted` key of this host beyond it is fetched by number (if still open). A GitHub
+ * repo open twice is listed once, under its first entry. A repo whose PRs fail to
+ * load is reported in `failedRepos`, the rest still listed; a failed search throws.
  */
-export async function searchPrs(host: string, repos: SearchRepo[], login: string): Promise<PrSummary[]> {
-  if (repos.length === 0) return [];
+export async function searchPrs(
+  host: string,
+  repos: SearchRepo[],
+  login: string,
+  wanted: PrKey[] = [],
+): Promise<{ prs: PrSummary[]; failedRepos: FailedRepo[] }> {
+  if (repos.length === 0) return { prs: [], failedRepos: [] };
   const unique = repos.filter((r, i) => repos.findIndex((x) => nameOf(x) === nameOf(r)) === i);
   const quals = unique.map((r) => `repo:${r.repo.owner}/${r.repo.name}`).join(" ");
   const search = async (kind: string): Promise<PrSummary[]> => {
@@ -111,22 +140,49 @@ export async function searchPrs(host: string, repos: SearchRepo[], login: string
     }
     return out;
   };
+  const failed = new Map<SearchRepo, string>();
   const [requested, reviewed, ...open] = await Promise.all([
     search("review-requested"),
     search("reviewed-by"),
-    ...unique.map((r) => openPrs(host, r, login)),
+    ...unique.map((r) =>
+      openPrs(host, r, login).catch((e): PrSummary[] => {
+        failed.set(r, String(e));
+        return [];
+      }),
+    ),
   ]);
+  const byKey = new Map<PrKey, PrSummary>();
+  for (const p of [...open.flat(), ...requested, ...reviewed]) if (!byKey.has(p.key)) byKey.set(p.key, p);
+  const fetched = await Promise.all(
+    [...new Set(wanted)].map(async (key): Promise<PrSummary | null> => {
+      const sep = key.lastIndexOf("#");
+      if (!key.startsWith(`${host}/`) || sep < 0) return null;
+      const name = key.slice(host.length + 1, sep).toLowerCase();
+      const entry = unique.find((r) => nameOf(r) === name);
+      const number = Number(key.slice(sep + 1));
+      if (!entry || failed.has(entry) || !Number.isInteger(number)) return null;
+      if (byKey.has(toKey(entry, number))) return null;
+      try {
+        return await prByNumber(host, entry, number, login);
+      } catch (e) {
+        if (!failed.has(entry)) failed.set(entry, String(e));
+        return null;
+      }
+    }),
+  );
+  for (const p of fetched) if (p && !byKey.has(p.key)) byKey.set(p.key, p);
   const mine = new Map<string, PrSummary["mine"]>();
   for (const p of reviewed) mine.set(p.key, "reviewed");
   for (const p of requested) mine.set(p.key, "requested");
-  const out = open.flat();
-  const listed = new Set(out.map((p) => p.key));
-  for (const p of [...requested, ...reviewed]) {
-    if (listed.has(p.key)) continue;
-    listed.add(p.key);
-    out.push(p);
-  }
-  return out.map((p) => ({ ...p, mine: mine.get(p.key) ?? null }));
+  const prs = [...byKey.values()].map((p) => ({
+    ...p,
+    // The searches are capped: a submitted review of the viewer's also counts.
+    mine: mine.get(p.key) ?? (p.myLastReviewSha !== null ? "reviewed" : null),
+  }));
+  const failedRepos = unique
+    .filter((r) => failed.has(r))
+    .map((r) => ({ repo: `${r.repo.owner}/${r.repo.name}`, message: failed.get(r)! }));
+  return { prs, failedRepos };
 }
 
 const DETAIL_QUERY = `query($id: ID!) {
