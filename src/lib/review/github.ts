@@ -176,8 +176,10 @@ export async function searchPrs(
   for (const p of requested) mine.set(p.key, "requested");
   const prs = [...byKey.values()].map((p) => ({
     ...p,
-    // The searches are capped: a submitted review of the viewer's also counts.
-    mine: mine.get(p.key) ?? (p.myLastReviewSha !== null ? "reviewed" : null),
+    // The searches are capped: a submitted review of the viewer's also counts, except on
+    // the viewer's own PRs, where replying to a review comment records a review too.
+    mine: mine.get(p.key)
+      ?? (p.myLastReviewSha !== null && p.author.toLowerCase() !== login.toLowerCase() ? "reviewed" : null),
   }));
   const failedRepos = unique
     .filter((r) => failed.has(r))

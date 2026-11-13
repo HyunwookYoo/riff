@@ -175,6 +175,12 @@ describe("searchPrs", () => {
     expect((await listed(repos)).map((p) => p.mine)).toEqual(["reviewed", null]);
   });
 
+  it("doesn't mark the viewer's own PR reviewed from a reply recorded as a review", async () => {
+    const own = { ...node("N1", 1, "octo/repo", "old"), author: { login: "Me" } };
+    serve({ open: { "octo/repo": [{ nodes: [own] }] } });
+    expect((await listed(repos)).map((p) => p.mine)).toEqual([null]);
+  });
+
   describe("wanted keys beyond the cap", () => {
     it("fetches unlisted open ones by number; leaves out closed, listed and other repos' or hosts' keys", async () => {
       serve({
