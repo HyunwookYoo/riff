@@ -26,6 +26,8 @@
   const failedRepos = $derived(
     reviewState.hosts.flatMap((h) => (h.failedRepos ?? []).map((f) => ({ ...f, id: `${h.host}/${f.repo}` }))),
   );
+  /** Row ids for aria-describedby: unique within this list. */
+  const uid = $props.id();
   const emptyState = $derived(
     reviewState.githubRepos === null
       ? null
@@ -128,15 +130,21 @@
   {#each prs as p (p.key)}
     {@const badge = aiBadge(aiState.jobs[p.key], aiState.results[p.key], p.headSha, aiNow)}
     {@const pill = pills && p.mine !== null}
+    {@const hasBadges = !!(pill || draftCounts[p.key] || newCommits(p))}
+    {@const descId = `${uid}-${p.key}`}
     <div class="row" class:selected={reviewState.selectedKey === p.key}>
       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
       <div class="row-main" onclick={() => void openPr(p.key)} role="presentation">
         <!-- No handler of its own: its click (mouse, Enter or Space) bubbles to the row. -->
-        <button type="button" class="title">
+        <button
+          type="button"
+          class="title"
+          aria-describedby={hasBadges ? `${descId}-meta ${descId}-badges` : `${descId}-meta`}
+        >
           {#if numberQuery}<mark class="num">#{p.number}</mark>{:else}<span class="num">#{p.number}</span>{/if}
           {#each highlight(p.title, reviewState.listQuery) as seg}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}
         </button>
-        <div class="meta">
+        <div class="meta" id="{descId}-meta">
           <button
             type="button"
             class="who"
@@ -150,8 +158,8 @@
           <span class="add">+{p.additions}</span>
           <span class="del">−{p.deletions}</span>
         </div>
-        {#if pill || draftCounts[p.key] || newCommits(p)}
-          <div class="badges">
+        {#if hasBadges}
+          <div class="badges" id="{descId}-badges">
             {#if pill}
               <span class="badge pill" class:done={p.mine === "reviewed"}
                 >{p.mine === "requested" ? "review requested" : "reviewed"}</span
