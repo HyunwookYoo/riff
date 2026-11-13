@@ -856,6 +856,11 @@ fn set_roblox_parity(app: tauri::AppHandle, repo: String, on: bool) -> Result<()
 }
 
 #[tauri::command]
+fn set_pr_list_filter(app: tauri::AppHandle, filter: store::PrListFilter) -> Result<(), StoreError> {
+    store::set_pr_list_filter(&app, filter)
+}
+
+#[tauri::command]
 fn set_ue_version_for_repo(
     app: tauri::AppHandle,
     repo: String,
@@ -1045,6 +1050,7 @@ pub fn run() {
             set_ai_model,
             set_ai_effort,
             set_roblox_parity,
+            set_pr_list_filter,
             set_ue_version_for_repo,
             add_manual_repo,
             remove_manual_repo,

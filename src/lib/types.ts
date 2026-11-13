@@ -325,6 +325,8 @@ export interface PersistedState {
   ai_effort?: string | null;
   /// GitHub repos (`host/owner/name`) whose AI review also checks Roblox parity.
   roblox_parity_repos?: string[];
+  /// PR list filter (show / author / repo); absent until first set. Read via normalizeFilter.
+  pr_list_filter?: { show: string; author: string | null; repo: string | null } | null;
 }
 
 /// The downloaded Roblox API reference commit (`date`: ISO 8601 committer date).

@@ -27,6 +27,7 @@ import type {
   ThemeChoice,
   WorkspaceLayout,
 } from "./types";
+import type { PrFilter } from "./review/prFilter";
 
 /// Mark a repo-changing call: reads started from here on must not be answered
 /// by a call that began before it. Bumped on both sides of the write, since the
@@ -105,6 +106,11 @@ export function setAiEffort(effort: string | null): Promise<void> {
 /** Turn Roblox parity on or off for the GitHub repo `host/owner/name`. */
 export function setRobloxParity(repo: string, on: boolean): Promise<void> {
   return invoke("set_roblox_parity", { repo, on });
+}
+
+/** Persist the PR list filter (not the search text); the backend rejects invalid values. */
+export function setPrListFilter(filter: PrFilter): Promise<void> {
+  return invoke("set_pr_list_filter", { filter });
 }
 
 /** Clone or fetch the Roblox API reference; rejects when the network fails (the last copy stays). */

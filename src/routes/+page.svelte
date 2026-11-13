@@ -26,6 +26,7 @@
   import DraftsWindow from "$lib/ui/review/DraftsWindow.svelte";
   import { reviewState, sortedPaths } from "$lib/review/reviewState.svelte";
   import { parseDraftsUrl } from "$lib/review/draftStore";
+  import { normalizeFilter } from "$lib/review/prFilter";
   import { listenSubmitRequests } from "$lib/review/submitFlow.svelte";
   import Breadcrumb from "$lib/ui/Breadcrumb.svelte";
   import TabBar from "$lib/ui/TabBar.svelte";
@@ -194,6 +195,7 @@
       appState.aiModel = s.ai_model ?? null;
       appState.aiEffort = s.ai_effort ?? null;
       appState.robloxParityRepos = s.roblox_parity_repos ?? [];
+      appState.prListFilter = normalizeFilter(s.pr_list_filter);
     } catch {
       // First-run / corrupt state: keep defaults silently.
     }

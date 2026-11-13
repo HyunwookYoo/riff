@@ -76,7 +76,29 @@ pub struct PersistedState {
     /// parity. Validated on save.
     #[serde(default)]
     pub roblox_parity_repos: Vec<String>,
+    /// PR list filter (show / author / repo; the search text isn't kept).
+    /// None until first set. Validated on save.
+    #[serde(default)]
+    pub pr_list_filter: Option<PrListFilter>,
 }
+
+/// `show`: "all" or "mine". `author`: a login or "@me". `repo`: a repo key
+/// (`host/owner/name`, as `set_roblox_parity` takes).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PrListFilter {
+    #[serde(default = "default_show")]
+    pub show: String,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub repo: Option<String>,
+}
+
+fn default_show() -> String {
+    "all".into()
+}
+
+const MAX_AUTHOR_LEN: usize = 100;
 
 const MIN_PICKER_WIDTH: u32 = 200;
 const MAX_PICKER_WIDTH: u32 = 600;
@@ -134,6 +156,7 @@ impl Default for PersistedState {
             ai_model: None,
             ai_effort: None,
             roblox_parity_repos: Vec::new(),
+            pr_list_filter: None,
         }
     }
 }
@@ -306,6 +329,28 @@ fn repo_key_ok(key: &str) -> bool {
         })
 }
 
+pub fn set_pr_list_filter(app: &AppHandle, filter: PrListFilter) -> Result<(), StoreError> {
+    if !pr_list_filter_ok(&filter) {
+        return Err(StoreError::Invalid("invalid PR list filter"));
+    }
+    let mut state = load(app)?;
+    state.pr_list_filter = Some(filter);
+    save(app, &state)
+}
+
+/// `show` known; `author` 1..=100 chars of `[A-Za-z0-9-_@.[]]` (`@me`,
+/// `app[bot]`); `repo` a repo key.
+fn pr_list_filter_ok(f: &PrListFilter) -> bool {
+    let author_ok = |a: &str| {
+        !a.is_empty()
+            && a.len() <= MAX_AUTHOR_LEN
+            && a.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_@.[]".contains(&b))
+    };
+    matches!(f.show.as_str(), "all" | "mine")
+        && f.author.as_deref().is_none_or(author_ok)
+        && f.repo.as_deref().is_none_or(repo_key_ok)
+}
+
 pub fn set_ue_version_for_repo(
     app: &AppHandle,
     repo: String,
@@ -416,6 +461,59 @@ mod tests {
         let set: PersistedState =
             serde_json::from_str(r#"{"roblox_parity_repos":["github.com/o/n"]}"#).unwrap();
         assert_eq!(set.roblox_parity_repos, vec!["github.com/o/n"]);
+    }
+
+    #[test]
+    fn pr_list_filter_defaults_to_unset() {
+        let old: PersistedState = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(old.pr_list_filter, None);
+        let set: PersistedState = serde_json::from_str(
+            r#"{"pr_list_filter":{"show":"mine","author":"@me","repo":null}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            set.pr_list_filter,
+            Some(PrListFilter {
+                show: "mine".into(),
+                author: Some("@me".into()),
+                repo: None
+            })
+        );
+        // Missing fields take their defaults rather than failing the whole state.
+        let partial: PersistedState = serde_json::from_str(r#"{"pr_list_filter":{}}"#).unwrap();
+        assert_eq!(partial.pr_list_filter.unwrap().show, "all");
+    }
+
+    #[test]
+    fn pr_list_filter_validation() {
+        let f = |show: &str, author: Option<&str>, repo: Option<&str>| PrListFilter {
+            show: show.into(),
+            author: author.map(String::from),
+            repo: repo.map(String::from),
+        };
+        for ok in [
+            f("all", None, None),
+            f("mine", Some("@me"), Some("github.com/o/n")),
+            f("all", Some("dependabot[bot]"), None),
+            f("all", Some("a.b-c_d"), None),
+            f("all", Some(&"a".repeat(100)), None),
+        ] {
+            assert!(pr_list_filter_ok(&ok), "{ok:?}");
+        }
+        for bad in [
+            f("", None, None),
+            f("All", None, None),
+            f("everything", None, None),
+            f("all", Some(""), None),
+            f("all", Some("a b"), None),
+            f("all", Some("a/b"), None),
+            f("all", Some(&"a".repeat(101)), None),
+            f("all", None, Some("")),
+            f("all", None, Some("o/n")),
+            f("all", None, Some("github.com/o/n/x")),
+        ] {
+            assert!(!pr_list_filter_ok(&bad), "{bad:?}");
+        }
     }
 
     #[test]

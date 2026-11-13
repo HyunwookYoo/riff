@@ -22,6 +22,7 @@ import type {
   ViewMode,
   WorkspaceLayout,
 } from "./types";
+import { DEFAULT_FILTER, type PrFilter } from "./review/prFilter";
 
 /// Per-tab UI memory (§14.2, Step 7). When the user switches tabs, the
 /// previously active tab's selectedFile and CodeMirror scroll position are
@@ -153,6 +154,9 @@ class AppState {
   // GitHub repos (`host/owner/name`) with Roblox parity on. Mirrored from
   // PersistedState.roblox_parity_repos on load; written back via setRobloxParity.
   robloxParityRepos = $state<string[]>([]);
+  // PR list filter (show / author / repo). Mirrored from
+  // PersistedState.pr_list_filter on load; written back via setPrListFilter.
+  prListFilter = $state<PrFilter>({ ...DEFAULT_FILTER });
   // History browser (commit log) state. Session-only. `commits` is the loaded
   // window (paginated via "load more"); `selectedCommitSha` highlights the row
   // whose parent..self diff is showing; `historyRef` anchors the log ("" =
