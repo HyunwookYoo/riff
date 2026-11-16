@@ -70,8 +70,15 @@ function outcomeOf(c: ThreadCheck): Verdict | null {
   return (c.verdict === "holds") === (c.raisedBy === "author") ? "addressed" : "not_addressed";
 }
 
-/** One per check the AI answered whose thread is in `threads` and was started by `login`, unless someone else raised its point. */
-export function threadCheckReactions(checks: ThreadCheck[], threads: ReviewThread[], repo: GhRepo, login: string): Reaction[] {
+/**
+ * One per check the AI answered whose thread is in `threads` and was started by `login`, unless
+ * someone else raised its point. None on `login`'s own PR (`prAuthor`): these memories are about a
+ * reviewer's threads, and there `login`'s points are the author's.
+ */
+export function threadCheckReactions(
+  checks: ThreadCheck[], threads: ReviewThread[], repo: GhRepo, login: string, prAuthor: string,
+): Reaction[] {
+  if (login === prAuthor) return [];
   return checks.flatMap((c) => {
     const outcome = c.reason === NO_ANSWER ? null : outcomeOf(c);
     const t = threads.find((x) => x.id === c.threadId);

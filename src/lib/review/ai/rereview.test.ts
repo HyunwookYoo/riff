@@ -49,7 +49,7 @@ describe("verdictLabel", () => {
 });
 
 describe("hasReview", () => {
-  it("is false for a record holding only thread state", () => {
+  it("is true for a reviewed record, false for one holding only thread state", () => {
     const r = { version: 1, key: "k", headSha: "H", baseSha: "B", mergeBase: "M", createdAt: "c", chapters: [], findings: [], handled: {} } satisfies AiResult;
     expect(hasReview(r)).toBe(true);
     expect(hasReview({ ...r, headSha: "" })).toBe(false);

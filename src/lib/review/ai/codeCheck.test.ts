@@ -249,6 +249,11 @@ describe("checkFindings", () => {
     expect([out[0].status, out[0].evidence.length, out[0].verification]).toEqual(["confirmed", 1, { reason: "r", trace: big, unchecked: true }]);
     expect(out[1].verification).toEqual({ reason: "r", trace: big });
   });
+
+  it("a finding whose evidence was all unread but whose trace checks out is left as it is", async () => {
+    const unread = f({ evidence: [e("big.ts", "anything here")] });
+    expect(await checkFindings([unread], files, reader())).toEqual([unread]);
+  });
 });
 
 describe("checkThreads", () => {
@@ -321,6 +326,27 @@ describe("checkThreads", () => {
     const trace = [step(), step({ path: "c.ts", line: 1, quote: "c at head only" })];
     expect(await checkThreads([c({ trace })], files, read, 1)).toEqual([c({ trace, unchecked: true })]);
     expect(read.mock.calls).toEqual([["head", "a.ts"]]);
+  });
+
+  it("drops Roblox evidence: thread checks have no Roblox pass", async () => {
+    const read = reader();
+    const roblox = e("roblox:classes/BasePart.yaml", "name: BasePart description");
+    const out = await checkThreads([c({ evidence: [roblox] }), c({ evidence: [e("a.ts", L(5)), roblox] })], files, read);
+    expect(out).toEqual([unclear({ evidence: [], problem: "evidence not found in the code" }), c()]);
+    expect(read).not.toHaveBeenCalledWith(expect.anything(), roblox.path);
+  });
+
+  it("marks a check unchecked when none of its evidence was read and no trace checks it", async () => {
+    const big = e("big.ts", "anything here");
+    const checked = [step(), step({ line: 7, quote: L(7) })];
+    const out = await checkThreads([
+      c({ evidence: [big] }), c({ evidence: [e("c.ts", "c at head only")] }), c({ evidence: [big], trace: checked }),
+      c({ evidence: [e("a.ts", L(5)), big] }),
+    ], files, reader(), 2);
+    expect(out).toEqual([
+      c({ evidence: [big], unchecked: true }), c({ evidence: [e("c.ts", "c at head only")], unchecked: true }),
+      c({ evidence: [big], trace: checked }), c({ evidence: [e("a.ts", L(5)), big] }),
+    ]);
   });
 
   it("returns an unclear check as it is, without reading", async () => {

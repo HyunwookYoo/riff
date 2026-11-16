@@ -109,10 +109,14 @@ const traceOf = (f: AiFinding): TraceStep[] => f.verification?.trace ?? [];
 /** By key, the file text, null when absent at that rev; a key absent was not read (cap, or unreadable). */
 type Texts = Map<string, string | null>;
 
-/** Kept unless every place it may be was read and none has the quote. */
-function evidenceHolds(e: AiEvidence, files: FileHunks[], texts: Texts): boolean {
+/**
+ * "found" at a place riff read; else "unread" when some place it may be was not read (kept);
+ * else "missing" (dropped).
+ */
+function evidenceAt(e: AiEvidence, files: FileHunks[], texts: Texts): "found" | "unread" | "missing" {
   const ts = evidenceKeys(e, files).map((k) => texts.get(k));
-  return ts.some((t) => t === undefined || (t !== null && quoteInFile(t, e.quote)));
+  if (ts.some((t) => typeof t === "string" && quoteInFile(t, e.quote))) return "found";
+  return ts.includes(undefined) ? "unread" : "missing";
 }
 
 /** The line the step's quote is on; "unchecked" when its file was not read; null when not found. */
@@ -131,12 +135,15 @@ interface Quoted { evidence: AiEvidence[]; trace: TraceStep[] }
  * is dropped), `trace` with steps found away from their line moved to it (`movedFrom`: the line
  * given; the same array when none moved), and the first `problem`: no evidence left, with
  * `needsTrace` a trace not of 2 to 8 steps, or a step not found. `unchecked`: with `needsTrace`,
- * a step riff couldn't read.
+ * a step riff couldn't read. `evidenceUnread`: evidence is left but none of it was found where
+ * riff read (all unread, or Roblox).
  */
 function checkQuoted(
   q: Quoted, needsTrace: boolean, files: FileHunks[], texts: Texts,
-): Quoted & { problem: string | null; unchecked: boolean } {
-  const kept = q.evidence.filter((e) => isRoblox(e.path) || evidenceHolds(e, files, texts));
+): Quoted & { problem: string | null; unchecked: boolean; evidenceUnread: boolean } {
+  // Roblox evidence is kept unread here: roblox.ts checks it.
+  const where = q.evidence.map((e) => (isRoblox(e.path) ? "unread" : evidenceAt(e, files, texts)));
+  const kept = q.evidence.filter((_, i) => where[i] !== "missing");
   const old = q.trace;
   const at = old.map((s) => stepAt(s, files, texts));
   const failed = at.indexOf(null);
@@ -153,6 +160,7 @@ function checkQuoted(
     trace: moved.some((s, i) => s !== old[i]) ? moved : old,
     problem,
     unchecked: needsTrace && at.includes("unchecked"),
+    evidenceUnread: kept.length > 0 && !where.includes("found"),
   };
 }
 
@@ -167,17 +175,26 @@ function check(f: AiFinding, files: FileHunks[], texts: Texts): AiFinding {
   return { ...f, evidence, verification: { ...v, trace, ...(unchecked ? { unchecked } : {}) } };
 }
 
-/** A thread check riff checks against the code: one with a verdict on the point and evidence for it. */
-const checkable = (c: ThreadCheck): boolean => c.verdict !== "unclear" && c.evidence.length > 0;
+/**
+ * A thread check riff checks against the code: one with a verdict on the point and repo evidence
+ * for it. Thread checks have no Roblox pass, so their Roblox evidence counts as not found.
+ */
+const checkable = (c: ThreadCheck): boolean => c.verdict !== "unclear" && c.evidence.some((e) => !isRoblox(e.path));
 
 function checkThread(c: ThreadCheck, files: FileHunks[], texts: Texts): ThreadCheck {
   if (c.verdict === "unclear") return c;
-  if (!checkable(c)) return { ...c, verdict: "unclear", reply: "", problem: "no evidence" };
+  if (!checkable(c)) {
+    const problem = c.evidence.length ? "evidence not found in the code" : "no evidence";
+    return { ...c, evidence: [], verdict: "unclear", reply: "", problem };
+  }
+  const repo = c.evidence.some((e) => isRoblox(e.path)) ? c.evidence.filter((e) => !isRoblox(e.path)) : c.evidence;
   // A trace is optional; one given must have 2 to 8 steps.
-  const { evidence, trace, problem, unchecked } = checkQuoted(c, c.trace.length > 0, files, texts);
-  if (problem) return { ...c, evidence, trace, verdict: "unclear", reply: "", problem };
-  if (!unchecked && trace === c.trace && evidence === c.evidence) return c;
-  return { ...c, evidence, trace, ...(unchecked ? { unchecked } : {}) };
+  const q = checkQuoted({ evidence: repo, trace: c.trace }, c.trace.length > 0, files, texts);
+  if (q.problem) return { ...c, evidence: q.evidence, trace: q.trace, verdict: "unclear", reply: "", problem: q.problem };
+  // Evidence riff couldn't read proves nothing unless a trace checked the point.
+  const unchecked = q.unchecked || (q.evidenceUnread && !c.trace.length);
+  if (!unchecked && q.trace === c.trace && q.evidence === c.evidence) return c;
+  return { ...c, evidence: q.evidence, trace: q.trace, ...(unchecked ? { unchecked } : {}) };
 }
 
 /** read_file_at's error for a blob over its size cap (git/cli.rs): the file is there but unread. */
@@ -225,9 +242,10 @@ export async function checkFindings(
 
 /**
  * `checks` with their evidence and traces checked against the code as `checkFindings` does: a
- * holds / does_not_hold check with no evidence, none found, a trace given that is not 2 to 8
- * steps, or a step not found becomes unclear with the first `problem` and no reply. A check with
- * a step riff couldn't read keeps its verdict, marked `unchecked`. Unclear checks are not read.
+ * holds / does_not_hold check with no evidence, none found (Roblox evidence is dropped), a trace
+ * given that is not 2 to 8 steps, or a step not found becomes unclear with the first `problem` and
+ * no reply. A check with a step riff couldn't read, or with only unread evidence and no trace,
+ * keeps its verdict, marked `unchecked`. Unclear checks are not read.
  */
 export async function checkThreads(
   checks: ThreadCheck[], files: FileHunks[], read: (rev: Rev, path: string) => Promise<string>, maxFiles = MAX_FILES,

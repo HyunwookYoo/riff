@@ -75,7 +75,7 @@ describe("threadCheckReactions", () => {
 
   it("maps the point's verdict back to whether the viewer's thread was addressed", () => {
     for (const [raisedBy, verdict, concept] of cases) {
-      const rs = threadCheckReactions([check("t1", raisedBy, verdict)], [thread()], repo, "me");
+      const rs = threadCheckReactions([check("t1", raisedBy, verdict)], [thread()], repo, "me", "dev");
       expect(rs.map((r) => r.concepts[1]), `${raisedBy} ${verdict}`).toEqual(concept ? [concept] : []);
       expect(JSON.stringify(rs)).not.toMatch(/AI (PROSE|POINT|REPLY)/);
     }
@@ -86,10 +86,16 @@ describe("threadCheckReactions", () => {
     const rs = threadCheckReactions([
       check("t1", "viewer", "holds"), check("t2", "author", "holds"), check("gone", "viewer", "holds"),
       check("t3", "viewer", "unclear", NO_ANSWER), check("t4", "viewer", "does_not_hold"),
-    ], [thread(), theirs, thread({ id: "t3" }), thread({ id: "t4", path: "b.ts" })], repo, "me");
+    ], [thread(), theirs, thread({ id: "t3" }), thread({ id: "t4", path: "b.ts" })], repo, "me", "dev");
     expect(rs.map((r) => [r.concepts[1], /in "(.*)" was/.exec(r.content)![1]])).toEqual([
       ["thread-not_addressed", "src/a.ts"], ["thread-addressed", "b.ts"],
     ]);
+  });
+
+  it("records nothing on the viewer's own PR: the memories are about a reviewer's threads", () => {
+    for (const [raisedBy, verdict] of cases) {
+      expect(threadCheckReactions([check("t1", raisedBy, verdict)], [thread()], repo, "me", "me"), `${raisedBy} ${verdict}`).toEqual([]);
+    }
   });
 });
 

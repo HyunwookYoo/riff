@@ -243,13 +243,19 @@ export async function runThreadCheck(
 
 /**
  * `prev` with `checks` stored by thread and `run` as the last run; checks of threads not in `checks`
- * stay. A minimal record (see `hasReview`) when there is none.
+ * stay, and so does an answered check of a thread the AI gave no answer for this time. A minimal
+ * record (see `hasReview`) when there is none.
  */
 export function withThreadChecks(prev: AiResult | null, key: PrKey, checks: ThreadCheck[], run: ThreadCheckRun): AiResult {
   const r: AiResult = prev ?? {
     version: 1, key, headSha: "", baseSha: "", mergeBase: "", createdAt: run.createdAt, chapters: [], findings: [], handled: {},
   };
-  return { ...r, threadChecks: { ...r.threadChecks, ...Object.fromEntries(checks.map((c) => [c.threadId, c])) }, threadCheckRun: run };
+  const stored = { ...r.threadChecks };
+  for (const c of checks) {
+    const old = stored[c.threadId];
+    if (c.reason !== NO_ANSWER || !old || old.reason === NO_ANSWER) stored[c.threadId] = c;
+  }
+  return { ...r, threadChecks: stored, threadCheckRun: run };
 }
 
 /** New review `r` with the thread state (re-review, thread checks) of `prev`: it is about the threads, not the review. */

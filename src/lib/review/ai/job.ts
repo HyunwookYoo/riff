@@ -298,7 +298,7 @@ async function runOne(r: Runner, entry: QueueEntry): Promise<void> {
       await r.saveThreadChecks(key, checks, run);
       if (a.cancelled) return;
       setJob(r, entry, { kind: "done" });
-      for (const m of threadCheckReactions(checks, threads, spec.pr.repo, spec.login)) r.remember(m);
+      for (const m of threadCheckReactions(checks, threads, spec.pr.repo, spec.login, spec.pr.author)) r.remember(m);
       return;
     }
     const result = await r.runJob(jobDeps, spec.pr, spec.repoPath, onState, spec.choice, spec.roblox);

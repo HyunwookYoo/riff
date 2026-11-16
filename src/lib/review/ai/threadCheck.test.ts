@@ -363,6 +363,15 @@ describe("withThreadChecks", () => {
     });
     expect(hasReview(r)).toBe(true);
   });
+
+  it("keeps an earlier answered check of a thread the AI gave no answer for this time", () => {
+    const skipped = (createdAt: string): ThreadCheck => ({ ...check("t1", createdAt), verdict: "unclear", reason: NO_ANSWER });
+    const answered = withThreadChecks(null, "k", [check("t1", "c1")], run("c1"));
+    expect(withThreadChecks(answered, "k", [skipped("c2")], run("c2")).threadChecks).toEqual({ t1: check("t1", "c1") });
+    const placeholder = withThreadChecks(null, "k", [skipped("c1")], run("c1"));
+    expect(withThreadChecks(placeholder, "k", [skipped("c2")], run("c2")).threadChecks).toEqual({ t1: skipped("c2") });
+    expect(withThreadChecks(placeholder, "k", [check("t1", "c2")], run("c2")).threadChecks).toEqual({ t1: check("t1", "c2") });
+  });
 });
 
 describe("withThreadState", () => {
