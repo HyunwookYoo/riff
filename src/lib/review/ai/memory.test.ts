@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { findingReaction, ownThreadResolved, threadReaction, verdictReactions } from "./memory";
-import type { AiFinding } from "./types";
+import { findingReaction, ownThreadResolved, threadCheckReactions, threadReaction } from "./memory";
+import { NO_ANSWER, type AiFinding, type ThreadCheck } from "./types";
 import type { GhRepo, ReviewThread } from "../types";
 
 const repo: GhRepo = { host: "github.com", owner: "acme", name: "widgets" };
@@ -61,17 +61,35 @@ describe("threadReaction", () => {
     expect(r.project).toBe("Acme/Wid_gets_");
     expect(r.content.startsWith("riff review (Acme/Wid_gets_): ")).toBe(true);
   });
-  it("verdictReactions gives one per answered verdict whose thread is known", () => {
-    const rr = { fromHead: "a", toHead: "b", createdAt: "", verdicts: [
-      { threadId: "t1", verdict: "addressed" as const, reason: "AI PROSE", evidence: [] },
-      { threadId: "t2", verdict: "unclear" as const, reason: "AI PROSE", evidence: [] },
-      { threadId: "gone", verdict: "not_addressed" as const, reason: "AI PROSE", evidence: [] },
-      { threadId: "t3", verdict: "unclear" as const, reason: "no answer", evidence: [] },
-    ] };
-    const rs = verdictReactions(rr, [thread(), thread({ id: "t2", path: "b.ts" }), thread({ id: "t3" })], repo);
-    expect(rs.map((r) => r.concepts[1])).toEqual(["thread-addressed", "thread-unclear"]);
-    expect(rs[1].content).toContain('"b.ts"');
-    expect(JSON.stringify(rs)).not.toContain("AI PROSE");
+});
+
+describe("threadCheckReactions", () => {
+  const check = (threadId: string, raisedBy: ThreadCheck["raisedBy"], verdict: ThreadCheck["verdict"], reason = "AI PROSE"): ThreadCheck => ({
+    threadId, point: "AI POINT", raisedBy, verdict, reason, evidence: [], trace: [], reply: "AI REPLY", head: "h", lastCommentId: "c", createdAt: "",
+  });
+  const cases: [ThreadCheck["raisedBy"], ThreadCheck["verdict"], string | null][] = [
+    ["viewer", "holds", "thread-not_addressed"], ["viewer", "does_not_hold", "thread-addressed"], ["viewer", "unclear", "thread-unclear"],
+    ["author", "holds", "thread-addressed"], ["author", "does_not_hold", "thread-not_addressed"], ["author", "unclear", "thread-unclear"],
+    ["other", "holds", null], ["other", "does_not_hold", null], ["other", "unclear", null],
+  ];
+
+  it("maps the point's verdict back to whether the viewer's thread was addressed", () => {
+    for (const [raisedBy, verdict, concept] of cases) {
+      const rs = threadCheckReactions([check("t1", raisedBy, verdict)], [thread()], repo, "me");
+      expect(rs.map((r) => r.concepts[1]), `${raisedBy} ${verdict}`).toEqual(concept ? [concept] : []);
+      expect(JSON.stringify(rs)).not.toMatch(/AI (PROSE|POINT|REPLY)/);
+    }
+  });
+
+  it("only for a known thread the viewer started, and not for a check the AI gave no answer for", () => {
+    const theirs = thread({ id: "t2", comments: [{ id: "c2", author: "dev", body: "b", createdAt: "" }] });
+    const rs = threadCheckReactions([
+      check("t1", "viewer", "holds"), check("t2", "author", "holds"), check("gone", "viewer", "holds"),
+      check("t3", "viewer", "unclear", NO_ANSWER), check("t4", "viewer", "does_not_hold"),
+    ], [thread(), theirs, thread({ id: "t3" }), thread({ id: "t4", path: "b.ts" })], repo, "me");
+    expect(rs.map((r) => [r.concepts[1], /in "(.*)" was/.exec(r.content)![1]])).toEqual([
+      ["thread-not_addressed", "src/a.ts"], ["thread-addressed", "b.ts"],
+    ]);
   });
 });
 

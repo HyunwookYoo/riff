@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiBadge, aiBadgeTitle, aiErrorText, planLoads, rereviewButtonState, shouldLoad } from "./badge";
+import { aiBadge, aiBadgeTitle, aiErrorText, planLoads, shouldLoad, threadCheckButtonState } from "./badge";
 import type { AiFinding, AiResult } from "./types";
 
 const finding = (id: string, status: AiFinding["status"]): AiFinding => ({
@@ -111,21 +111,21 @@ describe("planLoads", () => {
   });
 });
 
-describe("rereviewButtonState", () => {
+describe("threadCheckButtonState", () => {
   it("idle after no job or a finished one", () => {
-    expect(rereviewButtonState(undefined, 0)).toEqual({ text: "Re-review", busy: false });
-    expect(rereviewButtonState({ kind: "done" }, 0)).toEqual({ text: "Re-review", busy: false });
+    expect(threadCheckButtonState(undefined, 0)).toEqual({ text: "Check threads", busy: false });
+    expect(threadCheckButtonState({ kind: "done" }, 0)).toEqual({ text: "Check threads", busy: false });
   });
   it("queued", () => {
-    expect(rereviewButtonState({ kind: "queued" }, 0)).toEqual({ text: "re-review queued", busy: true });
+    expect(threadCheckButtonState({ kind: "queued" }, 0)).toEqual({ text: "thread check queued", busy: true });
   });
   it("running shows m:ss", () => {
     const job = { kind: "running", pass: "rereview", startedAt: 1000, lastActivity: null } as const;
-    expect(rereviewButtonState(job, 1000 + 65_000)).toEqual({ text: "re-reviewing 1:05", busy: true });
+    expect(threadCheckButtonState(job, 1000 + 65_000)).toEqual({ text: "checking threads 1:05", busy: true });
   });
   it("failed carries the error as tooltip and can be retried", () => {
-    expect(rereviewButtonState({ kind: "failed", message: "ai-malformed: x" }, 0)).toEqual({
-      text: "re-review failed", busy: false, title: "The AI returned an unexpected answer — try again.",
+    expect(threadCheckButtonState({ kind: "failed", message: "ai-malformed: x" }, 0)).toEqual({
+      text: "thread check failed", busy: false, title: "The AI returned an unexpected answer — try again.",
     });
   });
 });

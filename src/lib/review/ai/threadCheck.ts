@@ -1,10 +1,11 @@
 import type { FileCompare } from "../gh";
-import type { GhRepo, PrSummary, ReviewThread } from "../types";
-import { CLI_DEFAULT, baseInstructions, type JobDeps } from "./job";
+import type { GhRepo, PrKey, PrSummary, ReviewThread } from "../types";
+import { checkThreads } from "./codeCheck";
+import { CLI_DEFAULT, baseInstructions, revReader, type JobDeps } from "./job";
 import type { AiChoice } from "./modelChoice";
 import { MAX_DIFF_CHARS, UNTRUSTED_END, UNTRUSTED_START, evidenceItem, fenced, gitRules, memoryRules, traceStep } from "./prompts";
 import { evidenceOf, isObj, traceOf } from "./result";
-import { NO_ANSWER, type AiJobState, type PointVerdict, type RaisedBy, type ThreadCheck, type ThreadCheckRun } from "./types";
+import { NO_ANSWER, type AiJobState, type AiResult, type PointVerdict, type RaisedBy, type ThreadCheck, type ThreadCheckRun } from "./types";
 
 /** At most this many threads go into one run; the newest-active ones. */
 export const MAX_THREADS = 30;
@@ -200,6 +201,7 @@ export function normalizeChecks(
  * Checks the threads waiting on `login` on `pr` (see `checkableThreads`) against the code at the
  * PR's current head and base (from a fresh detail), with `choice`. The viewer's last-review commit
  * is fetched only for silent fixes; when it isn't available they are judged on the head alone.
+ * riff then checks the answers' quotes against the code (codeCheck.ts).
  */
 export async function runThreadCheck(
   d: JobDeps, pr: PrSummary, repoPath: string, login: string, onState: (s: AiJobState) => void,
@@ -231,7 +233,31 @@ export async function runThreadCheck(
   const prompt = threadCheckPrompt({ repo: pr.repo, head, oldHead, prAuthor: pr.author, viewer: login, picked, compares });
   const job = d.aiRun(repoPath, prompt, THREAD_CHECK_SCHEMA, (t) =>
     onState({ kind: "running", pass: "rereview", startedAt, lastActivity: t }), instructions, choice);
+  const answer = await job.done;
   const createdAt = new Date(d.now()).toISOString();
-  const checks = normalizeChecks(await job.done, picked, login, pr.author, head, createdAt);
+  const { mergeBase, files } = await hunks;
+  const checks = await checkThreads(normalizeChecks(answer, picked, login, pr.author, head, createdAt), files,
+    revReader(d, repoPath, head, mergeBase));
   return { checks, run: { head, createdAt, checked: picked.length, leftOut } };
+}
+
+/**
+ * `prev` with `checks` stored by thread and `run` as the last run; checks of threads not in `checks`
+ * stay. A minimal record (see `hasReview`) when there is none.
+ */
+export function withThreadChecks(prev: AiResult | null, key: PrKey, checks: ThreadCheck[], run: ThreadCheckRun): AiResult {
+  const r: AiResult = prev ?? {
+    version: 1, key, headSha: "", baseSha: "", mergeBase: "", createdAt: run.createdAt, chapters: [], findings: [], handled: {},
+  };
+  return { ...r, threadChecks: { ...r.threadChecks, ...Object.fromEntries(checks.map((c) => [c.threadId, c])) }, threadCheckRun: run };
+}
+
+/** New review `r` with the thread state (re-review, thread checks) of `prev`: it is about the threads, not the review. */
+export function withThreadState(r: AiResult, prev: AiResult | null): AiResult {
+  const { rereview, threadChecks, threadCheckRun } = prev ?? {};
+  if (!rereview && !threadChecks && !threadCheckRun) return r;
+  return {
+    ...r,
+    ...(rereview ? { rereview } : {}), ...(threadChecks ? { threadChecks } : {}), ...(threadCheckRun ? { threadCheckRun } : {}),
+  };
 }

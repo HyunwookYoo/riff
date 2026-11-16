@@ -2,17 +2,17 @@ import type { FileCompare } from "../gh";
 import type { ApiDoc, DocsInfo } from "../../types";
 import type { FileHunks, PrDetail, PrHunks, PrKey, PrSummary, ReviewThread } from "../types";
 import type { aiRun } from "./run";
-import { verdictReactions, type Reaction } from "./memory";
+import { threadCheckReactions, type Reaction } from "./memory";
 import { trimDiff } from "./diffTrim";
 import { ROBLOX_SCHEMA, VERIFY_SCHEMA, findPrompt, findSchema, robloxPrompt, verifyPrompt, type RobloxReference } from "./prompts";
 import { fillQuotes, mergeVerdicts, normalizeFind, normalizeRoblox } from "./result";
 import { citedDocs, downgradeUnchecked, robloxApisOf } from "./roblox";
-import { checkFindings } from "./codeCheck";
+import { checkFindings, type Rev } from "./codeCheck";
 import { repoRules } from "./repoRules";
 import type { AiChoice } from "./modelChoice";
 import { cancel, enqueue, finish, type JobKind, type Queue, type QueueEntry } from "./queue";
-import type { runRereview } from "./rereview";
-import type { AiFinding, AiJobState, AiResult, RefutedFinding, RereviewResult, RobloxParity } from "./types";
+import type { runThreadCheck } from "./threadCheck";
+import type { AiFinding, AiJobState, AiResult, RefutedFinding, RobloxParity, ThreadCheck, ThreadCheckRun } from "./types";
 
 export interface JobDeps {
   fetchPr: (path: string, remote: string, number: number, baseRef: string, baseSha: string) => Promise<string>;
@@ -40,6 +40,11 @@ export interface JobDeps {
  */
 export function baseInstructions(d: JobDeps, repoPath: string, mergeBase: string): Promise<string | null> {
   return d.readFileAt(repoPath, mergeBase, "CLAUDE.md").catch(() => null);
+}
+
+/** codeCheck.ts's `read`: a file in the repo at `head` or at `mergeBase`. */
+export function revReader(d: JobDeps, repoPath: string, head: string, mergeBase: string): (rev: Rev, path: string) => Promise<string> {
+  return (rev, path) => d.readFileAt(repoPath, rev === "head" ? head : mergeBase, path);
 }
 
 /** Full text per `${path}|${side}` of the findings: RIGHT at head, LEFT at the merge-base. */
@@ -154,7 +159,7 @@ export async function runJob(
     const merged = mergeVerdicts(candidates, verdicts);
     refuted = merged.refuted;
     findings = await checkFindings(downgradeUnchecked(merged.findings, reference?.docs ?? []), files,
-      (rev, path) => d.readFileAt(repoPath, rev === "head" ? head : mergeBase, path));
+      revReader(d, repoPath, head, mergeBase));
   }
   findings = fillQuotes(findings, await findingTexts(d, repoPath, findings, files, mergeBase, head));
   return {
@@ -167,7 +172,7 @@ export async function runJob(
 
 /**
  * The state the runner drives; in the app, the `aiState` rune object. `jobs` holds review
- * jobs only (the PR list's AI badge reads it); re-review jobs are in `rereviewJobs`.
+ * jobs only (the PR list's AI badge reads it); thread check jobs are in `rereviewJobs`.
  */
 export interface AiCtx {
   queue: Queue;
@@ -180,11 +185,11 @@ export interface RunnerDeps {
   ctx: AiCtx;
   jobDeps: JobDeps;
   runJob: typeof runJob;
-  runRereview: typeof runRereview;
-  /** Saves a new review; resolves to what was stored (the PR's re-review is kept in it). */
+  runThreadCheck: typeof runThreadCheck;
+  /** Saves a new review; resolves to what was stored (the PR's thread state is kept in it). */
   save: (r: AiResult) => Promise<AiResult>;
-  /** Stores `rr` into `key`'s result, keeping the review in it, and updates `ctx.results`. */
-  saveRereview: (key: PrKey, rr: RereviewResult) => Promise<void>;
+  /** Stores a thread check run into `key`'s result, keeping the review in it, and updates `ctx.results`. */
+  saveThreadChecks: (key: PrKey, checks: ThreadCheck[], run: ThreadCheckRun) => Promise<void>;
   notify: (number: number, title: string, findings: number) => Promise<void>;
   /** Records a review memory (best effort, never throws). */
   remember: (r: Reaction) => void;
@@ -200,7 +205,7 @@ interface Spec { pr: PrSummary; repoPath: string; login: string; choice: AiChoic
 const specKey = (e: QueueEntry): string => `${e.key}|${e.kind}`;
 
 export interface Runner extends RunnerDeps {
-  /** By `specKey`. `login` is whose threads a re-review checks ("" for a review). */
+  /** By `specKey`. `login` is whose threads a thread check checks ("" for a review). */
   specs: Map<string, Spec>;
   /** The job holding the slot; only it may free the slot when it settles. */
   active: Active | null;
@@ -230,8 +235,8 @@ export function requestJob(r: Runner, pr: PrSummary, repoPath: string, choice: A
   request(r, { key: pr.key, kind: "review" }, { pr, repoPath, login: "", choice, roblox });
 }
 
-/** Queues a check of whether `pr`'s new commits address `login`'s open threads. */
-export function requestRereview(
+/** Queues a check of the threads on `pr` waiting on `login` (job kind "rereview"). */
+export function requestThreadCheck(
   r: Runner, pr: PrSummary, repoPath: string, login: string, choice: AiChoice = CLI_DEFAULT,
 ): void {
   request(r, { key: pr.key, kind: "rereview" }, { pr, repoPath, login, choice, roblox: false });
@@ -288,12 +293,12 @@ async function runOne(r: Runner, entry: QueueEntry): Promise<void> {
   };
   try {
     if (entry.kind === "rereview") {
-      const rr = await r.runRereview(jobDeps, spec.pr, spec.repoPath, spec.login, onState, spec.choice);
+      const { checks, run } = await r.runThreadCheck(jobDeps, spec.pr, spec.repoPath, spec.login, onState, spec.choice);
       if (a.cancelled) return;
-      await r.saveRereview(key, rr);
+      await r.saveThreadChecks(key, checks, run);
       if (a.cancelled) return;
       setJob(r, entry, { kind: "done" });
-      for (const m of verdictReactions(rr, threads, spec.pr.repo)) r.remember(m);
+      for (const m of threadCheckReactions(checks, threads, spec.pr.repo, spec.login)) r.remember(m);
       return;
     }
     const result = await r.runJob(jobDeps, spec.pr, spec.repoPath, onState, spec.choice, spec.roblox);

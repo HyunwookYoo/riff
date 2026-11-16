@@ -1,7 +1,7 @@
 <script lang="ts">
   import { reviewState } from "$lib/review/reviewState.svelte";
   import { viewerLogin } from "$lib/review/github";
-  import { aiState, cancelRereviewAi, requestRereviewAi, rereviewButtonState } from "$lib/review/ai/aiState.svelte";
+  import { aiState, cancelThreadCheckAi, requestThreadCheckAi, threadCheckButtonState } from "$lib/review/ai/aiState.svelte";
   import { rereviewAvailable } from "$lib/review/ai/rereview";
   import type { PrSummary } from "$lib/review/types";
   import AiRunMenu from "./AiRunMenu.svelte";
@@ -35,11 +35,11 @@
     const id = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(id);
   });
-  const btn = $derived(rereviewButtonState(job, now));
+  const btn = $derived(threadCheckButtonState(job, now));
 
   function click() {
-    if (btn.busy) cancelRereviewAi(pr.key);
-    else if (login) requestRereviewAi(pr, login);
+    if (btn.busy) cancelThreadCheckAi(pr.key);
+    else if (login) requestThreadCheckAi(pr, login);
   }
 </script>
 
@@ -49,7 +49,7 @@
   </button>
   {#if !btn.busy && login}
     {@const me = login}
-    <AiRunMenu what="Re-review" onrun={(c) => requestRereviewAi(pr, me, c)} />
+    <AiRunMenu what="Re-review" onrun={(c) => requestThreadCheckAi(pr, me, c)} />
   {/if}
 {/if}
 

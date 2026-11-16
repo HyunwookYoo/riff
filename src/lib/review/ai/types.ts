@@ -48,7 +48,7 @@ export interface ThreadCheck {
 }
 /** The last run: how many threads it checked and how many the cap left out. */
 export interface ThreadCheckRun { head: string; createdAt: string; checked: number; leftOut: number }
-/** `headSha` is "" when no AI review ran yet and the record only holds a re-review (see `hasReview`). */
+/** `headSha` is "" when no AI review ran yet and the record only holds thread state (see `hasReview`). */
 export interface AiResult {
   version: 1; key: PrKey; headSha: string; baseSha: string; mergeBase: string;
   createdAt: string; chapters: AiChapter[]; findings: AiFinding[];

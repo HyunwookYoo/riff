@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FIND_SCHEMA, ROBLOX_SCHEMA, UNTRUSTED_END, UNTRUSTED_START, VERIFY_SCHEMA, fenced, findPrompt, findSchema, robloxPrompt, verifyPrompt } from "./prompts";
-import { rereviewPrompt } from "./rereview";
 import type { RepoRule } from "./repoRules";
+import { threadCheckPrompt } from "./threadCheck";
 import type { PrDetail, PrSummary } from "../types";
 import type { ApiDoc } from "../../types";
 
@@ -138,7 +138,7 @@ describe("review memory", () => {
     const prompts = [
       findPrompt(base),
       verifyPrompt({ rules: [], repo: pr.repo, repoPath: "r", head: "h", mergeBase: "m", candidates: [] }),
-      rereviewPrompt({ repo: pr.repo, head: "h", oldHead: "o", threads: [], compares: [] }),
+      threadCheckPrompt({ repo: pr.repo, head: "h", oldHead: null, prAuthor: "a", viewer: "v", picked: [], compares: [] }),
     ];
     for (const p of prompts) {
       const s = p.indexOf(UNTRUSTED_START);

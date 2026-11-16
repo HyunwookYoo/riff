@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { CLI_DEFAULT, cancelJob, createRunner, requestJob, requestRereview, runJob, type AiCtx, type JobDeps, type RunnerDeps } from "./job";
+import { CLI_DEFAULT, cancelJob, createRunner, requestJob, requestThreadCheck, runJob, type AiCtx, type JobDeps, type RunnerDeps } from "./job";
 import { FIND_SCHEMA, ROBLOX_SCHEMA, VERIFY_SCHEMA, findSchema } from "./prompts";
 import { emptyQueue } from "./queue";
-import { REREVIEW_SCHEMA, runRereview } from "./rereview";
+import { THREAD_CHECK_SCHEMA, runThreadCheck } from "./threadCheck";
 import type { AiChoice } from "./modelChoice";
-import type { AiResult, RereviewResult } from "./types";
+import type { AiResult, ThreadCheck, ThreadCheckRun } from "./types";
 import type { PrDetail, PrSummary } from "../types";
 import type { ApiDoc, DocsInfo } from "../../types";
 
@@ -51,7 +51,7 @@ function deps(find: unknown, verify: unknown = { verdicts: [] }, roblox: unknown
       const cancel = vi.fn();
       runs.push({ schema, instructions, choice, cancel });
       const answer = schema === FIND_SCHEMA || schema === findSchema(true) ? find
-        : schema === ROBLOX_SCHEMA ? roblox : schema === REREVIEW_SCHEMA ? { verdicts: [] } : verify;
+        : schema === ROBLOX_SCHEMA ? roblox : schema === THREAD_CHECK_SCHEMA ? { checks: [] } : verify;
       return { done: Promise.resolve(answer), cancel };
     }),
     prFileCompare: vi.fn(async (_p: string, _b: string, _o: string, _n: string, files: string[]) =>
@@ -72,18 +72,20 @@ function deps(find: unknown, verify: unknown = { verdicts: [] }, roblox: unknown
 
 const ctx = (): AiCtx => ({ queue: emptyQueue(), jobs: {}, rereviewJobs: {}, results: {} });
 
-/** Gives every PR one open thread started by "me". */
+/** Gives every PR one open thread started by "me" and waiting on "me" (answered by "dev"). */
 function withMyThread(d: ReturnType<typeof deps>["d"]): void {
   d.prDetail.mockImplementation(async (_h: string, node: string) => ({
     ...detail(`H${node.slice(1)}`, `B${node.slice(1)}`),
     threads: [{ id: "t1", path: "a.ts", side: "RIGHT", line: 1, startLine: null, originalLine: 1, isResolved: false,
-      isOutdated: false, subjectType: "LINE", comments: [{ id: "c", author: "me", body: "b", createdAt: "" }] }],
+      isOutdated: false, subjectType: "LINE", comments: [
+        { id: "c", author: "me", body: "b", createdAt: "" }, { id: "c2", author: "dev", body: "r", createdAt: "" },
+      ] }],
   }));
 }
 
-/** Runner deps with no-op re-review plumbing; tests override what they check. */
+/** Runner deps with no-op thread check plumbing; tests override what they check. */
 const runnerDeps = (o: Partial<RunnerDeps> & Pick<RunnerDeps, "ctx" | "jobDeps">): RunnerDeps => ({
-  runJob, runRereview, save: vi.fn(async (x: AiResult) => x), saveRereview: vi.fn(async () => {}), notify: vi.fn(async () => {}),
+  runJob, runThreadCheck, save: vi.fn(async (x: AiResult) => x), saveThreadChecks: vi.fn(async () => {}), notify: vi.fn(async () => {}),
   remember: vi.fn(), ...o,
 });
 
@@ -435,18 +437,18 @@ describe("runner", () => {
     expect(d.prDetail).toHaveBeenCalledTimes(1);
   });
 
-  it("a re-review shares the queue but is tracked and saved apart from the review", async () => {
+  it("a thread check shares the queue but is tracked and saved apart from the review", async () => {
     const { d } = deps({ chapters: [], findings: [] });
     withMyThread(d);
     const save = vi.fn(async (x: AiResult) => x);
-    const saveRereview = vi.fn(async (_k: string, _r: RereviewResult) => {});
+    const saveThreadChecks = vi.fn(async (_k: string, _c: ThreadCheck[], _r: ThreadCheckRun) => {});
     const notify = vi.fn(async () => {});
     const c = ctx();
-    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d, save, saveRereview, notify }));
+    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d, save, saveThreadChecks, notify }));
     const pr = summary(1, { myLastReviewSha: "R1" });
     requestJob(r, pr, "/repo");
-    requestRereview(r, pr, "/repo", "me");
-    requestRereview(r, pr, "/repo", "me"); // already queued: no-op
+    requestThreadCheck(r, pr, "/repo", "me");
+    requestThreadCheck(r, pr, "/repo", "me"); // already queued: no-op
     expect(c.jobs[pr.key]?.kind).toBe("running");
     expect(c.rereviewJobs[pr.key]).toEqual({ kind: "queued" });
     expect(c.queue.waiting).toEqual([{ key: pr.key, kind: "rereview" }]);
@@ -455,40 +457,64 @@ describe("runner", () => {
     expect(c.jobs[pr.key]).toEqual({ kind: "done" });
     expect(c.rereviewJobs[pr.key]).toEqual({ kind: "done" });
     expect(save).toHaveBeenCalledTimes(1);
-    expect(saveRereview).toHaveBeenCalledWith(pr.key, {
-      fromHead: "R1", toHead: "H1", createdAt: "2026-11-09T00:00:00.000Z",
-      verdicts: [{ threadId: "t1", verdict: "unclear", reason: "no answer", evidence: [] }],
-    });
+    const createdAt = "2026-11-09T00:00:00.000Z";
+    expect(saveThreadChecks).toHaveBeenCalledWith(pr.key, [{
+      threadId: "t1", point: "", raisedBy: "other", verdict: "unclear", reason: "no answer", evidence: [], trace: [], reply: "",
+      head: "H1", lastCommentId: "c2", createdAt,
+    }], { head: "H1", createdAt, checked: 1, leftOut: 0 });
     expect(notify).toHaveBeenCalledTimes(1);
     expect(c.queue).toEqual(emptyQueue());
 
-    // Cancelling the waiting re-review leaves the review alone.
+    // Cancelling the waiting thread check leaves the review alone.
     requestJob(r, pr, "/repo");
-    requestRereview(r, pr, "/repo", "me");
+    requestThreadCheck(r, pr, "/repo", "me");
     cancelJob(r, pr.key, "rereview");
     expect(c.rereviewJobs[pr.key]).toBeUndefined();
     expect(c.jobs[pr.key]?.kind).not.toBeUndefined();
     await flush();
-    expect(saveRereview).toHaveBeenCalledTimes(1);
+    expect(saveThreadChecks).toHaveBeenCalledTimes(1);
   });
 
-  it("a finished re-review records one memory per answered verdict, after saving", async () => {
+  it("cancel stops a running thread check: nothing is saved or remembered", async () => {
+    const { d } = deps({ chapters: [], findings: [] });
+    withMyThread(d);
+    let reject: (e: Error) => void = () => {};
+    const cancel = vi.fn(() => reject(new Error("cancelled")));
+    d.aiRun.mockImplementationOnce(() => ({ done: new Promise((_, rej) => (reject = rej)), cancel }));
+    const c = ctx();
+    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d }));
+    const pr = summary(1);
+    requestThreadCheck(r, pr, "/repo", "me");
+    await flush();
+    expect(c.rereviewJobs[pr.key]).toMatchObject({ kind: "running", pass: "rereview" });
+    cancelJob(r, pr.key, "rereview");
+    expect(cancel).toHaveBeenCalled();
+    await flush();
+    expect(c.rereviewJobs[pr.key]).toBeUndefined();
+    expect(r.saveThreadChecks).not.toHaveBeenCalled();
+    expect(r.remember).not.toHaveBeenCalled();
+    expect(c.queue).toEqual(emptyQueue());
+  });
+
+  it("a finished thread check records the memories of my threads it judged, after saving", async () => {
     const { d } = deps({ chapters: [], findings: [] });
     withMyThread(d);
     const one = (await d.prDetail("h", "N1")).threads[0];
     d.prDetail.mockImplementation(async (_h: string, node: string) => ({
       ...detail(`H${node.slice(1)}`, `B${node.slice(1)}`), threads: [one, { ...one, id: "t2", path: "b.ts" }],
     }));
-    // The AI answers t1 only; t2's filled-in "no answer" verdict is not a memory.
+    // The AI answers t1 only (my point no longer holds); t2's filled-in "no answer" check is not a memory.
     d.aiRun.mockImplementation(() => ({
-      done: Promise.resolve({ verdicts: [{ threadId: "t1", verdict: "addressed", reason: "r", evidence: [] }] }),
+      done: Promise.resolve({ checks: [{
+        threadId: "t1", point: "p", raisedBy: "viewer", verdict: "does_not_hold", reason: "r", evidence: ev, trace: [], reply: "",
+      }] }),
       cancel: vi.fn(),
     }));
     const order: string[] = [];
-    const saveRereview = vi.fn(async () => { order.push("save"); });
+    const saveThreadChecks = vi.fn(async () => { order.push("save"); });
     const remember = vi.fn(() => { order.push("remember"); });
-    const r = createRunner(runnerDeps({ ctx: ctx(), jobDeps: d, saveRereview, remember }));
-    requestRereview(r, summary(1, { myLastReviewSha: "R1" }), "/repo", "me");
+    const r = createRunner(runnerDeps({ ctx: ctx(), jobDeps: d, saveThreadChecks, remember }));
+    requestThreadCheck(r, summary(1, { author: "dev", myLastReviewSha: "R1" }), "/repo", "me");
     await flush();
     expect(order).toEqual(["save", "remember"]);
     expect(remember).toHaveBeenCalledWith({
@@ -506,11 +532,11 @@ describe("runner", () => {
     const c = { model: "claude-x[1m]", effort: null };
     requestJob(r, summary(1), "/repo", a);
     requestJob(r, summary(2), "/repo", b);
-    requestRereview(r, summary(3, { myLastReviewSha: "R3" }), "/repo", "me", c);
+    requestThreadCheck(r, summary(3, { myLastReviewSha: "R3" }), "/repo", "me", c);
     await flush();
     await flush();
     await flush();
-    expect(runs.map((x) => [x.schema, x.choice])).toEqual([[FIND_SCHEMA, a], [FIND_SCHEMA, b], [REREVIEW_SCHEMA, c]]);
+    expect(runs.map((x) => [x.schema, x.choice])).toEqual([[FIND_SCHEMA, a], [FIND_SCHEMA, b], [THREAD_CHECK_SCHEMA, c]]);
   });
 
   it("a review runs with the Roblox parity it was queued with, and cancel stops the Roblox pass", async () => {
@@ -542,19 +568,19 @@ describe("runner", () => {
     expect(c.jobs[summary(2).key]).toEqual({ kind: "done" });
   });
 
-  it("a failed re-review stores nothing", async () => {
+  it("a failed thread check stores nothing", async () => {
     const { d } = deps({ chapters: [], findings: [] });
     withMyThread(d);
-    d.fetchCommit.mockRejectedValueOnce(new Error("gone"));
-    const saveRereview = vi.fn(async () => {});
+    d.fetchPr.mockResolvedValueOnce("H999");
+    const saveThreadChecks = vi.fn(async () => {});
     const c = ctx();
-    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d, saveRereview }));
-    requestRereview(r, summary(1, { myLastReviewSha: "R1" }), "/repo", "me");
+    const r = createRunner(runnerDeps({ ctx: c, jobDeps: d, saveThreadChecks }));
+    requestThreadCheck(r, summary(1, { myLastReviewSha: "R1" }), "/repo", "me");
     await flush();
-    expect(saveRereview).not.toHaveBeenCalled();
+    expect(saveThreadChecks).not.toHaveBeenCalled();
     expect(r.remember).not.toHaveBeenCalled();
     const s = c.rereviewJobs[summary(1).key];
-    expect(s?.kind === "failed" && s.message).toMatch(/isn't available/);
+    expect(s?.kind === "failed" && s.message).toMatch(/changed/);
     expect(c.jobs).toEqual({});
   });
 });

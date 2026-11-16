@@ -4,24 +4,24 @@ import { fetchCommit, fetchPr, listReviews, prCommitSubjects, prDiffText, prFile
 import { prDetail } from "../github";
 import type { PrKey, PrSummary } from "../types";
 import { loadAiResult, saveAiResult } from "./aiStore";
-import { cancelJob, createRunner, requestJob, requestRereview, runJob } from "./job";
+import { cancelJob, createRunner, requestJob, requestThreadCheck, runJob } from "./job";
 import { recordReaction } from "./memory";
 import type { AiChoice } from "./modelChoice";
 import { notifyReady } from "./notify";
 import { repoKey } from "./roblox";
 import { emptyQueue, type Queue } from "./queue";
-import { runRereview, withRereview } from "./rereview";
 import { aiRun } from "./run";
 import { applyHandled } from "./result";
-import type { AiJobState, AiResult, RereviewResult } from "./types";
+import { runThreadCheck, withThreadChecks, withThreadState } from "./threadCheck";
+import type { AiJobState, AiResult, ThreadCheck, ThreadCheckRun } from "./types";
 
 export { isStale } from "./aiStore";
-export { aiBadge, aiBadgeTitle, aiErrorText, rereviewButtonState, shouldLoad } from "./badge";
+export { aiBadge, aiBadgeTitle, aiErrorText, shouldLoad, threadCheckButtonState } from "./badge";
 import { planLoads, shouldLoad } from "./badge";
 
 class AiState {
   queue = $state<Queue>(emptyQueue());
-  /** Review jobs (the PR list's AI badge); re-review jobs are in `rereviewJobs`. */
+  /** Review jobs (the PR list's AI badge); thread check jobs are in `rereviewJobs`. */
   jobs = $state<Record<PrKey, AiJobState>>({});
   rereviewJobs = $state<Record<PrKey, AiJobState>>({});
   /** Loaded lazily per PR; null = nothing cached (or unreadable). */
@@ -45,23 +45,22 @@ async function current(key: PrKey): Promise<AiResult | null> {
   return key in aiState.results ? aiState.results[key] : loadAiResult(key);
 }
 
-/** Saves a new review, keeping the PR's re-review (it is about the threads, not this review). */
+/** Saves a new review, keeping the PR's thread state (it is about the threads, not this review). */
 async function saveResult(r: AiResult): Promise<AiResult> {
   let saved = r;
   await queueWrite(r.key, async () => {
-    const rr = (await current(r.key).catch(() => null))?.rereview;
-    saved = rr ? { ...r, rereview: rr } : r;
+    saved = withThreadState(r, await current(r.key).catch(() => null));
     await saveAiResult(saved);
     written.set(r.key, saved);
   });
   return saved;
 }
 
-/** Stores `rr` into `key`'s result without dropping the review in it (or creates one). */
-function saveRereview(key: PrKey, rr: RereviewResult): Promise<void> {
+/** Stores a thread check run into `key`'s result without dropping the review in it (or creates one). */
+function saveThreadChecks(key: PrKey, checks: ThreadCheck[], run: ThreadCheckRun): Promise<void> {
   return queueWrite(key, async () => {
     // Not caught: if the store can't be read, failing beats overwriting a review.
-    const next = withRereview(await current(key), key, rr);
+    const next = withThreadChecks(await current(key), key, checks, run);
     await saveAiResult(next);
     written.set(key, next);
     aiState.results = { ...aiState.results, [key]: next };
@@ -76,9 +75,9 @@ const runner = createRunner({
     now: Date.now,
   },
   runJob,
-  runRereview,
+  runThreadCheck,
   save: saveResult,
-  saveRereview,
+  saveThreadChecks,
   notify: notifyReady,
   remember: recordReaction,
 });
@@ -101,12 +100,12 @@ export function cancelAi(key: PrKey): void {
   cancelJob(runner, key);
 }
 
-/** Queues a re-review of `login`'s open threads on `pr` (only ever on the user's request). */
-export function requestRereviewAi(pr: PrSummary, login: string, choice: AiChoice = aiDefaults()): void {
-  requestRereview(runner, pr, appState.repos[pr.repoIdx].path, login, choice);
+/** Queues a check of the threads on `pr` waiting on `login` (only ever on the user's request). */
+export function requestThreadCheckAi(pr: PrSummary, login: string, choice: AiChoice = aiDefaults()): void {
+  requestThreadCheck(runner, pr, appState.repos[pr.repoIdx].path, login, choice);
 }
 
-export function cancelRereviewAi(key: PrKey): void {
+export function cancelThreadCheckAi(key: PrKey): void {
   cancelJob(runner, key, "rereview");
 }
 
@@ -121,7 +120,7 @@ export function setHandled(key: PrKey, createdAt: string, id: string, how: "adde
   return queueWrite(key, async () => {
     // A newer run saved first: don't put the older result back on disk.
     if (written.get(key) && written.get(key)!.createdAt !== next.createdAt) return;
-    // Memory has this mark and any re-review stored since; save that, not the snapshot.
+    // Memory has this mark and any thread checks stored since; save that, not the snapshot.
     const now = aiState.results[key];
     const toSave = now && now.createdAt === next.createdAt ? now : next;
     await saveAiResult(toSave);

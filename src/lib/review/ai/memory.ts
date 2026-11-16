@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { GhRepo, ReviewThread } from "../types";
-import { NO_ANSWER, type AiFinding, type RereviewResult, type Verdict } from "./types";
+import { NO_ANSWER, type AiFinding, type ThreadCheck, type Verdict } from "./types";
 
 /**
  * One review memory for agentmemory. Built only from enum words, a file path and the repo name —
@@ -59,12 +59,23 @@ export function ownThreadResolved(t: ReviewThread, login: string, repo: GhRepo):
   return t.comments[0]?.author === login ? threadReaction(t, "resolved", repo) : null;
 }
 
-/** One per verdict of `rr` that the AI gave and whose thread is in `threads`. */
-export function verdictReactions(rr: RereviewResult, threads: ReviewThread[], repo: GhRepo): Reaction[] {
-  return rr.verdicts.flatMap((v) => {
-    if (v.reason === NO_ANSWER) return [];
-    const t = threads.find((x) => x.id === v.threadId);
-    return t ? [threadReaction(t, v.verdict, repo)] : [];
+/**
+ * A check's verdict on the point in a re-review's words, so old and new memories compare: the
+ * viewer's concern holding is not addressed, the author's counter-claim holding is addressed.
+ * Null for a point someone else raised.
+ */
+function outcomeOf(c: ThreadCheck): Verdict | null {
+  if (c.raisedBy === "other") return null;
+  if (c.verdict === "unclear") return "unclear";
+  return (c.verdict === "holds") === (c.raisedBy === "author") ? "addressed" : "not_addressed";
+}
+
+/** One per check the AI answered whose thread is in `threads` and was started by `login`, unless someone else raised its point. */
+export function threadCheckReactions(checks: ThreadCheck[], threads: ReviewThread[], repo: GhRepo, login: string): Reaction[] {
+  return checks.flatMap((c) => {
+    const outcome = c.reason === NO_ANSWER ? null : outcomeOf(c);
+    const t = threads.find((x) => x.id === c.threadId);
+    return outcome && t?.comments[0]?.author === login ? [threadReaction(t, outcome, repo)] : [];
   });
 }
 

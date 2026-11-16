@@ -1,6 +1,6 @@
 import type { FileHunks } from "../types";
 import { ROBLOX_PREFIX } from "./roblox";
-import type { AiEvidence, AiFinding, TraceStep } from "./types";
+import type { AiEvidence, AiFinding, ThreadCheck, TraceStep } from "./types";
 
 /** The two revisions a review reads: the PR's head and its merge-base. */
 export type Rev = "head" | "mergeBase";
@@ -14,7 +14,7 @@ export const MIN_STEP_CHARS = 8;
 /** A step quote found away from its line moves there only if this long: `Health);` is not a place. */
 const MIN_MOVE_CHARS = 20;
 
-/** How many steps a confirmed finding's failure path has (the verify prompt asks for 2 to 8). */
+/** How many steps a trace has where one is needed (the prompts ask for 2 to 8). */
 const MIN_STEPS = 2;
 const MAX_STEPS = 8;
 
@@ -123,32 +123,90 @@ function stepAt(s: TraceStep, files: FileHunks[], texts: Texts): number | "unche
   return t === null ? null : stepLine(t, s.line, s.quote);
 }
 
-function check(f: AiFinding, files: FileHunks[], texts: Texts): AiFinding {
-  const evidence = f.evidence.filter((e) => isRoblox(e.path) || evidenceHolds(e, files, texts));
-  const confirmed = f.status === "confirmed";
-  const old = traceOf(f);
+/** What riff checks of a finding or a thread check: its evidence and its trace. */
+interface Quoted { evidence: AiEvidence[]; trace: TraceStep[] }
+
+/**
+ * `q` checked against `texts`: `evidence` without the items not found (the same array when none
+ * is dropped), `trace` with steps found away from their line moved to it (`movedFrom`: the line
+ * given; the same array when none moved), and the first `problem`: no evidence left, with
+ * `needsTrace` a trace not of 2 to 8 steps, or a step not found. `unchecked`: with `needsTrace`,
+ * a step riff couldn't read.
+ */
+function checkQuoted(
+  q: Quoted, needsTrace: boolean, files: FileHunks[], texts: Texts,
+): Quoted & { problem: string | null; unchecked: boolean } {
+  const kept = q.evidence.filter((e) => isRoblox(e.path) || evidenceHolds(e, files, texts));
+  const old = q.trace;
   const at = old.map((s) => stepAt(s, files, texts));
   const failed = at.indexOf(null);
   // A step found away from its line points at where the quote is.
-  const trace = old.map((s, i) => (typeof at[i] === "number" && at[i] !== s.line ? { ...s, line: at[i], movedFrom: s.line } : s));
-  const moved = trace.some((s, i) => s !== old[i]);
-  const problem = !evidence.length
-    ? f.evidence.every((e) => tooShort(e.quote)) ? "evidence quotes too short" : "evidence not found in the code"
-    : confirmed && old.length < MIN_STEPS ? "no failure path"
-      : confirmed && old.length > MAX_STEPS ? `failure path longer than ${MAX_STEPS} steps`
+  const moved = old.map((s, i) => (typeof at[i] === "number" && at[i] !== s.line ? { ...s, line: at[i], movedFrom: s.line } : s));
+  const problem = !kept.length
+    ? q.evidence.every((e) => tooShort(e.quote)) ? "evidence quotes too short" : "evidence not found in the code"
+    : needsTrace && old.length < MIN_STEPS ? "no failure path"
+      : needsTrace && old.length > MAX_STEPS ? `failure path longer than ${MAX_STEPS} steps`
         : failed >= 0 ? `step ${failed + 1} not found in ${old[failed].path}:${old[failed].line}`
           : null;
+  return {
+    evidence: kept.length === q.evidence.length ? q.evidence : kept,
+    trace: moved.some((s, i) => s !== old[i]) ? moved : old,
+    problem,
+    unchecked: needsTrace && at.includes("unchecked"),
+  };
+}
+
+function check(f: AiFinding, files: FileHunks[], texts: Texts): AiFinding {
   const v = f.verification ?? { reason: "", trace: [] };
+  const { evidence, trace, problem, unchecked } =
+    checkQuoted({ evidence: f.evidence, trace: v.trace }, f.status === "confirmed", files, texts);
   if (problem) {
     return { ...f, evidence, status: "unconfirmed", verification: { ...v, trace, problem: v.problem ?? problem } };
   }
-  const unchecked = confirmed && at.includes("unchecked");
-  if (!unchecked && !moved) return evidence.length === f.evidence.length ? f : { ...f, evidence };
+  if (!unchecked && trace === v.trace) return evidence === f.evidence ? f : { ...f, evidence };
   return { ...f, evidence, verification: { ...v, trace, ...(unchecked ? { unchecked } : {}) } };
+}
+
+/** A thread check riff checks against the code: one with a verdict on the point and evidence for it. */
+const checkable = (c: ThreadCheck): boolean => c.verdict !== "unclear" && c.evidence.length > 0;
+
+function checkThread(c: ThreadCheck, files: FileHunks[], texts: Texts): ThreadCheck {
+  if (c.verdict === "unclear") return c;
+  if (!checkable(c)) return { ...c, verdict: "unclear", reply: "", problem: "no evidence" };
+  // A trace is optional; one given must have 2 to 8 steps.
+  const { evidence, trace, problem, unchecked } = checkQuoted(c, c.trace.length > 0, files, texts);
+  if (problem) return { ...c, evidence, trace, verdict: "unclear", reply: "", problem };
+  if (!unchecked && trace === c.trace && evidence === c.evidence) return c;
+  return { ...c, evidence, trace, ...(unchecked ? { unchecked } : {}) };
 }
 
 /** read_file_at's error for a blob over its size cap (git/cli.rs): the file is there but unread. */
 const unreadable = (e: unknown): boolean => String(e).includes("file too large");
+
+/**
+ * By key, each (rev, path) the items' repo steps and evidence may be in, read once and at most
+ * `maxFiles` of them. Steps first: an unread step leaves its item unchecked, an unread evidence
+ * item is only kept. `read` rejects for a file absent at `rev`, which counts as not found.
+ */
+async function readTexts(
+  items: Quoted[], files: FileHunks[], read: (rev: Rev, path: string) => Promise<string>, maxFiles: number,
+): Promise<Texts> {
+  const wanted = new Set<string>();
+  for (const q of items) for (const s of q.trace) if (!isRoblox(s.path)) wanted.add(stepKey(s, files));
+  for (const q of items) {
+    for (const e of q.evidence) if (!isRoblox(e.path)) for (const k of evidenceKeys(e, files)) wanted.add(k);
+  }
+  const texts: Texts = new Map();
+  await Promise.all([...wanted].slice(0, maxFiles).map(async (k) => {
+    const sep = k.indexOf("|");
+    try {
+      texts.set(k, await read(k.slice(0, sep) as Rev, k.slice(sep + 1)));
+    } catch (e) {
+      if (!unreadable(e)) texts.set(k, null);
+    }
+  }));
+  return texts;
+}
 
 /**
  * `findings` with their repo evidence and failure paths checked against the code: evidence not
@@ -161,20 +219,19 @@ const unreadable = (e: unknown): boolean => String(e).includes("file too large")
 export async function checkFindings(
   findings: AiFinding[], files: FileHunks[], read: (rev: Rev, path: string) => Promise<string>, maxFiles = MAX_FILES,
 ): Promise<AiFinding[]> {
-  // Steps first: an unread step leaves its finding unchecked, an unread evidence item is only kept.
-  const wanted = new Set<string>();
-  for (const f of findings) for (const s of traceOf(f)) if (!isRoblox(s.path)) wanted.add(stepKey(s, files));
-  for (const f of findings) {
-    for (const e of f.evidence) if (!isRoblox(e.path)) for (const k of evidenceKeys(e, files)) wanted.add(k);
-  }
-  const texts: Texts = new Map();
-  await Promise.all([...wanted].slice(0, maxFiles).map(async (k) => {
-    const sep = k.indexOf("|");
-    try {
-      texts.set(k, await read(k.slice(0, sep) as Rev, k.slice(sep + 1)));
-    } catch (e) {
-      if (!unreadable(e)) texts.set(k, null);
-    }
-  }));
+  const texts = await readTexts(findings.map((f) => ({ evidence: f.evidence, trace: traceOf(f) })), files, read, maxFiles);
   return findings.map((f) => check(f, files, texts));
+}
+
+/**
+ * `checks` with their evidence and traces checked against the code as `checkFindings` does: a
+ * holds / does_not_hold check with no evidence, none found, a trace given that is not 2 to 8
+ * steps, or a step not found becomes unclear with the first `problem` and no reply. A check with
+ * a step riff couldn't read keeps its verdict, marked `unchecked`. Unclear checks are not read.
+ */
+export async function checkThreads(
+  checks: ThreadCheck[], files: FileHunks[], read: (rev: Rev, path: string) => Promise<string>, maxFiles = MAX_FILES,
+): Promise<ThreadCheck[]> {
+  const texts = await readTexts(checks.filter(checkable), files, read, maxFiles);
+  return checks.map((c) => checkThread(c, files, texts));
 }

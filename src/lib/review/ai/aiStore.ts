@@ -47,6 +47,16 @@ function isRereview(r: unknown): boolean {
       && isStr(v.reason) && isEvidence(v.evidence));
 }
 
+const isThreadCheck = (c: unknown): boolean => isObj(c) && isStr(c.threadId) && isStr(c.point)
+  && (c.raisedBy === "viewer" || c.raisedBy === "author" || c.raisedBy === "other")
+  && (c.verdict === "holds" || c.verdict === "does_not_hold" || c.verdict === "unclear")
+  && isStr(c.reason) && isEvidence(c.evidence) && Array.isArray(c.trace) && c.trace.every(isStep) && isStr(c.reply)
+  && (c.problem === undefined || isStr(c.problem)) && (c.unchecked === undefined || typeof c.unchecked === "boolean")
+  && isStr(c.head) && isStr(c.lastCommentId) && isStr(c.createdAt);
+
+const isThreadCheckRun = (r: unknown): boolean => isObj(r) && isStr(r.head) && isStr(r.createdAt)
+  && isInt(r.checked) && isInt(r.leftOut);
+
 function isAiResult(v: unknown, key: PrKey): v is AiResult {
   return isObj(v) && v.version === 1 && v.key === key
     && isStr(v.headSha) && isStr(v.baseSha) && isStr(v.mergeBase) && isStr(v.createdAt)
@@ -54,6 +64,8 @@ function isAiResult(v: unknown, key: PrKey): v is AiResult {
     && Array.isArray(v.findings) && v.findings.every(isFinding)
     && isObj(v.handled) && Object.values(v.handled).every((h) => h === "added" || h === "discarded")
     && (v.rereview === undefined || isRereview(v.rereview))
+    && (v.threadChecks === undefined || (isObj(v.threadChecks) && Object.values(v.threadChecks).every(isThreadCheck)))
+    && (v.threadCheckRun === undefined || isThreadCheckRun(v.threadCheckRun))
     && (v.roblox === undefined || isRobloxParity(v.roblox))
     && (v.refuted === undefined || (Array.isArray(v.refuted) && v.refuted.every(isRefuted)))
     && isOptStr(v.model) && isOptStr(v.effort);

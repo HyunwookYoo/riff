@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { checkFindings, collapse, quoteInFile, stepLine, type Rev } from "./codeCheck";
-import type { AiFinding, TraceStep } from "./types";
+import { checkFindings, checkThreads, collapse, quoteInFile, stepLine, type Rev } from "./codeCheck";
+import type { AiFinding, ThreadCheck, TraceStep } from "./types";
 import type { FileHunks } from "../types";
 
 /** Lines `const value<i> = compute(<i>);` for i = 1..12. */
@@ -85,34 +85,35 @@ describe("quoteInFile", () => {
   });
 });
 
+const files: FileHunks[] = [
+  { path: "a.ts", oldPath: null, hunks: [] },
+  { path: "new.ts", oldPath: "old.ts", hunks: [] },
+];
+/** head: a.ts and new.ts; mergeBase: a.ts (other text) and old.ts. */
+const repo: Record<string, string> = {
+  "head|a.ts": text,
+  "mergeBase|a.ts": "let gone = removed();\n",
+  "head|new.ts": "renamed head code here\n",
+  "mergeBase|old.ts": "renamed base code here\n",
+  "head|b.ts": "b at head only\n",
+  "head|c.ts": "c at head only\n",
+};
+/** Rejects like the app's read_file_at: git's message for a missing path, riff's for a big file. */
+const reader = () => vi.fn(async (rev: Rev, path: string) => {
+  if (path === "big.ts") throw "git command failed: file too large for blame view (2000001 bytes)";
+  const t = repo[`${rev}|${path}`];
+  if (t === undefined) throw `git command failed: fatal: path '${path}' does not exist in '${rev}'`;
+  return t;
+});
+const step = (o: Partial<TraceStep> = {}): TraceStep => ({ path: "a.ts", side: "RIGHT", line: 5, quote: L(5), note: "n", ...o });
+const e = (path: string, quote: string) => ({ path, line: null, quote });
+
 describe("checkFindings", () => {
-  const files: FileHunks[] = [
-    { path: "a.ts", oldPath: null, hunks: [] },
-    { path: "new.ts", oldPath: "old.ts", hunks: [] },
-  ];
-  /** head: a.ts and new.ts; mergeBase: a.ts (other text) and old.ts. */
-  const repo: Record<string, string> = {
-    "head|a.ts": text,
-    "mergeBase|a.ts": "let gone = removed();\n",
-    "head|new.ts": "renamed head code here\n",
-    "mergeBase|old.ts": "renamed base code here\n",
-    "head|b.ts": "b at head only\n",
-    "head|c.ts": "c at head only\n",
-  };
-  /** Rejects like the app's read_file_at: git's message for a missing path, riff's for a big file. */
-  const reader = () => vi.fn(async (rev: Rev, path: string) => {
-    if (path === "big.ts") throw "git command failed: file too large for blame view (2000001 bytes)";
-    const t = repo[`${rev}|${path}`];
-    if (t === undefined) throw `git command failed: fatal: path '${path}' does not exist in '${rev}'`;
-    return t;
-  });
-  const step = (o: Partial<TraceStep> = {}): TraceStep => ({ path: "a.ts", side: "RIGHT", line: 5, quote: L(5), note: "n", ...o });
   const f = (o: Partial<AiFinding> = {}): AiFinding => ({
     id: "f0", path: "a.ts", side: "RIGHT", line: 5, startLine: null, severity: "high", body: "b",
     evidence: [{ path: "a.ts", line: 5, quote: L(5) }], status: "confirmed", quote: [],
     verification: { reason: "real", trace: [step(), step({ line: 7, quote: L(7) })] }, ...o,
   });
-  const e = (path: string, quote: string) => ({ path, line: null, quote });
 
   it("keeps a finding whose evidence and trace check out", async () => {
     const read = reader();
@@ -247,5 +248,86 @@ describe("checkFindings", () => {
     ], files, reader());
     expect([out[0].status, out[0].evidence.length, out[0].verification]).toEqual(["confirmed", 1, { reason: "r", trace: big, unchecked: true }]);
     expect(out[1].verification).toEqual({ reason: "r", trace: big });
+  });
+});
+
+describe("checkThreads", () => {
+  const c = (o: Partial<ThreadCheck> = {}): ThreadCheck => ({
+    threadId: "t1", point: "p", raisedBy: "viewer", verdict: "holds", reason: "r", evidence: [e("a.ts", L(5))], trace: [],
+    reply: "Thanks.", head: "H", lastCommentId: "c1", createdAt: "N", ...o,
+  });
+  const unclear = (o: Partial<ThreadCheck>): ThreadCheck => c({ verdict: "unclear", reply: "", ...o });
+  const nine = Array.from({ length: 9 }, () => step());
+
+  it("keeps a check whose evidence is found at head, reading each file once", async () => {
+    const read = reader();
+    const ok = c();
+    const out = await checkThreads([ok, c({ threadId: "t2", verdict: "does_not_hold" })], files, read);
+    expect(out[0]).toBe(ok);
+    expect(out[1]).toEqual(c({ threadId: "t2", verdict: "does_not_hold" }));
+    expect(read.mock.calls).toEqual([["head", "a.ts"], ["mergeBase", "a.ts"]]);
+  });
+
+  it("keeps evidence found only at the merge-base of a file the PR changes", async () => {
+    const evidence = [e("a.ts", "removed()"), e("new.ts", "renamed base code")];
+    expect(await checkThreads([c({ evidence })], files, reader())).toEqual([c({ evidence })]);
+  });
+
+  it("makes a check unclear, without its reply, when none of its evidence is found", async () => {
+    const out = await checkThreads([c({ evidence: [e("a.ts", "compute(99)"), e("b.ts", "nowhere to be found")] })], files, reader());
+    expect(out).toEqual([unclear({ evidence: [], problem: "evidence not found in the code" })]);
+  });
+
+  it("makes a holds or does_not_hold check with no evidence unclear, without reading", async () => {
+    const read = reader();
+    const out = await checkThreads([c({ evidence: [], trace: [step(), step()] }), c({ verdict: "does_not_hold", evidence: [] })], files, read);
+    expect(out).toEqual([
+      unclear({ evidence: [], trace: [step(), step()], problem: "no evidence" }),
+      unclear({ evidence: [], problem: "no evidence" }),
+    ]);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("a trace is optional, but one given must have 2 to 8 steps", async () => {
+    const out = await checkThreads([
+      c({ trace: [] }), c({ trace: nine.slice(1) }), c({ trace: [step()] }), c({ trace: nine }),
+    ], files, reader());
+    expect(out).toEqual([
+      c({ trace: [] }), c({ trace: nine.slice(1) }),
+      unclear({ trace: [step()], problem: "no failure path" }),
+      unclear({ trace: nine, problem: "failure path longer than 8 steps" }),
+    ]);
+  });
+
+  it("names the first step not found; moves a step to the one line its quote is on", async () => {
+    const bad = [step(), step({ line: 12, quote: "nowhere to be found" })];
+    const away = [step({ line: 11 }), step()];
+    const out = await checkThreads([c({ trace: bad }), c({ trace: away })], files, reader());
+    expect(out).toEqual([
+      unclear({ trace: bad, problem: "step 2 not found in a.ts:12" }),
+      c({ trace: [{ ...away[0], line: 5, movedFrom: 11 }, away[1]] }),
+    ]);
+  });
+
+  it("reads a LEFT step at the merge-base", async () => {
+    const read = reader();
+    const trace = [step(), step({ side: "LEFT", line: 1, quote: "let gone = removed();" })];
+    expect(await checkThreads([c({ trace })], files, read)).toEqual([c({ trace })]);
+    expect(read).toHaveBeenCalledWith("mergeBase", "a.ts");
+  });
+
+  it("keeps the verdict of a check with a step past the cap, marked unchecked", async () => {
+    const read = reader();
+    const trace = [step(), step({ path: "c.ts", line: 1, quote: "c at head only" })];
+    expect(await checkThreads([c({ trace })], files, read, 1)).toEqual([c({ trace, unchecked: true })]);
+    expect(read.mock.calls).toEqual([["head", "a.ts"]]);
+  });
+
+  it("returns an unclear check as it is, without reading", async () => {
+    const read = reader();
+    const u = unclear({ evidence: [e("a.ts", "compute(99)")], trace: [step({ quote: "nowhere to be found" })] });
+    const [out] = await checkThreads([u], files, read);
+    expect(out).toBe(u);
+    expect(read).not.toHaveBeenCalled();
   });
 });

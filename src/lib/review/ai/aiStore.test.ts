@@ -25,6 +25,13 @@ const rereview = () => ({
   verdicts: [{ threadId: "t", verdict: "addressed", reason: "ok", evidence: [{ path: "a.ts", line: null, quote: "q" }] }],
 });
 
+const threadCheck = () => ({
+  threadId: "t", point: "p", raisedBy: "viewer", verdict: "holds", reason: "r",
+  evidence: [{ path: "a.ts", line: 2, quote: "q" }], trace: [{ path: "a.ts", side: "RIGHT", line: 2, quote: "q", note: "n" }],
+  reply: "Thanks.", head: "h1", lastCommentId: "c1", createdAt: "2026-11-16T00:00:00.000Z",
+});
+const threadCheckRun = () => ({ head: "h1", createdAt: "2026-11-16T00:00:00.000Z", checked: 1, leftOut: 0 });
+
 beforeEach(() => vi.clearAllMocks());
 
 describe("aiStore", () => {
@@ -48,6 +55,20 @@ describe("aiStore", () => {
     expect(await loadAiResult(K)).toEqual(withRr);
     m.loadReview.mockResolvedValueOnce(result());
     expect(await loadAiResult(K)).toEqual(result());
+  });
+
+  it("thread checks are optional; a record may hold them, a re-review, or both", async () => {
+    const checks = { t: threadCheck(), u: { ...threadCheck(), threadId: "u", verdict: "unclear", reply: "", problem: "no evidence" } };
+    for (const v of [
+      { ...result(), threadChecks: checks, threadCheckRun: threadCheckRun() },
+      { ...result(), threadChecks: { t: { ...threadCheck(), unchecked: true } }, threadCheckRun: threadCheckRun() },
+      { ...result(), threadChecks: {}, threadCheckRun: threadCheckRun() },
+      { ...result(), rereview: rereview() },
+      { ...result(), rereview: rereview(), threadChecks: checks, threadCheckRun: threadCheckRun() },
+    ]) {
+      m.loadReview.mockResolvedValueOnce(v);
+      expect(await loadAiResult(K), JSON.stringify(v)).toEqual(v);
+    }
   });
 
   it("the model/effort a review ran with is optional: set, unset or absent (older records)", async () => {
@@ -108,6 +129,13 @@ describe("aiStore", () => {
       { ...result(), refuted: [{ ...refuted, line: null }] },
       { ...result(), refuted: [{ ...refuted, reason: undefined }] },
       { ...result(), refuted: [{ ...refuted, side: "UP" }] },
+      ...[
+        { verdict: "maybe" }, { raisedBy: "nobody" }, { trace: {} }, { trace: [{ path: "a.ts" }] }, { reply: null }, { reply: undefined },
+        { evidence: [{}] }, { point: 1 }, { head: undefined }, { lastCommentId: 1 }, { problem: null }, { unchecked: "yes" },
+      ].map((bad) => ({ ...result(), threadChecks: { t: { ...threadCheck(), ...bad } } })),
+      { ...result(), threadChecks: null }, { ...result(), threadChecks: [threadCheck()] },
+      { ...result(), threadCheckRun: null }, { ...result(), threadCheckRun: { ...threadCheckRun(), checked: "1" } },
+      { ...result(), threadCheckRun: { ...threadCheckRun(), leftOut: undefined } },
     ];
     for (const v of badNew) {
       m.loadReview.mockResolvedValueOnce(v);
