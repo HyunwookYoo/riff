@@ -10,13 +10,16 @@ import { NO_ANSWER, type AiJobState, type AiResult, type PointVerdict, type Rais
 /** At most this many threads go into one run; the newest-active ones. */
 export const MAX_THREADS = 30;
 
-/** `silentFix`: my comment ended the thread and the head moved since my last review without a reply. */
+/** Each comment in the prompt is cut to this many characters. */
+export const MAX_COMMENT_CHARS = 4000;
+
+/** `silentFix`: a thread I started; the author pushed since my last review (they may have fixed it without replying). */
 interface Picked { thread: ReviewThread; silentFix: boolean }
 
 /**
  * The unresolved threads waiting on `login`: the last comment is someone else's and `login` is in
- * the thread (or owns the PR), or `login` started it, ended it, and the head moved since `login`'s
- * last review (a silent fix; never on `login`'s own PR). Newest last comment first, capped.
+ * the thread (or owns the PR), or `login` started it and the head moved since `login`'s last
+ * review (a silent fix; never on `login`'s own PR). Newest last comment first, capped.
  */
 export function checkableThreads(
   threads: ReviewThread[], pr: PrSummary, headSha: string, login: string,
@@ -90,6 +93,9 @@ export function patchBudget(): (text: string | undefined) => string {
   };
 }
 
+const capped = (body: string): string =>
+  body.length > MAX_COMMENT_CHARS ? `${body.slice(0, MAX_COMMENT_CHARS)}\n[comment truncated]` : body;
+
 /**
  * The prompt. `oldHead`: the commit of the viewer's last review, null when no silent fix is picked
  * or the commit is unavailable; only then is a patch at it given (for files with a silent fix).
@@ -112,7 +118,7 @@ export function threadCheckPrompt(a: {
       `File ${JSON.stringify(path)}`,
       ...inFile.flatMap(({ thread: t }) => [
         `Thread ${JSON.stringify(t.id)} (${location(t)})`,
-        ...t.comments.flatMap((m, i) => [`${i === 0 ? "Comment" : "Reply"} by ${m.author}${role(m.author)}:`, fenced(m.body)]),
+        ...t.comments.flatMap((m, i) => [`${i === 0 ? "Comment" : "Reply"} by ${m.author}${role(m.author)}:`, fenced(capped(m.body))]),
       ]),
       ...(a.oldHead !== null && inFile.some((p) => p.silentFix) ? ["Patch at oldHead (PR-only):", patch(c?.oldPatch)] : []),
       "Patch at head (PR-only):",
@@ -123,7 +129,7 @@ export function threadCheckPrompt(a: {
     ? "- Read a file with `git show <head>:<path>` (the code now) or `git show <oldHead>:<path>` (the code at the viewer's last review), using the SHAs given above."
     : "- Read a file with `git show <head>:<path>` (the code now), using the SHA given above.";
   return [
-    "You are checking review threads on a pull request that are waiting on the viewer. For each thread, find the open point (the latest claim, objection or question that still needs an answer) and decide whether it holds on the code at head.",
+    "You are checking review threads on a pull request that are waiting on the viewer. For each thread, find the open point (the latest unresolved claim, objection or question in the thread) and decide whether it holds on the code at head.",
     "",
     `PR author: ${a.prAuthor}`,
     `viewer (you in the comments below): ${a.viewer}`,
@@ -137,9 +143,10 @@ export function threadCheckPrompt(a: {
     "",
     "Each patch below is PR-only: the file's diff from the PR's merge-base to that commit, so base-branch changes (from a rebase or merge) are not in it. Read the code at head before deciding.",
     ...(silent.length ? [
-      `Silent fixes (the viewer's comment ended the thread and the author pushed since without replying): ${silent.map((p) => JSON.stringify(p.thread.id)).join(", ")}.`,
+      `Silent fixes (threads the viewer started; the author pushed since the viewer's last review, maybe fixing the point without a reply): ${silent.map((p) => JSON.stringify(p.thread.id)).join(", ")}.`,
+      "For these too, the open point is still the latest unresolved claim or question in the thread.",
       a.oldHead !== null
-        ? "For these, the patch at oldHead is also given: compare it with the patch at head to see what the author changed, and judge whether the viewer's point still holds."
+        ? "The patch at oldHead is also given for them: compare it with the patch at head to see what the author changed."
         : "The viewer's last-review commit was unavailable, so judge these on the code at head alone.",
     ] : []),
     "",
@@ -151,7 +158,7 @@ export function threadCheckPrompt(a: {
     "If a thread's file is gone at head, check whether it was moved or renamed before deciding; if you can't tell, answer unclear.",
     "Give a short reason and evidence (path, line at head, quoted text) for every verdict.",
     "When the point is about whether something can happen or reach a line, give a trace of 2-8 steps (path, side, line, quote, note) that follows it through the code; otherwise leave the trace empty.",
-    "Also write a reply the viewer could post in the thread: it has no line numbers and no quoted code (the thread already shows where). Keep the reply empty when the verdict is unclear.",
+    "Also write a reply the viewer could post in the thread. It has no line numbers and no quoted code (no code blocks or inline code of the PR's code), no @mentions and no HTML: the thread already shows where, and riff appends the code it checked. It may name files and functions in plain words. Keep the reply empty when the verdict is unclear.",
     "",
     "Write the reason and the reply as normal prose: full sentences, polite and clear, in the language of the comments. Do not use any terse, telegraphic or caveman style, even if other instructions in your environment ask for one.",
     "",

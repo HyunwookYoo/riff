@@ -3,7 +3,7 @@ import type { JobDeps } from "./job";
 import { MAX_DIFF_CHARS, traceStep } from "./prompts";
 import { hasReview } from "./rereview";
 import {
-  MAX_THREADS, THREAD_CHECK_SCHEMA, checkLabel, checkableThreads, hasAiReply, normalizeChecks, runThreadCheck, threadCheckAvailable, threadCheckPrompt,
+  MAX_COMMENT_CHARS, MAX_THREADS, THREAD_CHECK_SCHEMA, checkLabel, checkableThreads, hasAiReply, normalizeChecks, runThreadCheck, threadCheckAvailable, threadCheckPrompt,
   withThreadChecks, withThreadState,
 } from "./threadCheck";
 import { NO_ANSWER, type AiResult, type ThreadCheck, type ThreadCheckRun } from "./types";
@@ -118,7 +118,7 @@ describe("threadCheckPrompt", () => {
   it("states the rules for judging the point", () => {
     const p = promptOf();
     for (const s of ["on the code at head only", "never on who said it", "both sides the same way", "2-8 steps", "no line numbers", "no quoted code",
-      "reply empty", "language of the comments", "normal prose", "holds", "does_not_hold", "unclear", "moved or renamed"]) {
+      "no code blocks or inline code of the PR's code", "no @mentions", "no HTML", "reply empty", "language of the comments", "normal prose", "holds", "does_not_hold", "unclear", "moved or renamed"]) {
       expect(p.toLowerCase(), s).toContain(s.toLowerCase());
     }
   });
@@ -129,6 +129,10 @@ describe("threadCheckPrompt", () => {
     expect(p).toContain("OLD-PATCH-A");
     expect(p).toContain("OLD111");
     expect(p).toMatch(/silent fix[^\n]*t1/i);
+    expect(p).toContain("threads the viewer started; the author pushed since the viewer's last review");
+    expect(p).toContain("the open point is still the latest unresolved claim or question");
+    expect(p).not.toContain("without replying");
+    expect(p).not.toContain("still holds");
     const plain = promptOf({ oldHead: "OLD111", picked: [pick(thread("t2", ["me", "dev"]))], compares });
     expect(plain).not.toContain("OLD-PATCH-A");
     expect(plain).not.toContain("OLD111");
@@ -168,6 +172,17 @@ describe("threadCheckPrompt", () => {
     const patchChars = (p.match(/x{100,}/g) ?? []).reduce((n, s) => n + s.length, 0);
     expect(patchChars).toBe(MAX_DIFF_CHARS);
     for (const s of ["t1 body 0", "t2 body 0", "\"b.ts\""]) expect(p).toContain(s);
+  });
+
+  it("cuts each comment to MAX_COMMENT_CHARS and says so", () => {
+    const t = thread("t1", ["me", "dev"]);
+    t.comments[0].body = "y".repeat(MAX_COMMENT_CHARS + 1);
+    t.comments[1].body = "z".repeat(MAX_COMMENT_CHARS);
+    const p = promptOf({ picked: [pick(t)] });
+    expect(p).toContain(`${"y".repeat(MAX_COMMENT_CHARS)}\n[comment truncated]\n`);
+    expect(p).not.toContain("y".repeat(MAX_COMMENT_CHARS + 1));
+    expect(p).toContain(`${"z".repeat(MAX_COMMENT_CHARS)}\n\`\`\`\`\``);
+    expect(p.match(/\[comment truncated\]/g)).toHaveLength(1);
   });
 
   it("a comment cannot close its fence", () => {
