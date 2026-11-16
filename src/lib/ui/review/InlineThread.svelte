@@ -10,7 +10,7 @@
   import { aiState } from "$lib/review/ai/aiState.svelte";
   import { verdictLabel } from "$lib/review/ai/rereview";
   import { checkLabel, hasAiReply } from "$lib/review/ai/threadCheck";
-  import type { AiEvidence } from "$lib/review/ai/types";
+  import type { CheckedEvidence } from "$lib/review/ai/types";
   import type { DraftOrigin, GhRepo, ReviewThread, Side } from "$lib/review/types";
   import TraceList from "./TraceList.svelte";
   import ThreadCheckReply from "./ThreadCheckReply.svelte";
@@ -124,15 +124,17 @@
         {thread.isResolved ? "Unresolve" : "Resolve"}
       </button>
     </div>
-    {#snippet evidenceList(evidence: AiEvidence[])}
+    {#snippet evidenceList(evidence: CheckedEvidence[])}
       <ul class="evidence">
         {#each evidence as e, i (i)}
           <li>
+            <!-- A merge-base item's line is on the old side. -->
             {#if onevidence && inPr(e.path)}
-              <button type="button" class="link" onclick={() => onevidence(e.path, e.line)}>{where(e.path, e.line)}</button>
+              <button type="button" class="link" onclick={() => onevidence(e.path, e.line, e.base ? "LEFT" : "RIGHT")}>{where(e.path, e.line)}</button>
             {:else}
               <span class="loc">{where(e.path, e.line)}</span>
             {/if}
+            {#if e.base}<span class="loc">(before this PR)</span>{/if}
             <pre class="quote">{e.quote}</pre>
           </li>
         {/each}
@@ -145,8 +147,8 @@
         </button>
         {#if verdictOpen}
           <pre class="body">{check.reason}</pre>
-          {#if check.problem}<p class="muted">{check.problem}</p>{/if}
-          {#if check.unchecked}<p class="muted">Not fully checked</p>{/if}
+          {#if check.problem}<p class="note">{check.problem}</p>{/if}
+          {#if check.unchecked}<p class="note">Not fully checked</p>{/if}
           {@render evidenceList(check.evidence)}
           <TraceList trace={check.trace} title="Path" {onevidence} />
           {#if check.reply}
@@ -230,14 +232,14 @@
   /* Per part, not on the block: TraceList sizes its own text, and must not be shrunk twice. */
   .verdict > .link,
   .verdict > .body,
-  .verdict > .muted,
+  .verdict > .note,
   .evidence {
     font-size: 0.85em;
   }
   .verdict > .link {
     text-align: left;
   }
-  .muted {
+  .note {
     margin: 2px 0 0;
     color: var(--muted);
   }

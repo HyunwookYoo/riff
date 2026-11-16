@@ -15,6 +15,10 @@ const isOptStr = (v: unknown): boolean => v === undefined || v === null || isStr
 const isEvidence = (v: unknown): boolean => Array.isArray(v) && v.every((e) =>
   isObj(e) && isStr(e.path) && (e.line === null || isInt(e.line)) && isStr(e.quote));
 
+/** Thread check evidence: `base` is absent (older records, or found at head) or true. */
+const isCheckedEvidence = (v: unknown): boolean => isEvidence(v)
+  && (v as Record<string, unknown>[]).every((e) => e.base === undefined || e.base === true);
+
 const isSeverity = (v: unknown): boolean => v === "high" || v === "medium" || v === "low";
 
 const isStep = (s: unknown): boolean => isObj(s) && isStr(s.path) && (s.side === "LEFT" || s.side === "RIGHT")
@@ -50,7 +54,7 @@ function isRereview(r: unknown): boolean {
 const isThreadCheck = (c: unknown): boolean => isObj(c) && isStr(c.threadId) && isStr(c.point)
   && (c.raisedBy === "viewer" || c.raisedBy === "author" || c.raisedBy === "other")
   && (c.verdict === "holds" || c.verdict === "does_not_hold" || c.verdict === "unclear")
-  && isStr(c.reason) && isEvidence(c.evidence) && Array.isArray(c.trace) && c.trace.every(isStep) && isStr(c.reply)
+  && isStr(c.reason) && isCheckedEvidence(c.evidence) && Array.isArray(c.trace) && c.trace.every(isStep) && isStr(c.reply)
   && (c.problem === undefined || isStr(c.problem)) && (c.unchecked === undefined || typeof c.unchecked === "boolean")
   && isStr(c.head) && isStr(c.lastCommentId) && isStr(c.createdAt);
 

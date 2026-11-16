@@ -62,6 +62,7 @@ describe("aiStore", () => {
     for (const v of [
       { ...result(), threadChecks: checks, threadCheckRun: threadCheckRun() },
       { ...result(), threadChecks: { t: { ...threadCheck(), unchecked: true } }, threadCheckRun: threadCheckRun() },
+      { ...result(), threadChecks: { t: { ...threadCheck(), evidence: [{ path: "a.ts", line: 2, quote: "q", base: true }] } } },
       { ...result(), threadChecks: {}, threadCheckRun: threadCheckRun() },
       { ...result(), rereview: rereview() },
       { ...result(), rereview: rereview(), threadChecks: checks, threadCheckRun: threadCheckRun() },
@@ -131,7 +132,7 @@ describe("aiStore", () => {
       { ...result(), refuted: [{ ...refuted, side: "UP" }] },
       ...[
         { verdict: "maybe" }, { raisedBy: "nobody" }, { trace: {} }, { trace: [{ path: "a.ts" }] }, { reply: null }, { reply: undefined },
-        { evidence: [{}] }, { point: 1 }, { head: undefined }, { lastCommentId: 1 }, { problem: null }, { unchecked: "yes" },
+        { evidence: [{}] }, { evidence: [{ path: "a.ts", line: 2, quote: "q", base: false }] }, { point: 1 }, { head: undefined }, { lastCommentId: 1 }, { problem: null }, { unchecked: "yes" },
       ].map((bad) => ({ ...result(), threadChecks: { t: { ...threadCheck(), ...bad } } })),
       { ...result(), threadChecks: null }, { ...result(), threadChecks: [threadCheck()] },
       { ...result(), threadCheckRun: null }, { ...result(), threadCheckRun: { ...threadCheckRun(), checked: "1" } },

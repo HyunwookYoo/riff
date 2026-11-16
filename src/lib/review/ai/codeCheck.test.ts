@@ -273,9 +273,10 @@ describe("checkThreads", () => {
     expect(read.mock.calls).toEqual([["head", "a.ts"], ["mergeBase", "a.ts"]]);
   });
 
-  it("keeps evidence found only at the merge-base of a file the PR changes", async () => {
+  it("keeps evidence found only at the merge-base of a file the PR changes, marked base", async () => {
     const evidence = [e("a.ts", "removed()"), e("new.ts", "renamed base code")];
-    expect(await checkThreads([c({ evidence })], files, reader())).toEqual([c({ evidence })]);
+    expect(await checkThreads([c({ evidence })], files, reader()))
+      .toEqual([c({ evidence: evidence.map((x) => ({ ...x, base: true })) })]);
   });
 
   it("makes a check unclear, without its reply, when none of its evidence is found", async () => {
@@ -299,8 +300,8 @@ describe("checkThreads", () => {
     ], files, reader());
     expect(out).toEqual([
       c({ trace: [] }), c({ trace: nine.slice(1) }),
-      unclear({ trace: [step()], problem: "no failure path" }),
-      unclear({ trace: nine, problem: "failure path longer than 8 steps" }),
+      unclear({ trace: [step()], problem: "trace needs 2 to 8 steps" }),
+      unclear({ trace: nine, problem: "trace needs 2 to 8 steps" }),
     ]);
   });
 
@@ -336,17 +337,47 @@ describe("checkThreads", () => {
     expect(read).not.toHaveBeenCalledWith(expect.anything(), roblox.path);
   });
 
-  it("marks a check unchecked when none of its evidence was read and no trace checks it", async () => {
+  it("drops evidence riff could not read once some was found or a trace checked the point", async () => {
     const big = e("big.ts", "anything here");
     const checked = [step(), step({ line: 7, quote: L(7) })];
+    const out = await checkThreads([c({ evidence: [big], trace: checked }), c({ evidence: [e("a.ts", L(5)), big] })], files, reader());
+    expect(out).toEqual([c({ evidence: [], trace: checked }), c({ evidence: [e("a.ts", L(5))] })]);
+  });
+
+  it("makes a check unclear, without its reply, when none of its evidence was read and no trace checked the point", async () => {
+    const big = e("big.ts", "anything here");
+    const pastCap = [step(), step({ path: "c.ts", line: 1, quote: "c at head only" })];
     const out = await checkThreads([
-      c({ evidence: [big] }), c({ evidence: [e("c.ts", "c at head only")] }), c({ evidence: [big], trace: checked }),
-      c({ evidence: [e("a.ts", L(5)), big] }),
-    ], files, reader(), 2);
+      c({ evidence: [big] }), c({ evidence: [e("b.ts", "b at head only")] }), c({ evidence: [big], trace: pastCap }),
+    ], files, reader(), 1);
+    const problem = "evidence not checked (read limit)";
     expect(out).toEqual([
-      c({ evidence: [big], unchecked: true }), c({ evidence: [e("c.ts", "c at head only")], unchecked: true }),
-      c({ evidence: [big], trace: checked }), c({ evidence: [e("a.ts", L(5)), big] }),
+      unclear({ evidence: [big], problem }), unclear({ evidence: [e("b.ts", "b at head only")], problem }),
+      unclear({ evidence: [big], trace: pastCap, problem }),
     ]);
+  });
+
+  it("stores the line each quote was found on (none when riff can't pin it) and marks merge-base-only evidence", async () => {
+    const at = (path: string, line: number | null, quote: string) => ({ path, line, quote });
+    const evidence = [
+      at("a.ts", 5, L(5)), at("a.ts", 9, L(5)), at("a.ts", 1, "compute(7)"), at("a.ts", null, L(3)),
+      at("a.ts", 1, "removed()"), at("new.ts", 4, "renamed base code"),
+    ];
+    const [out] = await checkThreads([c({ evidence })], files, reader());
+    expect(out).toEqual(c({ evidence: [
+      at("a.ts", 5, L(5)), at("a.ts", 5, L(5)), at("a.ts", null, "compute(7)"), at("a.ts", null, L(3)),
+      { ...at("a.ts", 1, "removed()"), base: true }, { ...at("new.ts", 4, "renamed base code"), base: true },
+    ] }));
+    const ok = c({ evidence: [at("a.ts", 5, L(5))] });
+    expect((await checkThreads([ok], files, reader()))[0]).toBe(ok);
+  });
+
+  it("leaves a finding's evidence lines as the AI gave them", async () => {
+    const f: AiFinding = {
+      id: "f0", path: "a.ts", side: "RIGHT", line: 5, startLine: null, severity: "high", body: "b",
+      evidence: [{ path: "a.ts", line: 9, quote: L(5) }, { path: "a.ts", line: 1, quote: "removed()" }], status: "unconfirmed", quote: [],
+    };
+    expect(await checkFindings([f], files, reader())).toEqual([f]);
   });
 
   it("returns an unclear check as it is, without reading", async () => {

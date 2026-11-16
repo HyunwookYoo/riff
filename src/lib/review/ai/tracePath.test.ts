@@ -171,6 +171,15 @@ describe("replyAppendix", () => {
     ].join("\n"));
   });
 
+  it("marks evidence found only at the merge-base as before this PR", () => {
+    const md = replyAppendix(check({ evidence: [
+      { path: "src/a.ts", line: 3, quote: "const x = f();", base: true },
+      { path: "src/b.ts", line: null, quote: "let y = g();", base: true },
+    ] }));
+    expect(md).toContain("- `src/a.ts:3` (before this PR)\n  `````ts\n");
+    expect(md).toContain("- `src/b.ts` (before this PR)\n  `````ts\n");
+  });
+
   it("adds the checked trace as a Path sub-list of numbered steps", () => {
     const md = replyAppendix(check({ verdict: "does_not_hold", trace: [step(), step({ path: "src/b.cpp", line: 10, quote: "int y;", note: "y" })] }));
     expect(md).toBe([

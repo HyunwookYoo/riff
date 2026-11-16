@@ -1,5 +1,5 @@
 import { fenced } from "./prompts";
-import type { AiFinding, ThreadCheck, TraceStep } from "./types";
+import type { AiFinding, CheckedEvidence, ThreadCheck, TraceStep } from "./types";
 
 /** Code block languages GitHub knows, by file extension; others get a plain block. */
 const LANG: Record<string, string> = {
@@ -90,16 +90,20 @@ export function draftTrace(f: AiFinding): string {
   return traceMarkdown(f.failureScenario ?? "", f.verification.trace);
 }
 
+/** An evidence item's head: `path:line` (the path alone without a line), "(before this PR)" when only the merge-base has it. */
+const evidenceHead = (e: CheckedEvidence): string =>
+  `${codeSpan(e.line !== null ? `${e.path}:${e.line}` : e.path)}${e.base ? " (before this PR)" : ""}`;
+
 /**
  * What Add appends to a thread check's reply: the checked code, as a collapsed `<details>` whose
- * summary is the point (made `inert`), listing the evidence with its quotes fenced and, when riff
- * checked all of it, the trace as a "Path" sub-list of `traceMarkdown`'s steps. Empty for an
- * unclear check (it has no reply).
+ * summary is the point (made `inert`), listing the evidence (each item where riff found it; see
+ * `CheckedEvidence`) with its quotes fenced and, when riff checked all of it, the trace as a
+ * "Path" sub-list of `traceMarkdown`'s steps. Empty for an unclear check (it has no reply).
  */
 export function replyAppendix(c: ThreadCheck): string {
   if (c.verdict === "unclear") return "";
   const summary = inert(oneLine(c.point)) || "Checked in the code";
-  const items = c.evidence.map((e) => quotedItem("- ", codeSpan(e.line !== null ? `${e.path}:${e.line}` : e.path), e.path, e.quote));
+  const items = c.evidence.map((e) => quotedItem("- ", evidenceHead(e), e.path, e.quote));
   if (c.trace.length > 0 && !c.unchecked) items.push(`- Path\n${indent(c.trace.map(stepItem).join("\n"), 2)}`);
   return `\n\n<details><summary>${summary}</summary>\n\n${items.join("\n")}\n\n</details>`;
 }

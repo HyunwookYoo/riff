@@ -1,6 +1,6 @@
 import type { FileHunks } from "../types";
 import { ROBLOX_PREFIX } from "./roblox";
-import type { AiEvidence, AiFinding, ThreadCheck, TraceStep } from "./types";
+import type { AiEvidence, AiFinding, CheckedEvidence, ThreadCheck, TraceStep } from "./types";
 
 /** The two revisions a review reads: the PR's head and its merge-base. */
 export type Rev = "head" | "mergeBase";
@@ -86,6 +86,7 @@ export function quoteInFile(text: string, quote: string): boolean {
 }
 
 const key = (rev: Rev, path: string): string => `${rev}|${path}`;
+const revOf = (k: string): Rev => k.slice(0, k.indexOf("|")) as Rev;
 const isRoblox = (path: string): boolean => path.startsWith(ROBLOX_PREFIX);
 const inPr = (path: string, files: FileHunks[]): boolean => files.some((f) => f.path === path || f.oldPath === path);
 const basePath = (path: string, files: FileHunks[]): string => files.find((f) => f.path === path)?.oldPath ?? path;
@@ -109,14 +110,22 @@ const traceOf = (f: AiFinding): TraceStep[] => f.verification?.trace ?? [];
 /** By key, the file text, null when absent at that rev; a key absent was not read (cap, or unreadable). */
 type Texts = Map<string, string | null>;
 
+/** Where riff found an evidence quote: the rev, and its line (null when none was given or riff couldn't pin it). */
+interface Found { rev: Rev; line: number | null }
+
 /**
- * "found" at a place riff read; else "unread" when some place it may be was not read (kept);
- * else "missing" (dropped).
+ * Where `e` is: the first place riff read that has its quote (head, then the merge-base), with
+ * the line `stepLine` finds from the line given; else "unread" when some place it may be was not
+ * read; else "missing".
  */
-function evidenceAt(e: AiEvidence, files: FileHunks[], texts: Texts): "found" | "unread" | "missing" {
-  const ts = evidenceKeys(e, files).map((k) => texts.get(k));
-  if (ts.some((t) => typeof t === "string" && quoteInFile(t, e.quote))) return "found";
-  return ts.includes(undefined) ? "unread" : "missing";
+function evidenceAt(e: AiEvidence, files: FileHunks[], texts: Texts): Found | "unread" | "missing" {
+  let unread = false;
+  for (const k of evidenceKeys(e, files)) {
+    const t = texts.get(k);
+    if (t === undefined) unread = true;
+    else if (t !== null && quoteInFile(t, e.quote)) return { rev: revOf(k), line: e.line === null ? null : stepLine(t, e.line, e.quote) };
+  }
+  return unread ? "unread" : "missing";
 }
 
 /** The line the step's quote is on; "unchecked" when its file was not read; null when not found. */
@@ -132,18 +141,19 @@ interface Quoted { evidence: AiEvidence[]; trace: TraceStep[] }
 
 /**
  * `q` checked against `texts`: `evidence` without the items not found (the same array when none
- * is dropped), `trace` with steps found away from their line moved to it (`movedFrom`: the line
- * given; the same array when none moved), and the first `problem`: no evidence left, with
- * `needsTrace` a trace not of 2 to 8 steps, or a step not found. `unchecked`: with `needsTrace`,
- * a step riff couldn't read. `evidenceUnread`: evidence is left but none of it was found where
- * riff read (all unread, or Roblox).
+ * is dropped), `found` where each item left was found (null: unread), `trace` with steps found
+ * away from their line moved to it (`movedFrom`: the line given; the same array when none moved),
+ * and the first `problem`: no evidence left, with `needsTrace` a trace not of 2 to 8 steps
+ * (`lengthProblem` when given), or a step not found. `unchecked`: with `needsTrace`, a step riff
+ * couldn't read.
  */
 function checkQuoted(
-  q: Quoted, needsTrace: boolean, files: FileHunks[], texts: Texts,
-): Quoted & { problem: string | null; unchecked: boolean; evidenceUnread: boolean } {
+  q: Quoted, needsTrace: boolean, files: FileHunks[], texts: Texts, lengthProblem?: string,
+): Quoted & { found: (Found | null)[]; problem: string | null; unchecked: boolean } {
   // Roblox evidence is kept unread here: roblox.ts checks it.
   const where = q.evidence.map((e) => (isRoblox(e.path) ? "unread" : evidenceAt(e, files, texts)));
   const kept = q.evidence.filter((_, i) => where[i] !== "missing");
+  const found = where.flatMap((w) => (w === "missing" ? [] : [w === "unread" ? null : w]));
   const old = q.trace;
   const at = old.map((s) => stepAt(s, files, texts));
   const failed = at.indexOf(null);
@@ -151,16 +161,16 @@ function checkQuoted(
   const moved = old.map((s, i) => (typeof at[i] === "number" && at[i] !== s.line ? { ...s, line: at[i], movedFrom: s.line } : s));
   const problem = !kept.length
     ? q.evidence.every((e) => tooShort(e.quote)) ? "evidence quotes too short" : "evidence not found in the code"
-    : needsTrace && old.length < MIN_STEPS ? "no failure path"
-      : needsTrace && old.length > MAX_STEPS ? `failure path longer than ${MAX_STEPS} steps`
+    : needsTrace && (old.length < MIN_STEPS || old.length > MAX_STEPS)
+      ? lengthProblem ?? (old.length < MIN_STEPS ? "no failure path" : `failure path longer than ${MAX_STEPS} steps`)
         : failed >= 0 ? `step ${failed + 1} not found in ${old[failed].path}:${old[failed].line}`
           : null;
   return {
     evidence: kept.length === q.evidence.length ? q.evidence : kept,
+    found,
     trace: moved.some((s, i) => s !== old[i]) ? moved : old,
     problem,
     unchecked: needsTrace && at.includes("unchecked"),
-    evidenceUnread: kept.length > 0 && !where.includes("found"),
   };
 }
 
@@ -181,6 +191,20 @@ function check(f: AiFinding, files: FileHunks[], texts: Texts): AiFinding {
  */
 const checkable = (c: ThreadCheck): boolean => c.verdict !== "unclear" && c.evidence.some((e) => !isRoblox(e.path));
 
+/**
+ * The items of `evidence` riff found (`found` non-null), each at the line it was found on and
+ * marked `base` when found at the merge-base; the same array when that changes nothing.
+ */
+function placed(evidence: CheckedEvidence[], found: (Found | null)[]): CheckedEvidence[] {
+  const out = evidence.flatMap((e, i): CheckedEvidence[] => {
+    const f = found[i];
+    if (!f) return [];
+    if (f.rev === "head" && f.line === e.line && !e.base) return [e];
+    return [{ path: e.path, line: f.line, quote: e.quote, ...(f.rev === "mergeBase" ? { base: true as const } : {}) }];
+  });
+  return out.length === evidence.length && out.every((x, i) => x === evidence[i]) ? evidence : out;
+}
+
 function checkThread(c: ThreadCheck, files: FileHunks[], texts: Texts): ThreadCheck {
   if (c.verdict === "unclear") return c;
   if (!checkable(c)) {
@@ -189,12 +213,15 @@ function checkThread(c: ThreadCheck, files: FileHunks[], texts: Texts): ThreadCh
   }
   const repo = c.evidence.some((e) => isRoblox(e.path)) ? c.evidence.filter((e) => !isRoblox(e.path)) : c.evidence;
   // A trace is optional; one given must have 2 to 8 steps.
-  const q = checkQuoted({ evidence: repo, trace: c.trace }, c.trace.length > 0, files, texts);
+  const q = checkQuoted({ evidence: repo, trace: c.trace }, c.trace.length > 0, files, texts, "trace needs 2 to 8 steps");
   if (q.problem) return { ...c, evidence: q.evidence, trace: q.trace, verdict: "unclear", reply: "", problem: q.problem };
-  // Evidence riff couldn't read proves nothing unless a trace checked the point.
-  const unchecked = q.unchecked || (q.evidenceUnread && !c.trace.length);
-  if (!unchecked && q.trace === c.trace && q.evidence === c.evidence) return c;
-  return { ...c, evidence: q.evidence, trace: q.trace, ...(unchecked ? { unchecked } : {}) };
+  // The reply goes out with its evidence: only what riff found is kept, and something must have been checked.
+  if (!q.found.some((f) => f !== null) && (!c.trace.length || q.unchecked)) {
+    return { ...c, evidence: q.evidence, trace: q.trace, verdict: "unclear", reply: "", problem: "evidence not checked (read limit)" };
+  }
+  const evidence = placed(q.evidence, q.found);
+  if (!q.unchecked && q.trace === c.trace && evidence === c.evidence) return c;
+  return { ...c, evidence, trace: q.trace, ...(q.unchecked ? { unchecked: true } : {}) };
 }
 
 /** read_file_at's error for a blob over its size cap (git/cli.rs): the file is there but unread. */
@@ -203,7 +230,7 @@ const unreadable = (e: unknown): boolean => String(e).includes("file too large")
 /**
  * By key, each (rev, path) the items' repo steps and evidence may be in, read once and at most
  * `maxFiles` of them. Steps first: an unread step leaves its item unchecked, an unread evidence
- * item is only kept. `read` rejects for a file absent at `rev`, which counts as not found.
+ * item proves nothing. `read` rejects for a file absent at `rev`, which counts as not found.
  */
 async function readTexts(
   items: Quoted[], files: FileHunks[], read: (rev: Rev, path: string) => Promise<string>, maxFiles: number,
@@ -215,9 +242,8 @@ async function readTexts(
   }
   const texts: Texts = new Map();
   await Promise.all([...wanted].slice(0, maxFiles).map(async (k) => {
-    const sep = k.indexOf("|");
     try {
-      texts.set(k, await read(k.slice(0, sep) as Rev, k.slice(sep + 1)));
+      texts.set(k, await read(revOf(k), k.slice(k.indexOf("|") + 1)));
     } catch (e) {
       if (!unreadable(e)) texts.set(k, null);
     }
@@ -244,8 +270,9 @@ export async function checkFindings(
  * `checks` with their evidence and traces checked against the code as `checkFindings` does: a
  * holds / does_not_hold check with no evidence, none found (Roblox evidence is dropped), a trace
  * given that is not 2 to 8 steps, or a step not found becomes unclear with the first `problem` and
- * no reply. A check with a step riff couldn't read, or with only unread evidence and no trace,
- * keeps its verdict, marked `unchecked`. Unclear checks are not read.
+ * no reply; so does one with none of its evidence found and no trace riff fully checked. Otherwise
+ * only the evidence riff found is kept, at the line it is on (`CheckedEvidence`), and a check with
+ * a step riff couldn't read keeps its verdict, marked `unchecked`. Unclear checks are not read.
  */
 export async function checkThreads(
   checks: ThreadCheck[], files: FileHunks[], read: (rev: Rev, path: string) => Promise<string>, maxFiles = MAX_FILES,

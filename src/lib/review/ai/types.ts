@@ -39,10 +39,15 @@ export const NO_ANSWER = "no answer";
 export interface RereviewResult { fromHead: string; toHead: string; createdAt: string; verdicts: ThreadVerdict[] }
 export type PointVerdict = "holds" | "does_not_hold" | "unclear";
 export type RaisedBy = "viewer" | "author" | "other";
+/**
+ * A thread check's evidence item. On a holds / does_not_hold check riff found its quote: `line` is
+ * the line it is on (null when riff couldn't pin it), `base` set when only the merge-base has it.
+ */
+export interface CheckedEvidence extends AiEvidence { base?: true }
 /** One thread's check. `head`: the PR head it was made at; `lastCommentId`: the thread's last comment then. */
 export interface ThreadCheck {
   threadId: string; point: string; raisedBy: RaisedBy; verdict: PointVerdict;
-  reason: string; evidence: AiEvidence[]; trace: TraceStep[]; reply: string;
+  reason: string; evidence: CheckedEvidence[]; trace: TraceStep[]; reply: string;
   problem?: string; unchecked?: boolean;
   head: string; lastCommentId: string; createdAt: string;
 }
