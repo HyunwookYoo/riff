@@ -37,12 +37,25 @@ export interface ThreadVerdict { threadId: string; verdict: Verdict; reason: str
 export const NO_ANSWER = "no answer";
 /** Whether the commits since my last submitted review (`fromHead`) address my open threads. */
 export interface RereviewResult { fromHead: string; toHead: string; createdAt: string; verdicts: ThreadVerdict[] }
+export type PointVerdict = "holds" | "does_not_hold" | "unclear";
+export type RaisedBy = "viewer" | "author" | "other";
+/** One thread's check. `head`: the PR head it was made at; `lastCommentId`: the thread's last comment then. */
+export interface ThreadCheck {
+  threadId: string; point: string; raisedBy: RaisedBy; verdict: PointVerdict;
+  reason: string; evidence: AiEvidence[]; trace: TraceStep[]; reply: string;
+  problem?: string; unchecked?: boolean;
+  head: string; lastCommentId: string; createdAt: string;
+}
+/** The last run: how many threads it checked and how many the cap left out. */
+export interface ThreadCheckRun { head: string; createdAt: string; checked: number; leftOut: number }
 /** `headSha` is "" when no AI review ran yet and the record only holds a re-review (see `hasReview`). */
 export interface AiResult {
   version: 1; key: PrKey; headSha: string; baseSha: string; mergeBase: string;
   createdAt: string; chapters: AiChapter[]; findings: AiFinding[];
   handled: Record<string, "added" | "discarded">;   // finding id → what the user did
   rereview?: RereviewResult;
+  threadChecks?: Record<string, ThreadCheck>;
+  threadCheckRun?: ThreadCheckRun;
   /** What the review ran with (null = the CLI's default); absent in records from before riff chose. */
   model?: string | null; effort?: string | null;
   /** Roblox parity on: the reference commit the Roblox pass read, or why it didn't run. */

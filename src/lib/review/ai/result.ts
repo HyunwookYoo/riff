@@ -6,7 +6,7 @@ import type { AiChapter, AiEvidence, AiFinding, AiResult, RefutedFinding, Severi
 type Candidate = Omit<AiFinding, "id" | "status" | "quote">;
 
 const bad = (what: string) => new Error(`ai-malformed: ${what}`);
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+export const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isStr = (v: unknown): v is string => typeof v === "string";
 
 export function evidenceOf(v: unknown): AiEvidence[] {
@@ -73,7 +73,7 @@ const isStep = (s: unknown): s is TraceStep => isObj(s) && isStr(s.path) && (s.s
   && Number.isInteger(s.line) && (s.line as number) >= 1 && isStr(s.quote) && isStr(s.note);
 
 /** A trace with a malformed step is no trace: riff couldn't check the step left out. */
-function traceOf(v: unknown): TraceStep[] {
+export function traceOf(v: unknown): TraceStep[] {
   if (!Array.isArray(v) || !v.every(isStep)) return [];
   return v.map(({ path, side, line, quote, note }) => ({ path, side, line, quote, note }));
 }

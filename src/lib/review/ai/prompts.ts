@@ -67,7 +67,7 @@ export const ROBLOX_SCHEMA = {
 };
 
 /** One step of a confirmed verdict's failure path (see codeCheck.ts). */
-const traceStep = {
+export const traceStep = {
   type: "object",
   properties: {
     path: { type: "string" }, side: { type: "string", enum: ["LEFT", "RIGHT"] }, line: { type: "integer", minimum: 1 },

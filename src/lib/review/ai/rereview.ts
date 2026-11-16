@@ -2,8 +2,9 @@ import type { FileCompare } from "../gh";
 import type { GhRepo, PrKey, PrSummary, ReviewThread } from "../types";
 import { CLI_DEFAULT, baseInstructions, type JobDeps } from "./job";
 import type { AiChoice } from "./modelChoice";
-import { MAX_DIFF_CHARS, UNTRUSTED_END, UNTRUSTED_START, evidenceItem, fenced, gitRules, memoryRules } from "./prompts";
+import { UNTRUSTED_END, UNTRUSTED_START, evidenceItem, fenced, gitRules, memoryRules } from "./prompts";
 import { evidenceOf } from "./result";
+import { location, patchBudget } from "./threadCheck";
 import { NO_ANSWER, type AiJobState, type AiResult, type RereviewResult, type ThreadVerdict, type Verdict } from "./types";
 
 export const REREVIEW_SCHEMA = {
@@ -61,26 +62,6 @@ export function withRereview(prev: AiResult | null, key: PrKey, rr: RereviewResu
   return {
     version: 1, key, headSha: "", baseSha: "", mergeBase: "", createdAt: rr.createdAt,
     chapters: [], findings: [], handled: {}, rereview: rr,
-  };
-}
-
-function location(t: ReviewThread): string {
-  if (t.subjectType === "FILE") return "file-level comment";
-  const side = t.side === "LEFT" ? "old side (LEFT)" : "new side (RIGHT)";
-  if (t.line === null) return `${side}, outdated; originally at line ${t.originalLine ?? "?"}`;
-  return `${side}, line ${t.startLine !== null && t.startLine !== t.line ? `${t.startLine}-${t.line}` : t.line}`;
-}
-
-/** A patch formatter sharing one `MAX_DIFF_CHARS` budget across all patches; the rest is cut or omitted. */
-function patchBudget(): (text: string | undefined) => string {
-  let left = MAX_DIFF_CHARS;
-  return (text) => {
-    if (!text) return "(empty: no PR change to this path at this commit — the file may be unchanged from the base, or absent at this commit; check with `git show <sha>:<path>` and `git log --name-status`)";
-    if (left <= 0) return "[patches truncated]";
-    const cut = text.length > left;
-    const out = cut ? `${text.slice(0, left)}\n[patches truncated]` : text;
-    left -= text.length;
-    return fenced(out);
   };
 }
 
