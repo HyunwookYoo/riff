@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { codeSpan, draftTrace, inert, inertProse, traceMarkdown } from "./tracePath";
-import type { AiFinding, TraceStep } from "./types";
+import { codeSpan, draftTrace, inert, inertProse, replyAppendix, traceMarkdown } from "./tracePath";
+import type { AiFinding, ThreadCheck, TraceStep } from "./types";
 
 const step = (over: Partial<TraceStep> = {}): TraceStep => ({
   path: "src/a.ts", side: "RIGHT", line: 3, quote: "const x = f();", note: "x is read here", ...over,
@@ -133,5 +133,89 @@ describe("draftTrace", () => {
 
   it("is empty without a verification", () => {
     expect(draftTrace(finding({ verification: undefined }))).toBe("");
+  });
+});
+
+describe("replyAppendix", () => {
+  const check = (over: Partial<ThreadCheck> = {}): ThreadCheck => ({
+    threadId: "t1", point: "x can be null here (reviewer's question)", raisedBy: "viewer", verdict: "holds",
+    reason: "r", evidence: [{ path: "src/a.ts", line: 3, quote: "const x = f();" }], trace: [], reply: "Yes, it can.",
+    head: "H1", lastCommentId: "c1", createdAt: "2026-01-01T00:00:00Z", ...over,
+  });
+
+  it("is empty for an unclear check", () => {
+    expect(replyAppendix(check({ verdict: "unclear" }))).toBe("");
+  });
+
+  it("is a collapsed details block with the evidence listed and fenced", () => {
+    const md = replyAppendix(check({ evidence: [
+      { path: "src/a.ts", line: 3, quote: "const x = f();" },
+      { path: "Makefile", line: null, quote: "a:\n\tb\n" },
+    ] }));
+    expect(md).toBe([
+      "",
+      "",
+      "<details><summary>x can be null here (reviewer's question)</summary>",
+      "",
+      "- `src/a.ts:3`",
+      "  `````ts",
+      "  const x = f();",
+      "  `````",
+      "- `Makefile`",
+      "  `````",
+      "  a:",
+      "  \tb",
+      "  `````",
+      "",
+      "</details>",
+    ].join("\n"));
+  });
+
+  it("adds the checked trace as a Path sub-list of numbered steps", () => {
+    const md = replyAppendix(check({ verdict: "does_not_hold", trace: [step(), step({ path: "src/b.cpp", line: 10, quote: "int y;", note: "y" })] }));
+    expect(md).toBe([
+      "",
+      "",
+      "<details><summary>x can be null here (reviewer's question)</summary>",
+      "",
+      "- `src/a.ts:3`",
+      "  `````ts",
+      "  const x = f();",
+      "  `````",
+      "- Path",
+      "  1. `src/a.ts:3` — x is read here",
+      "     `````ts",
+      "     const x = f();",
+      "     `````",
+      "  2. `src/b.cpp:10` — y",
+      "     `````cpp",
+      "     int y;",
+      "     `````",
+      "",
+      "</details>",
+    ].join("\n"));
+  });
+
+  it("leaves out the trace of a check riff could not fully read", () => {
+    const md = replyAppendix(check({ trace: [step()], unchecked: true }));
+    expect(md).toContain("- `src/a.ts:3`\n  `````ts\n  const x = f();\n  `````\n\n</details>");
+    expect(md).not.toContain("Path");
+  });
+
+  it("names the summary when there is no point, and keeps it on one line", () => {
+    expect(replyAppendix(check({ point: "  " }))).toContain("<summary>Checked in the code</summary>");
+    expect(replyAppendix(check({ point: "a\n  b" }))).toContain("<summary>a b</summary>");
+  });
+
+  it("neutralises HTML, mentions and references in the point and the notes", () => {
+    const md = replyAppendix(check({ point: "@team: a < b && #12", trace: [step({ note: "</details> @dev #3" })] }));
+    expect(md).toContain(`<summary>@${WJ}team: a &lt; b &amp;&amp; #${WJ}12</summary>`);
+    expect(md).toContain(`— &lt;/details&gt; @${WJ}dev #${WJ}3\n`);
+    expect(md.match(/<\/details>/g)).toHaveLength(1);
+  });
+
+  it("fences a quote with a fence longer than its longest backtick run", () => {
+    const md = replyAppendix(check({ evidence: [{ path: "a.ts", line: 1, quote: "let s = ``````x``````;" }] }));
+    expect(md).toContain("  ```````ts\n  let s = ``````x``````;\n  ```````");
   });
 });

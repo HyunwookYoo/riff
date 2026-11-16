@@ -9,13 +9,17 @@
   import { textStash } from "./composerAt";
   import { aiState } from "$lib/review/ai/aiState.svelte";
   import { verdictLabel } from "$lib/review/ai/rereview";
-  import type { GhRepo, ReviewThread } from "$lib/review/types";
+  import { checkLabel, hasAiReply } from "$lib/review/ai/threadCheck";
+  import type { AiEvidence } from "$lib/review/ai/types";
+  import type { DraftOrigin, GhRepo, ReviewThread, Side } from "$lib/review/types";
+  import TraceList from "./TraceList.svelte";
+  import ThreadCheckReply from "./ThreadCheckReply.svelte";
   import { ownThreadResolved, recordReaction } from "$lib/review/ai/memory";
 
   let { threadId, onevidence }: {
     threadId: string;
-    /** Select `path` and reveal `line` (null: just the file). */
-    onevidence?: (path: string, line: number | null) => void;
+    /** Select `path` and reveal `line` (null: just the file) on `side` (default RIGHT). */
+    onevidence?: (path: string, line: number | null, side?: Side) => void;
   } = $props();
 
   const thread = $derived(reviewState.detail?.threads.find((t) => t.id === threadId));
@@ -30,8 +34,13 @@
   let replying = $state(textStash.has(replyKey));
   let showResolved = $state(false);
   let verdictOpen = $state(false);
-  const rereview = $derived(reviewState.selectedKey ? aiState.results[reviewState.selectedKey]?.rereview : undefined);
-  const verdict = $derived(rereview?.verdicts.find((v) => v.threadId === threadId));
+  const ai = $derived(reviewState.selectedKey ? aiState.results[reviewState.selectedKey] : undefined);
+  // A thread check replaces the old re-review verdict of the same thread.
+  const check = $derived(ai?.threadChecks?.[threadId]);
+  const status = $derived(thread && !thread.isResolved && check ? checkLabel(check, reviewState.headSha, thread) : null);
+  const added = $derived(hasAiReply(replies, threadId));
+  const rereview = $derived(ai?.rereview);
+  const verdict = $derived(check ? undefined : rereview?.verdicts.find((v) => v.threadId === threadId));
   const label = $derived(thread && !thread.isResolved ? verdictLabel(verdict, rereview?.toHead !== reviewState.headSha) : null);
   const inPr = (path: string) => reviewState.files.some((x) => x.path === path);
   const where = (path: string, line: number | null) => (line !== null ? `${path}:${line}` : path);
@@ -56,12 +65,17 @@
     };
   });
 
-  async function addReply(body: string) {
+  async function writeReply(body: string, origin: DraftOrigin) {
     const r = reviewState.record;
     const last = thread?.comments.at(-1);
     if (!r) return false;
     const preview = (last?.body ?? "").slice(0, 80);
-    await writeRecord(addItem(r, { kind: "reply", threadId, preview }, body, "mine"));
+    await writeRecord(addItem(r, { kind: "reply", threadId, preview }, body, origin));
+    return true;
+  }
+
+  async function addReply(body: string) {
+    if (!(await writeReply(body, "mine"))) return false;
     replying = false;
     return true;
   }
@@ -110,25 +124,46 @@
         {thread.isResolved ? "Unresolve" : "Resolve"}
       </button>
     </div>
-    {#if label && verdict}
+    {#snippet evidenceList(evidence: AiEvidence[])}
+      <ul class="evidence">
+        {#each evidence as e, i (i)}
+          <li>
+            {#if onevidence && inPr(e.path)}
+              <button type="button" class="link" onclick={() => onevidence(e.path, e.line)}>{where(e.path, e.line)}</button>
+            {:else}
+              <span class="loc">{where(e.path, e.line)}</span>
+            {/if}
+            <pre class="quote">{e.quote}</pre>
+          </li>
+        {/each}
+      </ul>
+    {/snippet}
+    {#if status && check}
+      <div class="verdict {status.tone}">
+        <button type="button" class="link" onclick={() => (verdictOpen = !verdictOpen)}>
+          {verdictOpen ? "▾" : "▸"} <b>{status.text}</b> {check.point}
+        </button>
+        {#if verdictOpen}
+          <pre class="body">{check.reason}</pre>
+          {#if check.problem}<p class="muted">{check.problem}</p>{/if}
+          {#if check.unchecked}<p class="muted">Not fully checked</p>{/if}
+          {@render evidenceList(check.evidence)}
+          <TraceList trace={check.trace} title="Path" {onevidence} />
+          {#if check.reply}
+            {#key check.createdAt}
+              <ThreadCheckReply {check} stale={status.stale !== null} {added} onadd={writeReply} />
+            {/key}
+          {/if}
+        {/if}
+      </div>
+    {:else if label && verdict}
       <div class="verdict {label.tone}">
         <button type="button" class="link" onclick={() => (verdictOpen = !verdictOpen)}>
           {verdictOpen ? "▾" : "▸"} <b>{label.text}</b>
         </button>
         {#if verdictOpen}
           <pre class="body">{verdict.reason}</pre>
-          <ul class="evidence">
-            {#each verdict.evidence as e, i (i)}
-              <li>
-                {#if onevidence && inPr(e.path)}
-                  <button type="button" class="link" onclick={() => onevidence(e.path, e.line)}>{where(e.path, e.line)}</button>
-                {:else}
-                  <span class="loc">{where(e.path, e.line)}</span>
-                {/if}
-                <pre class="quote">{e.quote}</pre>
-              </li>
-            {/each}
-          </ul>
+          {@render evidenceList(verdict.evidence)}
         {/if}
       </div>
     {/if}
@@ -192,8 +227,19 @@
     color: var(--muted);
     cursor: pointer;
   }
-  .verdict {
+  /* Per part, not on the block: TraceList sizes its own text, and must not be shrunk twice. */
+  .verdict > .link,
+  .verdict > .body,
+  .verdict > .muted,
+  .evidence {
     font-size: 0.85em;
+  }
+  .verdict > .link {
+    text-align: left;
+  }
+  .muted {
+    margin: 2px 0 0;
+    color: var(--muted);
   }
   .verdict.ok b {
     color: var(--ok-fg, #2da44e);

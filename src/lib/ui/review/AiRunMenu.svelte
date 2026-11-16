@@ -10,7 +10,7 @@
   import { popoverPlace } from "./popoverPlace";
 
   // The ▾ beside a run button: this run only, with a model/effort other than the defaults.
-  // `repo` (AI review only, not re-review) adds its Roblox parity setting, saved at once.
+  // `repo` (AI review only, not thread check) adds its Roblox parity setting, saved at once.
   let { what, onrun, repo }: { what: string; onrun: (c: AiChoice) => void; repo?: GhRepo } = $props();
 
   const WIDTH = 260;

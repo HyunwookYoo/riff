@@ -93,7 +93,7 @@
       {#if unsaved}
         <p class="unsaved">Enter a valid model id to save it; runs use {choiceLabel({ model: appState.aiModel, effort: appState.aiEffort })} until then.</p>
       {/if}
-      <p class="hint">Applies to AI review and re-review. Uses your Claude Code login.</p>
+      <p class="hint">Applies to AI review and thread checks. Uses your Claude Code login.</p>
       <div class="docs">
         <span class="name">Roblox docs</span>
         <span class="date">{docsBusy ? "updating…" : docs === undefined ? "…" : docsDateLabel(docs)}</span>

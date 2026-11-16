@@ -8,6 +8,7 @@
   import { draftTrace } from "$lib/review/ai/tracePath";
   import type { PrKey, Side } from "$lib/review/types";
   import { textStash } from "./composerAt";
+  import TraceList from "./TraceList.svelte";
 
   let {
     prKey,
@@ -135,25 +136,7 @@
   {#if v?.problem}<p class="muted">Not confirmed: {v.problem}</p>{/if}
   {#if v?.reason}<p class="muted">{unconfirmed ? "Verifier" : "Verified"}: {v.reason}</p>{/if}
   {#if !unconfirmed && v?.unchecked}<p class="muted">Failure path not checked against the code</p>{/if}
-  {#if trace.length > 0}
-    <details class="trace" open={trace.length <= 3}>
-      <summary>Failure path ({trace.length} step{trace.length === 1 ? "" : "s"})</summary>
-      <ol>
-        {#each trace as s, i (i)}
-          <li>
-            {#if inPr(s.path)}
-              <button type="button" class="link" onclick={() => onevidence(s.path, s.line, s.side)}>{where(s.path, s.line)}</button>
-            {:else}
-              <span class="loc">{where(s.path, s.line)}</span>
-            {/if}
-            — {s.note}
-            {#if s.movedFrom !== undefined}<span class="moved">(line corrected from {s.movedFrom})</span>{/if}
-            <pre class="quote">{s.quote}</pre>
-          </li>
-        {/each}
-      </ol>
-    </details>
-  {/if}
+  <TraceList {trace} title="Failure path" {onevidence} />
   {#if evidenceOpen}
     <ul class="evidence">
       {#each f.evidence as e, i (i)}
@@ -255,22 +238,10 @@
     background: var(--accent);
     color: white;
   }
-  .evidence,
-  .trace ol {
+  .evidence {
     margin: 4px 0 0;
     padding-left: 16px;
     font-size: 0.85em;
-  }
-  .trace {
-    margin-top: 4px;
-  }
-  .trace summary {
-    cursor: pointer;
-    font-size: 0.85em;
-    color: var(--muted);
-  }
-  .moved {
-    color: var(--muted);
   }
   .link {
     padding: 0;

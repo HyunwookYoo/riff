@@ -1,5 +1,5 @@
 import { fenced } from "./prompts";
-import type { AiFinding, TraceStep } from "./types";
+import type { AiFinding, ThreadCheck, TraceStep } from "./types";
 
 /** Code block languages GitHub knows, by file extension; others get a plain block. */
 const LANG: Record<string, string> = {
@@ -58,14 +58,18 @@ function lang(path: string): string {
   return dot > 0 ? (LANG[name.slice(dot + 1).toLowerCase()] ?? "") : "";
 }
 
-/** One list item: the quote's block is indented under the marker so it stays inside the item. */
+/** `s` with each non-empty line indented by `n` spaces. */
+const indent = (s: string, n: number): string => s.split("\n").map((l) => (l === "" ? l : " ".repeat(n) + l)).join("\n");
+
+/** One list item: `head`, then `path`'s `quote` fenced and indented under the marker so it stays inside the item. */
+function quotedItem(marker: string, head: string, path: string, quote: string): string {
+  const lines = fenced(quote.replace(/\n+$/, "")).split("\n");
+  lines[0] += lang(path);
+  return `${marker}${head}\n${indent(lines.join("\n"), marker.length)}`;
+}
+
 function stepItem(s: TraceStep, i: number): string {
-  const marker = `${i + 1}. `;
-  const pad = " ".repeat(marker.length);
-  const lines = fenced(s.quote.replace(/\n+$/, "")).split("\n");
-  lines[0] += lang(s.path);
-  const block = lines.map((l) => (l === "" ? l : pad + l)).join("\n");
-  return `${marker}${codeSpan(`${s.path}:${s.line}`)} — ${inertProse(oneLine(s.note))}\n${block}`;
+  return quotedItem(`${i + 1}. `, `${codeSpan(`${s.path}:${s.line}`)} — ${inertProse(oneLine(s.note))}`, s.path, s.quote);
 }
 
 /**
@@ -84,4 +88,18 @@ export function traceMarkdown(scenario: string, trace: TraceStep[]): string {
 export function draftTrace(f: AiFinding): string {
   if (f.status !== "confirmed" || !f.verification || f.verification.unchecked) return "";
   return traceMarkdown(f.failureScenario ?? "", f.verification.trace);
+}
+
+/**
+ * What Add appends to a thread check's reply: the checked code, as a collapsed `<details>` whose
+ * summary is the point (made `inert`), listing the evidence with its quotes fenced and, when riff
+ * checked all of it, the trace as a "Path" sub-list of `traceMarkdown`'s steps. Empty for an
+ * unclear check (it has no reply).
+ */
+export function replyAppendix(c: ThreadCheck): string {
+  if (c.verdict === "unclear") return "";
+  const summary = inert(oneLine(c.point)) || "Checked in the code";
+  const items = c.evidence.map((e) => quotedItem("- ", codeSpan(e.line !== null ? `${e.path}:${e.line}` : e.path), e.path, e.quote));
+  if (c.trace.length > 0 && !c.unchecked) items.push(`- Path\n${indent(c.trace.map(stepItem).join("\n"), 2)}`);
+  return `\n\n<details><summary>${summary}</summary>\n\n${items.join("\n")}\n\n</details>`;
 }

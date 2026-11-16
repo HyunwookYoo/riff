@@ -1,5 +1,5 @@
 import type { FileCompare } from "../gh";
-import type { GhRepo, PrKey, PrSummary, ReviewThread } from "../types";
+import type { DraftItem, GhRepo, PrKey, PrSummary, ReviewThread } from "../types";
 import { checkThreads } from "./codeCheck";
 import { CLI_DEFAULT, baseInstructions, revReader, type JobDeps } from "./job";
 import type { AiChoice } from "./modelChoice";
@@ -256,6 +256,30 @@ export function withThreadChecks(prev: AiResult | null, key: PrKey, checks: Thre
     if (c.reason !== NO_ANSWER || !old || old.reason === NO_ANSWER) stored[c.threadId] = c;
   }
   return { ...r, threadChecks: stored, threadCheckRun: run };
+}
+
+const CHECK_LABELS: Record<PointVerdict, { text: string; tone: "ok" | "warn" | "muted" }> = {
+  holds: { text: "✓ Holds", tone: "ok" },
+  does_not_hold: { text: "✗ Doesn't hold", tone: "warn" },
+  unclear: { text: "? Unclear", tone: "muted" },
+};
+
+/**
+ * How `c` reads on `thread` at `headSha`. `stale`: "replies" when the thread has a comment newer
+ * than the check (over "head"), "head" when it was made at another head.
+ */
+export function checkLabel(
+  c: ThreadCheck, headSha: string | null, thread: ReviewThread,
+): { text: string; tone: "ok" | "warn" | "muted"; stale: "head" | "replies" | null } {
+  const stale = thread.comments.at(-1)?.id !== c.lastCommentId ? "replies" : c.head !== headSha ? "head" : null;
+  const l = CHECK_LABELS[c.verdict];
+  const suffix = stale === "replies" ? " (new replies)" : stale === "head" ? " (other commit)" : "";
+  return { ...l, text: `${l.text}${c.reason === NO_ANSWER ? " (no answer)" : ""}${suffix}`, stale };
+}
+
+/** The draft already has an AI reply (edited or not) to thread `threadId`. */
+export function hasAiReply(items: DraftItem[], threadId: string): boolean {
+  return items.some((i) => i.target.kind === "reply" && i.target.threadId === threadId && (i.origin === "ai" || i.origin === "ai-edited"));
 }
 
 /** New review `r` with the thread state (re-review, thread checks) of `prev`: it is about the threads, not the review. */

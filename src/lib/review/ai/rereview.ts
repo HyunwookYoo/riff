@@ -1,11 +1,4 @@
-import type { PrSummary, ReviewThread } from "../types";
 import { NO_ANSWER, type AiResult, type ThreadVerdict, type Verdict } from "./types";
-
-/** The head moved since my last submitted review, and threads I started are still open. */
-export function rereviewAvailable(pr: PrSummary, threads: ReviewThread[], login: string): boolean {
-  return pr.myLastReviewSha !== null && pr.myLastReviewSha !== pr.headSha
-    && threads.some((t) => !t.isResolved && t.comments[0]?.author === login);
-}
 
 const VERDICT_LABELS: Record<Verdict, { text: string; tone: "ok" | "warn" | "muted" }> = {
   addressed: { text: "✓ Addressed", tone: "ok" },

@@ -36,7 +36,7 @@
   import NewSinceView from "./NewSinceView.svelte";
   import InlineFinding from "./InlineFinding.svelte";
   import ChapterIntent from "./ChapterIntent.svelte";
-  import RereviewButton from "./RereviewButton.svelte";
+  import ThreadCheckButton from "./ThreadCheckButton.svelte";
   import { reviewExtension, setInlineItems, trackView, type InlineItem } from "./cmReview";
   import { clickComposer, composerKey, textStash, type ComposerAt } from "./composerAt";
 
@@ -482,7 +482,7 @@
         </div>
         {#if tab === "description"}
           <div class="description">
-            {#if summary}<div class="rereview-row"><RereviewButton pr={summary} /></div>{/if}
+            {#if summary}<div class="thread-check-row"><ThreadCheckButton pr={summary} /></div>{/if}
             <PrOverview full />
           </div>
         {:else}
@@ -603,11 +603,11 @@
     min-height: 0;
     overflow-y: auto;
   }
-  .rereview-row {
+  .thread-check-row {
     display: flex;
     padding: 0 10px;
   }
-  .rereview-row:empty {
+  .thread-check-row:empty {
     display: none;
   }
   .placeholder {

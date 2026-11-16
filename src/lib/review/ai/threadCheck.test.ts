@@ -3,11 +3,11 @@ import type { JobDeps } from "./job";
 import { MAX_DIFF_CHARS, traceStep } from "./prompts";
 import { hasReview } from "./rereview";
 import {
-  MAX_THREADS, THREAD_CHECK_SCHEMA, checkableThreads, normalizeChecks, runThreadCheck, threadCheckAvailable, threadCheckPrompt,
+  MAX_THREADS, THREAD_CHECK_SCHEMA, checkLabel, checkableThreads, hasAiReply, normalizeChecks, runThreadCheck, threadCheckAvailable, threadCheckPrompt,
   withThreadChecks, withThreadState,
 } from "./threadCheck";
 import { NO_ANSWER, type AiResult, type ThreadCheck, type ThreadCheckRun } from "./types";
-import type { PrDetail, PrSummary, ReviewThread } from "../types";
+import type { DraftItem, DraftOrigin, PrDetail, PrSummary, ReviewThread } from "../types";
 
 const thread = (id: string, authors = ["me"], o: Partial<ReviewThread> = {}): ReviewThread => ({
   id, path: "a.ts", side: "RIGHT", line: 3, startLine: null, originalLine: 3, isResolved: false, isOutdated: false,
@@ -398,5 +398,52 @@ describe("withThreadState", () => {
     const r = review();
     expect(withThreadState(r, null)).toBe(r);
     expect(withThreadState(r, review({ headSha: "H1" }))).toStrictEqual(review());
+  });
+});
+
+describe("checkLabel", () => {
+  const t = thread("t1", ["me", "dev"]); // last comment t1c1
+  const check = (o: Partial<ThreadCheck> = {}): ThreadCheck => ({
+    threadId: "t1", point: "p", raisedBy: "author", verdict: "holds", reason: "r", evidence: [], trace: [], reply: "",
+    head: "H1", lastCommentId: "t1c1", createdAt: "c", ...o,
+  });
+
+  it("labels each verdict", () => {
+    expect(checkLabel(check(), "H1", t)).toEqual({ text: "✓ Holds", tone: "ok", stale: null });
+    expect(checkLabel(check({ verdict: "does_not_hold" }), "H1", t)).toEqual({ text: "✗ Doesn't hold", tone: "warn", stale: null });
+    expect(checkLabel(check({ verdict: "unclear" }), "H1", t)).toEqual({ text: "? Unclear", tone: "muted", stale: null });
+  });
+
+  it("marks a placeholder check with no answer", () => {
+    expect(checkLabel(check({ verdict: "unclear", reason: NO_ANSWER }), "H1", t)).toEqual({ text: "? Unclear (no answer)", tone: "muted", stale: null });
+  });
+
+  it("marks a check made at another head", () => {
+    expect(checkLabel(check(), "H2", t)).toEqual({ text: "✓ Holds (other commit)", tone: "ok", stale: "head" });
+    expect(checkLabel(check({ verdict: "unclear", reason: NO_ANSWER }), null, t)).toEqual({
+      text: "? Unclear (no answer) (other commit)", tone: "muted", stale: "head",
+    });
+  });
+
+  it("marks a check made before a newer comment in the thread, over another head", () => {
+    expect(checkLabel(check({ lastCommentId: "t1c0" }), "H1", t)).toEqual({ text: "✓ Holds (new replies)", tone: "ok", stale: "replies" });
+    expect(checkLabel(check({ lastCommentId: "t1c0" }), "H2", t)).toEqual({ text: "✓ Holds (new replies)", tone: "ok", stale: "replies" });
+  });
+});
+
+describe("hasAiReply", () => {
+  const item = (threadId: string, origin: DraftOrigin, kind: "reply" | "body" = "reply"): DraftItem => ({
+    id: `${threadId}-${origin}`, body: "b", origin, unplaced: false,
+    target: kind === "reply" ? { kind: "reply", threadId, preview: "" } : { kind: "body", location: "" },
+  });
+
+  it("is true when the draft has an AI reply to the thread, edited or not", () => {
+    expect(hasAiReply([item("t1", "ai")], "t1")).toBe(true);
+    expect(hasAiReply([item("t1", "ai-edited")], "t1")).toBe(true);
+  });
+
+  it("is false for my own reply, another thread's AI reply, or no reply", () => {
+    expect(hasAiReply([item("t1", "mine"), item("t2", "ai"), item("t1", "ai", "body")], "t1")).toBe(false);
+    expect(hasAiReply([], "t1")).toBe(false);
   });
 });
