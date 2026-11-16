@@ -389,6 +389,119 @@ This conversion is automatic and visible in the draft item's tag.
   From there the user can draft a reply or resolve the thread. Nothing is
   posted or resolved automatically.
 
+*Replaced by Thread check (below), 2026-11-16. Stored re-review verdicts are
+still read and shown.*
+
+### Thread check
+
+*(User decisions, 2026-11-16.)* Review threads argue about the code: a
+reviewer says "this breaks when X", the author answers "X can't happen"; the
+author says "fixed in the last push"; someone asks "can this be null?". The
+user wants the AI to check the open point of each such thread against the
+code and hand them a reply draft that says what the code actually does. It
+must work for any kind of open point, not one hard-coded case, and for the
+user in either role (reviewer of someone else's PR, or author of their own).
+
+**Why:** today the user has to read the code themselves to decide whether a
+reply's claim holds, and Re-review only checks threads the user started and
+only after a push; a claim answered without a code change can't be checked.
+
+Goals:
+- One button, **Check threads**, one AI run, replacing Re-review.
+- Per thread: the open point, a verdict on it, checked evidence, and a reply
+  draft the user can add, edit or ignore.
+
+Non-goals: posting or resolving anything automatically; checking threads the
+user has no stake in; a per-thread check button (can be added later).
+
+Anti-goals: a reply draft that sides with whoever spoke last without reading
+the code; a draft built on quotes riff could not find in the code.
+
+**Which threads** (the union, unresolved only):
+1. *My turn:* the last comment is not the viewer's, and the viewer either
+   commented in the thread or is the PR's author. This includes every thread
+   someone else opened on the viewer's own PR.
+2. *Silent fixes:* threads the viewer started, when the head moved since the
+   viewer's last submitted review (today's Re-review set: the author may have
+   pushed a fix without replying).
+
+The button shows when this set is non-empty. At most 30 threads per run, the
+most recently active first; the result says how many were left out. *(My
+call: keeps one run's prompt and time bounded.)*
+
+**What the AI gets:** for each thread its location, every comment with its
+author and whether that author is the PR author or the viewer, the file's
+PR-only patch at head (`base...head`), and for set 2 also the patch at the
+viewer's last review (`base...oldHead`), as Re-review does today. It reads
+any other code it needs through the usual read-only git rules, at head.
+The thread text is untrusted data.
+
+**What it returns per thread:**
+- `point`: the open point, rewritten as one checkable statement and who
+  raised it — e.g. "X cannot happen (author's reply)", "the null check in
+  Foo() fixes the crash (author's reply)", "`bar` can be null here (reviewer's
+  question)". For a silent fix the point is the viewer's original concern.
+- `raisedBy`: **viewer / author / other** — a structured field (the PR
+  author, the viewer, or anyone else), since memory and the UI may not rely
+  on the prose `point`. When the viewer is the PR author, "author" wins.
+- `verdict` on that statement: **holds / does not hold / unclear**, judged on
+  the code at head only — never on who said it or how confidently. The
+  prompt tells the AI to check claims from both sides the same way.
+- `reason`, `evidence` (path, side, line, quote) and, when the statement is
+  about whether something can happen or reach a line, a `trace` of 2-8 steps
+  as in Verified failure paths (the path that makes it happen, or the guards
+  that stop it).
+- `reply`: a reply draft in the thread's language, written as the viewer to
+  the other participant, polite full sentences, stating the finding. It may
+  name files and functions but carries **no line numbers and no quoted
+  code**: riff appends the checked evidence and trace itself (below), so
+  nothing unchecked about the code goes out under the user's name. Empty
+  when the verdict is unclear. *(My call, after the builder read.)*
+
+**riff checks it** with the Verified failure paths rules (`codeCheck.ts`):
+evidence quotes must be found at head or at the merge-base, trace steps at
+their line. A holds / does-not-hold verdict with no evidence left, or with a
+failing trace step, becomes **unclear** with the problem shown ("step 2 not
+found in Foo.cpp:120") and its reply is dropped. Steps riff could not read
+leave the verdict but mark it "not fully checked".
+*(My calls, after the builder read:)* the trace is optional — riff can't tell
+which points need one, so a missing trace is fine; a trace that is given must
+have 2-8 steps and every step must pass, or the verdict is unclear. LEFT-side
+steps are allowed and read at the merge-base (a point may be about code the
+PR removed). `checkFindings` is generalized (or a sibling added) rather than
+duplicated.
+
+**Shown** on each checked thread, inline and in the Outdated threads area,
+replacing the Re-review verdict line: the point, the verdict label (✓ Holds /
+✗ Doesn't hold / ? Unclear), and when expanded the reason, evidence and
+numbered trace (steps in PR files clickable). A verdict made at another head
+says "(other commit)"; one made before a newer comment in the thread says
+"(new replies)".
+
+**Reply draft:** the expanded verdict has **Add reply** and **Edit** (like an
+AI finding). The reply goes into the draft review as a normal `reply` item
+with origin `ai` / `ai-edited`; riff appends the checked evidence locations
+(`path:line` with the quote) and, when there is one, the checked trace, as
+the collapsed `<details>` block used for findings, with the same escaping. Nothing is
+added automatically.
+
+**Kept from Re-review:** the queue, cancel, model/effort menu, the
+PR-only comparison and fetching the old review commit by SHA (set 2 only),
+staleness by head.
+
+**Review memory** *(my call, after the builder read)*: only for threads the
+viewer started, mapped back to the old words so old and new memories compare:
+point raised by the viewer (their concern) — holds = not addressed, doesn't
+hold = addressed; raised by the author (a counter-claim or "fixed") — holds =
+addressed, doesn't hold = not addressed; unclear = unclear; raised by others
+— not recorded.
+
+**Storage** *(my call, after the builder read)*: verdicts are kept per
+thread, each with the head it was made at and the id of the thread's last
+comment then. A run updates the threads it checked and keeps the others, so
+a later, smaller run never erases earlier verdicts. A thread with no
+thread-check verdict still shows its old re-review verdict.
+
 ### Submitting
 
 - Submit uses GraphQL so new threads and replies go into one review: create
