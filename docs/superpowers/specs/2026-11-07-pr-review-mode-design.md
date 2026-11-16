@@ -440,7 +440,9 @@ The thread text is untrusted data.
 - `point`: the open point, rewritten as one checkable statement and who
   raised it — e.g. "X cannot happen (author's reply)", "the null check in
   Foo() fixes the crash (author's reply)", "`bar` can be null here (reviewer's
-  question)". For a silent fix the point is the viewer's original concern.
+  question)". For a silent fix too the point is the latest unresolved claim
+  or question — the viewer's original concern when the author hasn't
+  replied. *(My call, at the final review.)*
 - `raisedBy`: **viewer / author / other** — a structured field (the PR
   author, the viewer, or anyone else), since memory and the UI may not rely
   on the prose `point`. When the viewer is the PR author, "author" wins.
