@@ -239,7 +239,7 @@ describe("normalizeChecks", () => {
 });
 
 const detail = (o: Partial<PrDetail> = {}): PrDetail => ({
-  body: "", headSha: "H2", baseSha: "B2", conversation: [], pendingReviewId: null, pendingReviewCommit: null,
+  body: "", bodyHtml: "", headSha: "H2", baseSha: "B2", conversation: [], pendingReviewId: null, pendingReviewCommit: null,
   threads: [thread("t1", ["dev"]), thread("t2", ["dev"], { path: "b.ts" }), thread("t3", ["me", "dev"])],
   ...o,
 });

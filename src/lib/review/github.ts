@@ -190,8 +190,8 @@ export async function searchPrs(
 const DETAIL_QUERY = `query($id: ID!) {
   node(id: $id) {
     ... on PullRequest {
-      body headRefOid baseRefOid
-      comments(first: 100) { nodes { id author { login } body createdAt } }
+      body bodyHTML headRefOid baseRefOid
+      comments(first: 100) { nodes { id author { login } body bodyHTML createdAt } }
       reviews(states: [PENDING], first: 1) { nodes { id commit { oid } } }
       reviewThreads(first: 100) {
         nodes {
@@ -203,16 +203,18 @@ const DETAIL_QUERY = `query($id: ID!) {
   }
 }`;
 
-interface RawComment { id: string; author: { login: string } | null; body: string; createdAt: string }
+/** `bodyHTML`: only where the query asks for it (the conversation, not review threads). */
+interface RawComment { id: string; author: { login: string } | null; body: string; bodyHTML?: string; createdAt: string }
 
 const mapComment = (c: RawComment): ThreadComment => ({
   id: c.id, author: c.author?.login ?? "ghost", body: c.body, createdAt: c.createdAt,
+  ...(c.bodyHTML === undefined ? {} : { bodyHtml: c.bodyHTML }),
 });
 
 export async function prDetail(host: string, nodeId: string): Promise<PrDetail> {
   const d = await ghGraphql<{
     node: {
-      body: string; headRefOid: string; baseRefOid: string;
+      body: string; bodyHTML: string; headRefOid: string; baseRefOid: string;
       comments: { nodes: RawComment[] };
       reviews: { nodes: { id: string; commit: { oid: string } | null }[] };
       reviewThreads: {
@@ -232,7 +234,7 @@ export async function prDetail(host: string, nodeId: string): Promise<PrDetail> 
     subjectType: t.subjectType, comments: t.comments.nodes.map(mapComment),
   }));
   return {
-    body: n.body, headSha: n.headRefOid, baseSha: n.baseRefOid,
+    body: n.body, bodyHtml: n.bodyHTML, headSha: n.headRefOid, baseSha: n.baseRefOid,
     conversation: n.comments.nodes.map(mapComment), threads,
     pendingReviewId: n.reviews.nodes[0]?.id ?? null,
     pendingReviewCommit: n.reviews.nodes[0]?.commit?.oid ?? null,

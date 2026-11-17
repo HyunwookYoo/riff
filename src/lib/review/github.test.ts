@@ -269,8 +269,8 @@ describe("prDetail", () => {
   it("maps threads, ghost authors and pending review id", async () => {
     gql.mockResolvedValue({
       node: {
-        body: "desc", headRefOid: "H", baseRefOid: "B",
-        comments: { nodes: [{ id: "c1", author: null, body: "hi", createdAt: "t" }] },
+        body: "desc", bodyHTML: "<p>desc</p>", headRefOid: "H", baseRefOid: "B",
+        comments: { nodes: [{ id: "c1", author: null, body: "hi", bodyHTML: "<p>hi</p>", createdAt: "t" }] },
         reviews: { nodes: [{ id: "R1", commit: { oid: "C1" } }] },
         reviewThreads: {
           nodes: [{
@@ -283,8 +283,8 @@ describe("prDetail", () => {
     } as never);
     const d = await prDetail("h", "PR1");
     expect(d).toEqual({
-      body: "desc", headSha: "H", baseSha: "B", pendingReviewId: "R1", pendingReviewCommit: "C1",
-      conversation: [{ id: "c1", author: "ghost", body: "hi", createdAt: "t" }],
+      body: "desc", bodyHtml: "<p>desc</p>", headSha: "H", baseSha: "B", pendingReviewId: "R1", pendingReviewCommit: "C1",
+      conversation: [{ id: "c1", author: "ghost", body: "hi", bodyHtml: "<p>hi</p>", createdAt: "t" }],
       threads: [{
         id: "T1", path: "a.ts", side: "LEFT", line: null, startLine: null, originalLine: 7,
         isResolved: false, isOutdated: true, subjectType: "LINE",

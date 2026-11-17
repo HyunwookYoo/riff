@@ -17,7 +17,7 @@ const summary = (n: number, o: Partial<PrSummary> = {}): PrSummary => ({
   mine: "requested", myLastReviewSha: null, viewer: "me", ...o,
 });
 const detail = (head: string, base: string): PrDetail => ({
-  body: "desc", headSha: head, baseSha: base, conversation: [], threads: [],
+  body: "desc", bodyHtml: "", headSha: head, baseSha: base, conversation: [], threads: [],
   pendingReviewId: null, pendingReviewCommit: null,
 });
 

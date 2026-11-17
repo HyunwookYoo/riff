@@ -17,7 +17,7 @@ const rec = (items: DraftItem[], over: Partial<PrRecord> = {}): PrRecord => ({
   version: 1, key: K, items, body: "", event: "COMMENT", anchorHead: H, viewedHead: H, ...over,
 });
 const detail = (over: Partial<PrDetail> = {}): PrDetail => ({
-  body: "", headSha: H, baseSha: "base", conversation: [], threads: [],
+  body: "", bodyHtml: "", headSha: H, baseSha: "base", conversation: [], threads: [],
   pendingReviewId: null, pendingReviewCommit: null, ...over,
 });
 

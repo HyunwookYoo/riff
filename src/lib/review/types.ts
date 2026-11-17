@@ -15,14 +15,16 @@ export interface PrSummary {
   headSha: string; baseSha: string; baseRef: string; updatedAt: string;
   mine: "requested" | "reviewed" | null; myLastReviewSha: string | null; viewer: string;
 }
-export interface ThreadComment { id: string; author: string; body: string; createdAt: string }
+/** `bodyHtml`: GitHub's rendered body, unsanitized; only on PR conversation comments. */
+export interface ThreadComment { id: string; author: string; body: string; bodyHtml?: string; createdAt: string }
 export interface ReviewThread {
   id: string; path: string; side: Side; line: number | null; startLine: number | null;
   originalLine: number | null; isResolved: boolean; isOutdated: boolean;
   subjectType: "LINE" | "FILE"; comments: ThreadComment[];
 }
+/** `bodyHtml`: GitHub's rendered `body`, unsanitized (see `sanitizeHtml`). */
 export interface PrDetail {
-  body: string; headSha: string; baseSha: string; conversation: ThreadComment[];
+  body: string; bodyHtml: string; headSha: string; baseSha: string; conversation: ThreadComment[];
   threads: ReviewThread[]; pendingReviewId: string | null;
   pendingReviewCommit: string | null;
 }
