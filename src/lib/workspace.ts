@@ -10,7 +10,7 @@ import {
   validateRepo,
 } from "./git";
 import { compare } from "./compare";
-import { resetHistory } from "./commitHistory";
+import { enterHistoryMode, resetHistory } from "./commitHistory";
 import {
   loadCurrentBranch,
   loadPendingOp,
@@ -278,11 +278,15 @@ export async function loadMainRepo(
     // Cheap to skip if the user never enters blame — listRepoFiles for each
     // repo runs in parallel, and the backend caches the result.
     void prewarmRepoFiles(root, appState.repos);
-    // The Working (Changes) view is the default on app open — populate its
-    // status here (loadMainRepo doesn't otherwise). Other modes load on entry,
-    // and a mid-session repo switch keeps whatever mode the user is in.
+    // A repo switch keeps the user's mode. Changes (the default on app open)
+    // and the graph show the new repo's data at once, so load it here; other
+    // modes load on entry.
     if (appState.appMode === "changes") {
       void loadStatus();
+      void loadPendingOp();
+    } else if (appState.appMode === "history") {
+      // resetHistory above dropped the old repo's log.
+      void enterHistoryMode();
       void loadPendingOp();
     }
   } catch (e) {

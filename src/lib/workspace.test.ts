@@ -7,12 +7,28 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 vi.mock("./store.svelte", () => ({
   appState: { repos: [], startBranch: "", targetBranch: "" },
 }));
-vi.mock("./git", () => ({ validateRepo: vi.fn().mockRejectedValue("not a repo") }));
+vi.mock("./git", () => ({
+  validateRepo: vi.fn().mockRejectedValue("not a repo"),
+  listSubmodules: vi.fn().mockResolvedValue([]),
+  listRefs: vi.fn().mockResolvedValue([]),
+  addRecentRepo: vi.fn().mockResolvedValue([]),
+  listRepoFiles: vi.fn().mockResolvedValue([]),
+}));
 vi.mock("./compare", () => ({}));
 vi.mock("./blameCache", () => ({ clearBlameCache: vi.fn() }));
+vi.mock("./commitHistory", () => ({ resetHistory: vi.fn(), enterHistoryMode: vi.fn() }));
+vi.mock("./workingCopy", () => ({
+  loadCurrentBranch: vi.fn(),
+  loadPendingOp: vi.fn(),
+  loadStatus: vi.fn(),
+  resetWorkingCopy: vi.fn(),
+}));
 
 import { loadMainRepo, repoPathFor } from "./workspace";
 import { appState } from "./store.svelte";
+import { validateRepo } from "./git";
+import { enterHistoryMode } from "./commitHistory";
+import { loadStatus } from "./workingCopy";
 
 beforeEach(() => {
   appState.repos = [];
@@ -50,5 +66,17 @@ describe("loadMainRepo", () => {
     await loadMainRepo("/other", { silent: true });
     expect(appState.history).toEqual([]);
     expect(appState.forwardHistory).toEqual([]);
+  });
+
+  it("reloads the graph for the new repo when switching repos in graph view", async () => {
+    // resetHistory drops the old repo's log; without a refetch the graph stays empty.
+    vi.mocked(validateRepo).mockResolvedValueOnce("/other");
+    appState.manualReposByMain = {};
+    appState.tabOrderByMain = {};
+    appState.appMode = "history";
+    await loadMainRepo("/other");
+    expect(appState.error).toBeNull();
+    expect(enterHistoryMode).toHaveBeenCalledTimes(1);
+    expect(loadStatus).not.toHaveBeenCalled();
   });
 });

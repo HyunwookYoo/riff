@@ -6,7 +6,7 @@
     loadMainRepo,
     removeManualRepoFromWorkspace,
   } from "$lib/workspace";
-  import { setWorkspaceLayout } from "$lib/git";
+  import { removeRecentRepo, setWorkspaceLayout } from "$lib/git";
   import type { RepoEntry, WorkspaceLayout } from "$lib/types";
 
   let open_ = $state(false);
@@ -50,6 +50,16 @@
   async function pickRecent(path: string) {
     closePopover();
     await loadMainRepo(path);
+  }
+
+  /// Drop `path` from the persisted recents list. The repo itself is untouched;
+  /// opening it again re-adds it.
+  async function forgetRecent(path: string) {
+    try {
+      appState.recentRepos = await removeRecentRepo(path);
+    } catch (e) {
+      appState.error = String(e);
+    }
   }
 
   async function browseAndOpen() {
@@ -193,7 +203,7 @@
         {:else}
           <ul>
             {#each filteredRecents as r (r)}
-              <li>
+              <li class="recent-row">
                 <button
                   type="button"
                   class="recent"
@@ -203,6 +213,15 @@
                 >
                   <span class="recent-name">{basename(r)}</span>
                   <span class="recent-path">{r}</span>
+                </button>
+                <button
+                  type="button"
+                  class="remove"
+                  title="Remove from recents"
+                  aria-label="Remove {basename(r)} from recents"
+                  onclick={() => void forgetRecent(r)}
+                >
+                  ×
                 </button>
               </li>
             {/each}
@@ -386,12 +405,26 @@
     opacity: 0.6;
     font-size: 0.85em;
   }
+  .recent-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  /* Shown on hover / keyboard focus so the list stays quiet. */
+  .recent-row .remove {
+    opacity: 0;
+  }
+  .recent-row:hover .remove,
+  .recent-row .remove:focus-visible {
+    opacity: 1;
+  }
   .recent {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 1px;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     border: none;
     background: transparent;
     color: inherit;
@@ -462,7 +495,7 @@
     color: var(--accent);
     border-color: var(--accent);
   }
-  .repos .remove {
+  .remove {
     border: none;
     background: transparent;
     color: var(--muted);
@@ -471,7 +504,7 @@
     padding: 0 4px;
     border-radius: 3px;
   }
-  .repos .remove:hover {
+  .remove:hover {
     background: var(--error-bg);
     color: var(--error-fg);
   }
