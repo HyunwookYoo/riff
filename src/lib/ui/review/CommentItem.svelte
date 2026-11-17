@@ -9,6 +9,7 @@
     createdAt,
     body,
     html = "",
+    linkBase = "",
     prAuthor = null,
     viewer = null,
     reply = false,
@@ -19,6 +20,8 @@
     body: string;
     /** GitHub's rendered `body`; when non-empty it is shown (sanitized) instead of `body`. */
     html?: string;
+    /** What relative links in `html` resolve against: the PR's GitHub page. */
+    linkBase?: string;
     prAuthor?: string | null;
     viewer?: string | null;
     /** A reply inside a thread: drawn indented under the thread's first comment. */
@@ -33,10 +36,11 @@
   // Links in rendered HTML open outside the app; the webview itself never navigates. Delegated
   // from the container, so keyboard activation of a link (a click event) is covered too.
   function openLink(e: MouseEvent) {
-    const a = (e.target as Element).closest("a[href]");
+    const a = (e.target as Element).closest("a");
     if (!a) return;
     e.preventDefault();
-    const url = externalUrl((a as HTMLAnchorElement).href);
+    // The raw attribute: `a.href` is already resolved against the app's own origin.
+    const url = externalUrl(a.getAttribute("href") ?? "", linkBase);
     if (url) void openUrl(url).catch(() => {});
   }
   function externalLinks(node: HTMLElement) {
@@ -206,13 +210,15 @@
   .markdown :global(:is(th, td)) {
     padding: 4px 10px;
     border: 1px solid var(--border);
+    overflow-wrap: normal; /* wide tables scroll (see table) instead of breaking words */
   }
   .markdown :global(th) {
     font-weight: 600;
     background: var(--bar-bg);
   }
-  .markdown :global(img) {
+  .markdown :global(:is(img, video)) {
     max-width: 100%;
+    height: auto;
   }
   .markdown :global(a) {
     color: var(--accent);

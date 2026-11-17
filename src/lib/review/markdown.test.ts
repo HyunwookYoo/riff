@@ -23,6 +23,16 @@ describe("sanitizeHtml", () => {
     expect(out).not.toContain("<form");
   });
 
+  it("drops SVG, MathML and image-map links, which navigate without an <a>", () => {
+    const out = sanitizeHtml(
+      '<svg><a xlink:href="https://evil.test/"><text>x</text></a></svg>' +
+        '<math><mi xlink:href="https://evil.test/">y</mi></math>' +
+        '<map name="m"><area href="https://evil.test/"></map>',
+    );
+    expect(out).not.toContain("evil.test");
+    expect(out).not.toMatch(/<(svg|math|area|map)/);
+  });
+
   it("keeps GitHub's markdown output", () => {
     const html =
       "<h2>t</h2><table><tbody><tr><td>1</td></tr></tbody></table>" +
@@ -39,16 +49,33 @@ describe("sanitizeHtml", () => {
 });
 
 describe("externalUrl", () => {
+  const pr = "https://github.test/o/r/pull/1";
+
   it("passes web and mail links", () => {
-    expect(externalUrl("https://x.test/a")).toBe("https://x.test/a");
-    expect(externalUrl("http://x.test/")).toBe("http://x.test/");
-    expect(externalUrl("mailto:a@x.test")).toBe("mailto:a@x.test");
+    expect(externalUrl("https://x.test/a", pr)).toBe("https://x.test/a");
+    expect(externalUrl("http://x.test/", pr)).toBe("http://x.test/");
+    expect(externalUrl("mailto:a@x.test", pr)).toBe("mailto:a@x.test");
+  });
+
+  it("resolves relative links against the PR page, as GitHub does", () => {
+    expect(externalUrl("/o/r/blob/main/a.md", pr)).toBe("https://github.test/o/r/blob/main/a.md");
+    expect(externalUrl("files", pr)).toBe("https://github.test/o/r/pull/files");
+  });
+
+  it("refuses in-page and empty links", () => {
+    expect(externalUrl("#user-content-fn-1", pr)).toBeNull();
+    expect(externalUrl("", pr)).toBeNull();
+  });
+
+  it("refuses relative links without a base", () => {
+    expect(externalUrl("/o/r", "")).toBeNull();
+    expect(externalUrl("https://x.test/", "")).toBe("https://x.test/");
   });
 
   it("refuses everything else", () => {
-    expect(externalUrl("javascript:alert(1)")).toBeNull();
-    expect(externalUrl("file:///c:/x")).toBeNull();
-    expect(externalUrl("tauri://localhost/")).toBeNull();
-    expect(externalUrl("not a url")).toBeNull();
+    expect(externalUrl("javascript:alert(1)", pr)).toBeNull();
+    expect(externalUrl("file:///c:/x", pr)).toBeNull();
+    expect(externalUrl("tauri://localhost/", pr)).toBeNull();
+    expect(externalUrl("http://[bad", pr)).toBeNull();
   });
 });

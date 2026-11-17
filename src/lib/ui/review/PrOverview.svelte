@@ -51,6 +51,7 @@
             createdAt={null}
             body={detail.body.trim() ? detail.body : "(No description.)"}
             html={detail.body.trim() ? detail.bodyHtml : ""}
+            linkBase={summary.url}
             prAuthor={summary.author}
             {viewer}
           />
@@ -63,6 +64,7 @@
             createdAt={c.createdAt}
             body={c.body}
             html={c.bodyHtml}
+            linkBase={summary?.url ?? ""}
             prAuthor={summary?.author ?? null}
             {viewer}
           />
