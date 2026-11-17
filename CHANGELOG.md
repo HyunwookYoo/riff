@@ -3,6 +3,22 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v2.9.2
+
+Graph를 보는 중에 repo를 바꾸면 graph가 비어 있던 문제를 고쳤고, 최근 repo 목록에서 항목을 지울 수 있습니다.
+
+### 🐛 수정
+
+- **repo 전환 후 graph** — Graph 화면에서 다른 repo를 열면 commit 목록이 비어 있던 문제를 고쳤습니다. 이제 새 repo의 graph가 바로 그려집니다.
+
+### ✨ 개선
+
+- **최근 repo 지우기** — repo 선택 드롭다운의 Recent 목록에서 항목에 마우스를 올리면 `×` 버튼이 나타나고, 누르면 목록에서 빠집니다. repo 자체는 그대로이고, 다시 열면 목록에 돌아옵니다.
+
+### 📦 설치 / 업그레이드
+
+- 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+
 ## v2.9.1
 
 PR 리뷰 화면의 **Description 탭이 GitHub처럼 markdown으로 렌더링**됩니다.
