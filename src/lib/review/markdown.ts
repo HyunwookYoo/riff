@@ -7,3 +7,14 @@ import DOMPurify from "dompurify";
 export function sanitizeHtml(html: string): string {
   return DOMPurify.sanitize(html, { FORBID_TAGS: ["style", "form"], FORBID_ATTR: ["style"] });
 }
+
+const EXTERNAL = new Set(["http:", "https:", "mailto:"]);
+
+/** `href` when the system browser / mail client may open it, else null (the webview never navigates). */
+export function externalUrl(href: string): string | null {
+  try {
+    return EXTERNAL.has(new URL(href).protocol) ? href : null;
+  } catch {
+    return null;
+  }
+}

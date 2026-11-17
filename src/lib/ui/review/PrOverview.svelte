@@ -50,6 +50,7 @@
             author={summary.author}
             createdAt={null}
             body={detail.body.trim() ? detail.body : "(No description.)"}
+            html={detail.body.trim() ? detail.bodyHtml : ""}
             prAuthor={summary.author}
             {viewer}
           />
@@ -57,7 +58,14 @@
           <pre class="body">{detail.body}</pre>
         {/if}
         {#each detail.conversation as c (c.id)}
-          <CommentItem author={c.author} createdAt={c.createdAt} body={c.body} prAuthor={summary?.author ?? null} {viewer} />
+          <CommentItem
+            author={c.author}
+            createdAt={c.createdAt}
+            body={c.body}
+            html={c.bodyHtml}
+            prAuthor={summary?.author ?? null}
+            {viewer}
+          />
         {/each}
       </div>
     {/if}

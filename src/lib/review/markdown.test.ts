@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { sanitizeHtml } from "./markdown";
+import { externalUrl, sanitizeHtml } from "./markdown";
 
 describe("sanitizeHtml", () => {
   it("drops scripts", () => {
@@ -35,5 +35,20 @@ describe("sanitizeHtml", () => {
     expect(out).toContain("<details><summary>s</summary>b</details>");
     expect(out).toContain('href="https://x.test/"');
     expect(out).toMatch(/<input[^>]*type="checkbox"[^>]*disabled/);
+  });
+});
+
+describe("externalUrl", () => {
+  it("passes web and mail links", () => {
+    expect(externalUrl("https://x.test/a")).toBe("https://x.test/a");
+    expect(externalUrl("http://x.test/")).toBe("http://x.test/");
+    expect(externalUrl("mailto:a@x.test")).toBe("mailto:a@x.test");
+  });
+
+  it("refuses everything else", () => {
+    expect(externalUrl("javascript:alert(1)")).toBeNull();
+    expect(externalUrl("file:///c:/x")).toBeNull();
+    expect(externalUrl("tauri://localhost/")).toBeNull();
+    expect(externalUrl("not a url")).toBeNull();
   });
 });
