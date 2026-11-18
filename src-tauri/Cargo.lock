@@ -3101,7 +3101,7 @@ dependencies = [
 
 [[package]]
 name = "riff"
-version = "2.9.2"
+version = "2.9.3"
 dependencies = [
  "ignore",
  "notify",

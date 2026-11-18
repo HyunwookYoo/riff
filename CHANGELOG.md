@@ -3,6 +3,18 @@
 Riff의 주요 변경사항을 기록합니다. 최상단 섹션은
 `.github/workflows/release.yml`에 의해 GitHub Release 본문으로 사용됩니다.
 
+## v2.9.3
+
+PR 리뷰의 diff도 **Changes only가 기본으로 켜집니다**.
+
+### ✨ 개선
+
+- **리뷰 diff 기본값** — PR 리뷰와 New-since 화면의 diff가 다른 diff 화면처럼 바뀐 부분만 펼친 채로 열립니다. 바뀐 줄 앞뒤로 5줄씩은 항상 보이며, 접힌 구간에 스레드가 가려지면 toolbar의 **Changes only**를 끄면 됩니다.
+
+### 📦 설치 / 업그레이드
+
+- 자동 업데이터가 다음 실행 시 배너를 띄웁니다 → **Install and restart**.
+
 ## v2.9.2
 
 Graph를 보는 중에 repo를 바꾸면 graph가 비어 있던 문제를 고쳤고, 최근 repo 목록에서 항목을 지울 수 있습니다.
