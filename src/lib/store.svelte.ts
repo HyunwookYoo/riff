@@ -62,9 +62,9 @@ class AppState {
   ignoreWhitespace = $state(false);
   // DiffView's "Changes only" (collapse unchanged runs), per screen kind:
   // `reviewChangesOnly` for PR Review / New-since (diffs with a `source`),
-  // `changesOnly` for every other screen. Session-only.
+  // `changesOnly` for every other screen. Both default on. Session-only.
   changesOnly = $state(true);
-  reviewChangesOnly = $state(false);
+  reviewChangesOnly = $state(true);
   availableUpdate = $state<{ version: string; notes: string | null } | null>(
     null,
   );

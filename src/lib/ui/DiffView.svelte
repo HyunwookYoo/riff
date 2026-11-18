@@ -575,9 +575,9 @@
         ? toCMChanges(diff.changes, (a, b, c, d) => new Change(a, b, c, d))
         : [];
     const diffConfig = { override: () => changes.slice() };
-    // Off by default with `source` (PR Review): riff's diff (CRLF-normalised)
-    // can differ from git's hunks, so a collapsed run could hide commentable
-    // lines, threads or drafts — a wider margin there when the user opts in.
+    // With `source` (PR Review) riff's diff (CRLF-normalised) can differ from
+    // git's hunks, so a collapsed run could hide commentable lines, threads or
+    // drafts — hence the wider margin there.
     const collapseOn = changesOnly;
     const collapse = collapseOn
       ? { collapseUnchanged: { margin: source ? 5 : 3, minSize: 4 } }
